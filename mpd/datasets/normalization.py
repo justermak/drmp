@@ -1,16 +1,17 @@
 """
 From Michael Janner
 """
+
 import einops
 import torch
 
 
-#-----------------------------------------------------------------------------#
-#--------------------------- multi-field normalizer --------------------------#
-#-----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+# --------------------------- multi-field normalizer --------------------------#
+# -----------------------------------------------------------------------------#
+
 
 class DatasetNormalizer:
-
     def __init__(self, dataset, normalizer):
         dataset = flatten(dataset)
 
@@ -26,9 +27,9 @@ class DatasetNormalizer:
             #     print(f'[ utils/normalization ] Skipping {key} | {normalizer}')
 
     def __repr__(self):
-        string = ''
+        string = ""
         for key, normalizer in self.normalizers.items():
-            string += f'{key}: {normalizer}]\n'
+            string += f"{key}: {normalizer}]\n"
         return string
 
     def __call__(self, *args, **kwargs):
@@ -56,10 +57,10 @@ class DatasetNormalizer:
 
 
 def flatten(dataset):
-    '''
-        flattens dataset of { key: [ ... x dim ] }
-            to { key : [ (...) x dim ]}
-    '''
+    """
+    flattens dataset of { key: [ ... x dim ] }
+        to { key : [ (...) x dim ]}
+    """
     flattened = {}
     for key, xs in dataset.items():
         xs_new = xs
@@ -68,24 +69,23 @@ def flatten(dataset):
             pass
         elif xs.ndim == 3:
             # trajectories in fixed environments
-            xs_new = einops.rearrange(xs, 'b h d -> (b h) d')
+            xs_new = einops.rearrange(xs, "b h d -> (b h) d")
         elif xs.ndim == 4:
             # trajectories in variable environments
-            xs_new = einops.rearrange(xs, 'e b h d -> (e b h) d')
+            xs_new = einops.rearrange(xs, "e b h d -> (e b h) d")
         else:
             raise NotImplementedError
         flattened[key] = xs_new
     return flattened
 
 
-
-#-----------------------------------------------------------------------------#
-#-------------------------- single-field normalizers -------------------------#
-#-----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------#
+# -------------------------- single-field normalizers -------------------------#
+# -----------------------------------------------------------------------------#
 class Normalizer:
-    '''
-        parent class, subclass by defining the `normalize` and `unnormalize` methods
-    '''
+    """
+    parent class, subclass by defining the `normalize` and `unnormalize` methods
+    """
 
     def __init__(self, X):
         self.X = X
@@ -94,8 +94,8 @@ class Normalizer:
 
     def __repr__(self):
         return (
-            f'''[ Normalizer ] dim: {self.mins.size}\n    -: '''
-            f'''{torch.round(self.mins, decimals=2)}\n    +: {torch.round(self.maxs, decimals=2)}\n'''
+            f"""[ Normalizer ] dim: {self.mins.size}\n    -: """
+            f"""{torch.round(self.mins, decimals=2)}\n    +: {torch.round(self.maxs, decimals=2)}\n"""
         )
 
     def __call__(self, x):
@@ -117,9 +117,9 @@ class Identity(Normalizer):
 
 
 class GaussianNormalizer(Normalizer):
-    '''
-        normalizes to zero mean and unit variance
-    '''
+    """
+    normalizes to zero mean and unit variance
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -129,9 +129,9 @@ class GaussianNormalizer(Normalizer):
 
     def __repr__(self):
         return (
-            f'''[ Normalizer ] dim: {self.mins.size}\n    '''
-            f'''means: {torch.round(self.means, decimals=2)}\n    '''
-            f'''stds: {torch.round(self.z * self.stds, decimals=2)}\n'''
+            f"""[ Normalizer ] dim: {self.mins.size}\n    """
+            f"""means: {torch.round(self.means, decimals=2)}\n    """
+            f"""stds: {torch.round(self.z * self.stds, decimals=2)}\n"""
         )
 
     def normalize(self, x):
@@ -142,9 +142,9 @@ class GaussianNormalizer(Normalizer):
 
 
 class LimitsNormalizer(Normalizer):
-    '''
-        maps [ xmin, xmax ] to [ -1, 1 ]
-    '''
+    """
+    maps [ xmin, xmax ] to [ -1, 1 ]
+    """
 
     def normalize(self, x):
         ## [ 0, 1 ]
@@ -154,40 +154,41 @@ class LimitsNormalizer(Normalizer):
         return x
 
     def unnormalize(self, x, eps=1e-4):
-        '''
-            x : [ -1, 1 ]
-        '''
+        """
+        x : [ -1, 1 ]
+        """
         if x.max() > 1 + eps or x.min() < -1 - eps:
             # print(f'[ datasets/mujoco ] Warning: sample out of range | ({x.min():.4f}, {x.max():.4f})')
             x = torch.clip(x, -1, 1)
 
         ## [ -1, 1 ] --> [ 0, 1 ]
-        x = (x + 1) / 2.
+        x = (x + 1) / 2.0
 
         return x * (self.maxs - self.mins) + self.mins
 
 
 class SafeLimitsNormalizer(LimitsNormalizer):
-    '''
-        functions like LimitsNormalizer, but can handle data for which a dimension is constant
-    '''
+    """
+    functions like LimitsNormalizer, but can handle data for which a dimension is constant
+    """
 
     def __init__(self, *args, eps=1, **kwargs):
         super().__init__(*args, **kwargs)
         for i in range(len(self.mins)):
             if self.mins[i] == self.maxs[i]:
-                print(f'''
-                    [ utils/normalization ] Constant data in dimension {i} | '''
-                    f'''max = min = {self.maxs[i]}'''
+                print(
+                    f"""
+                    [ utils/normalization ] Constant data in dimension {i} | """
+                    f"""max = min = {self.maxs[i]}"""
                 )
                 self.mins -= eps
                 self.maxs += eps
 
 
 class FixedLimitsNormalizer(LimitsNormalizer):
-    '''
-        functions like LimitsNormalizer, but with fixed limits not derived from the data
-    '''
+    """
+    functions like LimitsNormalizer, but with fixed limits not derived from the data
+    """
 
     def __init__(self, *args, min=-1, max=1, **kwargs):
         super().__init__(*args, **kwargs)

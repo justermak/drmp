@@ -1,9 +1,0 @@
-dist/
-.idea/
-*.swp
-__pycache__/
-logs*/
-wandb/
-*.egg-info/
-.DS_Store
-._.DS_Store

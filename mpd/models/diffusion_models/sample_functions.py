@@ -1,5 +1,4 @@
 import torch
-from matplotlib import pyplot as plt
 
 
 def apply_hard_conditioning(x, conditions):
@@ -16,20 +15,26 @@ def extract(a, t, x_shape):
 
 @torch.no_grad()
 def ddpm_sample_fn(
-        model, x, hard_conds, context, t,
-        guide=None,
-        n_guide_steps=1,
-        scale_grad_by_std=False,
-        t_start_guide=torch.inf,
-        noise_std_extra_schedule_fn=None,  # 'linear'
-        debug=False,
-        **kwargs
+    model,
+    x,
+    hard_conds,
+    context,
+    t,
+    guide=None,
+    n_guide_steps=1,
+    scale_grad_by_std=False,
+    t_start_guide=torch.inf,
+    noise_std_extra_schedule_fn=None,  # 'linear'
+    debug=False,
+    **kwargs,
 ):
     t_single = t[0]
     if t_single < 0:
         t = torch.zeros_like(t)
 
-    model_mean, _, model_log_variance = model.p_mean_variance(x=x, hard_conds=hard_conds, context=context, t=t)
+    model_mean, _, model_log_variance = model.p_mean_variance(
+        x=x, hard_conds=hard_conds, context=context, t=t
+    )
     x = model_mean
 
     model_log_variance = extract(model.posterior_log_variance_clipped, t, x.shape)
@@ -66,10 +71,11 @@ def guide_gradient_steps(
     x,
     hard_conds=None,
     guide=None,
-    n_guide_steps=1, scale_grad_by_std=False,
+    n_guide_steps=1,
+    scale_grad_by_std=False,
     model_var=None,
     debug=False,
-    **kwargs
+    **kwargs,
 ):
     for _ in range(n_guide_steps):
         grad_scaled = guide(x)

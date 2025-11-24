@@ -1,1 +1,0 @@
-Contains MLP weights for robot self collision checking

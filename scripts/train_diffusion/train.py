@@ -1,144 +1,110 @@
-import os
 import torch
+import configargparse
+from datetime import datetime
 
-from experiment_launcher import single_experiment_yaml, run_experiment
+from mpd.config import DEFAULT_TRAIN_ARGS, LOSS_FNS
 from mpd import trainer
 from mpd.models import UNET_DIM_MULTS, TemporalUnet
-from mpd.trainer import get_dataset, get_model, get_loss, get_summary
-from mpd.trainer.trainer import get_num_epochs
-from torch_robotics.torch_utils.seed import fix_random_seed
-from torch_robotics.torch_utils.torch_utils import get_torch_device
-
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+from mpd.trainer import get_dataset, get_model
+from mpd.utils.seed import fix_random_seed
+from mpd.utils.torch_utils import get_torch_device
 
 
-@single_experiment_yaml
-def experiment(
-    ########################################################################
-    # Dataset
-    dataset_subdir: str = 'EnvSimple2D-RobotPointMass',
-    # dataset_subdir: str = 'EnvSpheres3D-RobotPanda',
-    include_velocity: bool = True,
+def experiment(args):
+    fix_random_seed(args.seed)
 
-    ########################################################################
-    # Diffusion Model
-    diffusion_model_class: str = 'GaussianDiffusionModel',
-    variance_schedule: str = 'exponential',  # cosine
-    n_diffusion_steps: int = 25,
-    predict_epsilon: bool = True,
+    device = get_torch_device(device=args.device)
+    tensor_args = {"device": device, "dtype": torch.float32}
 
-    # Unet
-    unet_input_dim: int = 32,
-    unet_dim_mults_option: int = 1,
+    if args.experiment_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_name = f"{args.dataset_dir}_bs{args.batch_size}_lr{args.lr}_steps{args.num_train_steps}_{timestamp}"
+    else:
+        experiment_name = args.experiment_name
 
-    ########################################################################
-    # Loss
-    loss_class: str = 'GaussianDiffusionLoss',
-
-    # Training parameters
-    batch_size: int = 32,
-    lr: float = 1e-4,
-    num_train_steps: int = 500000,
-
-    use_ema: bool = True,
-    use_amp: bool = False,
-
-    # Summary parameters
-    steps_til_summary: int = 1000,
-    summary_class: str = 'SummaryTrajectoryGeneration',
-
-    steps_til_ckpt: int = 50000,
-
-    ########################################################################
-    device: str = 'cuda',
-
-    debug: bool = False,
-
-    ########################################################################
-    # MANDATORY
-    seed: int = 0,
-    results_dir: str = 'logs',
-
-    ########################################################################
-    # WandB
-    wandb_mode: str = 'disabled',  # "online", "offline" or "disabled"
-    wandb_entity: str = 'scoreplan',
-    wandb_project: str = 'test_train',
-    **kwargs
-):
-    fix_random_seed(seed)
-
-    device = get_torch_device(device=device)
-    tensor_args = {'device': device, 'dtype': torch.float32}
-
-    # Dataset
     train_subset, train_dataloader, val_subset, val_dataloader = get_dataset(
-        dataset_class='TrajectoryDataset',
-        include_velocity=include_velocity,
-        dataset_subdir=dataset_subdir,
-        batch_size=batch_size,
-        results_dir=results_dir,
+        dataset_class="TrajectoryDataset",
+        include_velocity=args.include_velocity,
+        dataset_dir=args.dataset_dir,
+        batch_size=args.batch_size,
+        logs_dir=args.logs_dir,
         save_indices=True,
-        tensor_args=tensor_args
+        tensor_args=tensor_args,
     )
 
     dataset = train_subset.dataset
+    print(f"Train dataset size: {len(train_subset.dataset)}")
+    print(f"Val dataset size: {len(val_subset.dataset)}")
 
-    # Model
     diffusion_configs = dict(
-        variance_schedule=variance_schedule,
-        n_diffusion_steps=n_diffusion_steps,
-        predict_epsilon=predict_epsilon,
+        variance_schedule=args.variance_schedule,
+        n_diffusion_steps=args.n_diffusion_steps,
+        predict_epsilon=args.predict_epsilon,
     )
 
     unet_configs = dict(
         state_dim=dataset.state_dim,
         n_support_points=dataset.n_support_points,
-        unet_input_dim=unet_input_dim,
-        dim_mults=UNET_DIM_MULTS[unet_dim_mults_option],
+        unet_input_dim=args.unet_input_dim,
+        dim_mults=UNET_DIM_MULTS[args.unet_dim_mults_option],
     )
 
     model = get_model(
-        model_class=diffusion_model_class,
+        model_class=args.diffusion_model_class,
         model=TemporalUnet(**unet_configs),
         tensor_args=tensor_args,
         **diffusion_configs,
-        **unet_configs
+        **unet_configs,
     )
 
-    # Loss
-    loss_fn = val_loss_fn = get_loss(
-        loss_class=loss_class
-    )
+    loss_fn = LOSS_FNS[args.loss_fn]
 
-    # Summary
-    summary_fn = get_summary(
-        summary_class=summary_class,
-    )
-
-    # Train
     trainer.train(
         model=model,
         train_dataloader=train_dataloader,
         train_subset=train_subset,
         val_dataloader=val_dataloader,
-        val_subset=train_subset,
-        epochs=get_num_epochs(num_train_steps, batch_size, len(dataset)),
-        model_dir=results_dir,
-        summary_fn=summary_fn,
-        lr=lr,
+        val_subset=val_subset,
+        logs_dir=args.logs_dir,
+        experiment_name=experiment_name,
+        lr=args.lr,
         loss_fn=loss_fn,
-        val_loss_fn=val_loss_fn,
-        steps_til_summary=steps_til_summary,
-        steps_til_checkpoint=steps_til_ckpt,
-        clip_grad=True,
-        use_ema=use_ema,
-        use_amp=use_amp,
-        debug=debug,
-        tensor_args=tensor_args
+        log_interval=args.log_interval,
+        checkpoint_interval=args.checkpoint_interval,
+        max_steps=args.num_train_steps,
+        clip_grad=args.clip_grad,
+        clip_grad_max_norm=args.clip_grad_max_norm,
+        use_ema=args.use_ema,
+        ema_decay=args.ema_decay,
+        ema_warmup=args.ema_warmup,
+        ema_update_interval=args.ema_update_interval,
+        early_stopper_patience=args.early_stopper_patience,
+        steps_per_validation=args.steps_per_validation,
+        use_amp=args.use_amp,
+        debug=args.debug,
+        tensor_args=tensor_args,
     )
 
 
-if __name__ == '__main__':
-    # Leave unchanged
-    run_experiment(experiment)
+if __name__ == "__main__":
+    parser = configargparse.ArgumentParser()
+
+    special_args = {
+        "variance_schedule": {"choices": ["exponential", "cosine"]},
+    }
+
+    for key, value in DEFAULT_TRAIN_ARGS.items():
+        arg_name = f"--{key}"
+        arg_type = type(value or "")
+        
+        if isinstance(value, bool):
+            parser.add_argument(arg_name, action="store_true", default=value)
+            parser.add_argument(f"--no_{key}", dest=key, action="store_false")
+        else:
+            kwargs = {"type": arg_type, "default": value}
+            if key in special_args:
+                kwargs.update(special_args[key])
+            parser.add_argument(arg_name, **kwargs)
+
+    args = parser.parse_args()
+    experiment(args)

@@ -13,7 +13,6 @@ pyyaml
 pandas
 joblib
 sentence_transformers
-wandb
 trimesh
 mesh_to_sdf
 seaborn
