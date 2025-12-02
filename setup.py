@@ -1,12 +1,12 @@
-from setuptools import setup, find_packages
+import re
 from codecs import open
 from os import path
-import re
+
+from setuptools import find_packages, setup
 
 
-# Read version without importing the package
 def get_version():
-    version_file = path.join(path.dirname(__file__), "mpd", "__init__.py")
+    version_file = path.join(path.dirname(__file__), "drmp", "__init__.py")
     with open(version_file, "r", encoding="utf-8") as f:
         content = f.read()
         version_match = re.search(
@@ -19,19 +19,15 @@ def get_version():
 
 ext_modules = []
 
-here = path.abspath(path.dirname(__file__))
 requires_list = []
-with open(path.join(here, "requirements.txt"), encoding="utf-8") as f:
-    for line in f:
-        requires_list.append(str(line))
+with open(path.join(path.dirname(__file__), "requirements.txt"), encoding="utf-8") as f:
+    requires_list = list(map(str, f.readlines()))
 
 
 setup(
-    name="mpd",
+    name="drmp",
     version=get_version(),
-    description="Motion Planning Diffusion",
-    author="Joao Carvalho",
-    author_email="joao@robots-learning.de",
+    description="drmp",
     packages=find_packages(where=""),
     install_requires=requires_list,
 )
