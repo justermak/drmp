@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import einsum
 
-from drmp.models.layers.layers import group_norm_n_groups
+from drmp.models.legacy.layers import group_norm_n_groups
 
 
 def exists(val):

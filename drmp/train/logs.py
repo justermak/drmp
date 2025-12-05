@@ -1,12 +1,20 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Subset
+from torch.utils.tensorboard import SummaryWriter
 
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.models.models import PlanningModel
+from drmp.models.diffusion import PlanningModel
 from drmp.utils.visualizer import Visualizer
+from drmp.planning.metrics import (
+    compute_collision_intensity,
+    compute_free_fraction,
+    compute_path_length,
+    compute_smoothness,
+    compute_success,
+    compute_waypoints_variance,
+)
 
 
 def log(
@@ -40,7 +48,7 @@ def log(
         data_normalized = dataset[trajectory_id]
 
         context = model.build_context(data_normalized)
-        hard_conds = model.build_hard_conds(data_normalized)
+        hard_conds = model.build_hard_conditions(data_normalized)
 
         trajs_normalized = model.run_inference(
             context,
@@ -48,34 +56,52 @@ def log(
             n_samples=25,
         )[-1]
 
-        trajs = dataset.trajs_normalizer.unnormalize(trajs_normalized)
+        trajs = dataset.normalizer.unnormalize(trajs_normalized)
+        trajs_collision, trajs_free, trajs_collision_mask = dataset.env.get_trajs_collision_and_free(dataset.robot, trajs)
 
         if tensorboard_writer is not None:
             tensorboard_writer.add_scalar(
-                f"{prefix}percentage_free_trajs",
-                dataset.task.compute_fraction_free_trajs(trajs),
+                f"{prefix}free_fraction",
+                compute_free_fraction(trajs_free, trajs_collision),
                 train_step,
             )
             tensorboard_writer.add_scalar(
-                f"{prefix}percentage_collision_intensity",
-                dataset.task.compute_collision_intensity(trajs),
+                f"{prefix}collision_intensity",
+                compute_collision_intensity(trajs_collision_mask),
                 train_step,
             )
             tensorboard_writer.add_scalar(
                 f"{prefix}success",
-                dataset.task.compute_success_free_trajs(trajs),
+                compute_success(trajs_free),
+                train_step,
+            )
+            tensorboard_writer.add_scalar(
+                f"{prefix}avg_path_length",
+                compute_path_length(trajs_free, dataset.robot).mean(),
+                train_step,
+            )
+            tensorboard_writer.add_scalar(
+                f"{prefix}avg_smoothness",
+                compute_smoothness(trajs_free, dataset.robot).mean(),
+                train_step,
+            )
+            tensorboard_writer.add_scalar(
+                f"{prefix}waypoints_variance",
+                compute_waypoints_variance(trajs_free, dataset.robot),
                 train_step,
             )
 
-        planning_visualizer = Visualizer(dataset.task)
+        planning_visualizer = Visualizer(dataset.env, dataset.robot)
 
-        fig, ax = planning_visualizer.render_robot_trajectories(
+        fig, ax = planning_visualizer.render_scene(
             trajs=trajs,
+            start_state=trajs[0, 0],
+            goal_state=trajs[0, -1],
         )
 
         if fig is not None and tensorboard_writer is not None:
             tensorboard_writer.add_figure(
-                f"{prefix}joint_trajectories_DIFFUSION",
+                f"{prefix}trajectories_figure",
                 fig,
                 train_step,
             )

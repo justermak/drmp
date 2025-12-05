@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
 from copy import copy
 
-import einops
 import numpy as np
+from typing import Dict
 import torch
 import torch.nn as nn
 
 from drmp.models.beta_schedules import cosine_beta_schedule, exponential_beta_schedule
-from drmp.models.temporal_unet import TemporalUnet
-
+from drmp.models.temporal_unet import TemporalUNet
+from drmp.world.robot import Robot
 
 def make_timesteps(batch_size, i, device):
     t = torch.full((batch_size,), i, device=device, dtype=torch.long)
@@ -24,23 +24,23 @@ class PlanningModel(nn.Module, ABC):
         super().__init__()
 
     @abstractmethod
-    def build_context(self, input_dict):
+    def build_context(self, robot: Robot, input_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         pass
 
     @abstractmethod
-    def build_hard_conds(self, input_dict):
+    def build_hard_conditions(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         pass
 
     @abstractmethod
-    def compute_loss(self, x, context, hard_conds):
+    def compute_loss(self, x: torch.Tensor, context: torch.Tensor, hard_conds: Dict[str, torch.Tensor]):
         pass
-    
+
     @abstractmethod
     def run_inference(
         self,
-        context,
-        hard_conds,
-        n_samples=1,
+        context: torch.Tensor,
+        hard_conds: Dict[str, torch.Tensor],
+        n_samples: int=1,
         **kwargs,
     ):
         pass
@@ -49,49 +49,51 @@ class PlanningModel(nn.Module, ABC):
 class GaussianDiffusion(PlanningModel):
     def __init__(
         self,
-        n_support_points=None,
-        state_dim=None,
-        unet_input_dim=32,
-        unet_dim_mults=(1, 2, 4, 8),
-        time_emb_dim=32,
-        self_attention=False,
-        conditioning_embed_dim=4,
-        conditioning_type=None,
-        attention_num_heads=2,
-        attention_dim_head=32,
-        variance_schedule="exponential",
-        n_diffusion_steps=100,
-        clip_denoised=True,
-        predict_epsilon=False,
+        n_support_points: int,
+        state_dim: int,
+        unet_hidden_dim: int,
+        unet_dim_mults: tuple,
+        unet_kernel_size: int,
+        unet_resnet_block_groups: int,
+        unet_random_fourier_features: bool,
+        unet_learned_sin_dim: int,
+        unet_attn_heads: int,
+        unet_attn_head_dim: int,
+        unet_context_dim: int,
+        variance_schedule: str,
+        n_diffusion_steps: int,
+        clip_denoised: bool,
+        predict_epsilon: bool,
     ):
         super().__init__()
 
         self.n_support_points = n_support_points
         self.state_dim = state_dim
-        self.unet_input_dim = unet_input_dim
+        self.unet_hidden_dim = unet_hidden_dim
         self.unet_dim_mults = unet_dim_mults
-        self.time_emb_dim = time_emb_dim
-        self.self_attention = self_attention
-        self.conditioning_embed_dim = conditioning_embed_dim
-        self.conditioning_type = conditioning_type
-        self.attention_num_heads = attention_num_heads
-        self.attention_dim_head = attention_dim_head
+        self.unet_kernel_size = unet_kernel_size
+        self.unet_resnet_block_groups = unet_resnet_block_groups
+        self.unet_random_fourier_features = unet_random_fourier_features
+        self.unet_learned_sin_dim = unet_learned_sin_dim
+        self.unet_attn_heads = unet_attn_heads
+        self.unet_attn_head_dim = unet_attn_head_dim
+        self.unet_context_dim = unet_context_dim
         self.variance_schedule = variance_schedule
         self.n_diffusion_steps = n_diffusion_steps
         self.clip_denoised = clip_denoised
         self.predict_epsilon = predict_epsilon
 
-        self.model = TemporalUnet(
-            state_dim=state_dim,
-            n_support_points=n_support_points,
-            unet_input_dim=unet_input_dim,
-            unet_dim_mults=unet_dim_mults,
-            time_emb_dim=time_emb_dim,
-            self_attention=self_attention,
-            conditioning_embed_dim=conditioning_embed_dim,
-            conditioning_type=conditioning_type,
-            attention_num_heads=attention_num_heads,
-            attention_dim_head=attention_dim_head,
+        self.model = TemporalUNet(
+            input_dim=state_dim,
+            hidden_dim=unet_hidden_dim,
+            dim_mults=unet_dim_mults,
+            kernel_size=unet_kernel_size,
+            resnet_block_groups=unet_resnet_block_groups,
+            random_fourier_features=unet_random_fourier_features,
+            learned_sin_dim=unet_learned_sin_dim,
+            attn_heads=unet_attn_heads,
+            attn_head_dim=unet_attn_head_dim,
+            context_dim=unet_context_dim,
         )
 
         if variance_schedule == "cosine":
@@ -210,17 +212,11 @@ class GaussianDiffusion(PlanningModel):
         x,
         hard_conds,
         guide,
-        n_guide_steps=1,
-        scale_grad_by_std=False,
-        model_var=None,
+        n_guide_steps,
         debug=False,
     ):
         for _ in range(n_guide_steps):
             grad_scaled = guide(x)
-
-            if scale_grad_by_std:
-                grad_scaled = model_var * grad_scaled
-
             x = x + grad_scaled
             x = self.apply_hard_conditioning(x, hard_conds)
 
@@ -236,11 +232,12 @@ class GaussianDiffusion(PlanningModel):
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
-        scale_grad_by_std=False,
     ):
         device = self.betas.device
         batch_size = shape[0]
-        t_start_guide = int(np.ceil(start_guide_steps_fraction * self.n_diffusion_steps))
+        t_start_guide = int(
+            np.ceil(start_guide_steps_fraction * self.n_diffusion_steps)
+        )
         x = torch.randn(shape, device=device)
         x = self.apply_hard_conditioning(x, hard_conds)
 
@@ -250,7 +247,7 @@ class GaussianDiffusion(PlanningModel):
             range(-n_diffusion_steps_without_noise, self.n_diffusion_steps)
         ):
             t = make_timesteps(batch_size, i, device)
-        
+
             t_single = t[0]
             if t_single < 0:
                 t = torch.zeros_like(t)
@@ -264,7 +261,6 @@ class GaussianDiffusion(PlanningModel):
                 self.posterior_log_variance_clipped, t, x.shape
             )
             model_std = torch.exp(0.5 * model_log_variance)
-            model_var = torch.exp(model_log_variance)
 
             if guide is not None and t_single < t_start_guide:
                 x = self.guide_gradient_steps(
@@ -272,8 +268,6 @@ class GaussianDiffusion(PlanningModel):
                     hard_conds=hard_conds,
                     guide=guide,
                     n_guide_steps=n_guide_steps,
-                    scale_grad_by_std=scale_grad_by_std,
-                    model_var=model_var,
                     debug=False,
                 )
 
@@ -298,13 +292,14 @@ class GaussianDiffusion(PlanningModel):
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
-        scale_grad_by_std=False,
     ):
         # Adapted from https://github.com/ezhang7423/language-control-diffusion/blob/63cdafb63d166221549968c662562753f6ac5394/src/lcd/models/diffusion.py#L226
         device = self.betas.device
         batch_size = shape[0]
-        t_start_guide = int(np.ceil(start_guide_steps_fraction * self.n_diffusion_steps))
-        
+        t_start_guide = int(
+            np.ceil(start_guide_steps_fraction * self.n_diffusion_steps)
+        )
+
         total_timesteps = self.n_diffusion_steps
         sampling_timesteps = self.n_diffusion_steps // 5
         eta = 0.0
@@ -353,8 +348,11 @@ class GaussianDiffusion(PlanningModel):
             if guide is not None:
                 if torch.all(t_next < t_start_guide):
                     x = self.guide_gradient_steps(
-                        x, hard_conds=hard_conds, guide=guide, n_guide_steps=n_guide_steps,
-                        scale_grad_by_std=scale_grad_by_std, model_var=None, debug=False,
+                        x,
+                        hard_conds=hard_conds,
+                        guide=guide,
+                        n_guide_steps=n_guide_steps,
+                        debug=False,
                     )
 
             # add noise
@@ -367,33 +365,38 @@ class GaussianDiffusion(PlanningModel):
         return chain
 
     @torch.no_grad()
-    def conditional_sample(self, hard_conds,
+    def conditional_sample(
+        self,
+        hard_conds,
         context,
         n_diffusion_steps_without_noise=0,
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
-        scale_grad_by_std=False,
         n_samples=1,
         ddim=False,
     ):
         shape = (n_samples, self.n_support_points, self.state_dim)
 
         if ddim:
-            return self.ddim_sample(shape, hard_conds, context=context,
+            return self.ddim_sample(
+                shape,
+                hard_conds,
+                context=context,
                 n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
                 start_guide_steps_fraction=start_guide_steps_fraction,
                 guide=guide,
                 n_guide_steps=n_guide_steps,
-                scale_grad_by_std=scale_grad_by_std,
             )
 
-        return self.ddpm_sample(shape, hard_conds, context=context,
+        return self.ddpm_sample(
+            shape,
+            hard_conds,
+            context=context,
             n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
             start_guide_steps_fraction=start_guide_steps_fraction,
             guide=guide,
             n_guide_steps=n_guide_steps,
-            scale_grad_by_std=scale_grad_by_std,
         )
 
     @torch.no_grad()
@@ -406,7 +409,6 @@ class GaussianDiffusion(PlanningModel):
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
-        scale_grad_by_std=False,
         ddim=False,
     ):
         # context and hard_conds must be normalized
@@ -415,10 +417,10 @@ class GaussianDiffusion(PlanningModel):
 
         # repeat hard conditions and contexts for n_samples
         for k, v in hard_conds.items():
-            new_state = einops.repeat(v, "d -> b d", b=n_samples)
+            new_state = v.repeat(n_samples, 1)
             hard_conds[k] = new_state
 
-        context = einops.repeat(context, "d -> b d", b=n_samples)
+        context = context.repeat(n_samples, 1)
 
         # Sample from diffusion model
         chain = self.conditional_sample(
@@ -429,7 +431,6 @@ class GaussianDiffusion(PlanningModel):
             start_guide_steps_fraction=start_guide_steps_fraction,
             guide=guide,
             n_guide_steps=n_guide_steps,
-            scale_grad_by_std=scale_grad_by_std,
             ddim=ddim,
         )
 
@@ -438,9 +439,7 @@ class GaussianDiffusion(PlanningModel):
         trajs_chain_normalized = chain
 
         # trajs: [ (n_diffusion_steps + 1) x n_samples x n_support_points x state_dim ]
-        trajs_chain_normalized = einops.rearrange(
-            trajs_chain_normalized, "b diffsteps h d -> diffsteps b h d"
-        )
+        trajs_chain_normalized = trajs_chain_normalized.permute(1, 0, 2, 3)
 
         return trajs_chain_normalized
 
@@ -479,27 +478,27 @@ class GaussianDiffusion(PlanningModel):
         ).long()
         return self.p_losses(x, context=context, t=t, hard_conds=hard_conds)
 
-    def build_context(self, input_dict):
+    def build_context(self, input_dict: Dict[str, torch.Tensor]):
         context = torch.cat(
             [
-                input_dict["start_states_normalized"],
-                input_dict["goal_states_normalized"],
+                input_dict["start_states_normalized"].view(-1, self.state_dim)[:, :self.state_dim // 2],
+                input_dict["goal_states_normalized"].view(-1, self.state_dim)[:, :self.state_dim // 2],
             ],
             dim=-1,
         )
         return context
 
-    def build_hard_conds(self, input_dict):
+    def build_hard_conditions(self, input_dict):
         hard_conds = {
-            "start_states_normalized": input_dict["start_states_normalized"],
-            "goal_states_normalized": input_dict["goal_states_normalized"],
+            "start_states_normalized": input_dict["start_states_normalized"].view(-1, self.state_dim),
+            "goal_states_normalized": input_dict["goal_states_normalized"].view(-1, self.state_dim),
         }
         return hard_conds
 
-    def compute_loss(self, input_dict):
+    def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         traj_normalized = input_dict["trajs_normalized"]
         context = self.build_context(input_dict)
-        hard_conds = self.build_hard_conds(input_dict)
+        hard_conds = self.build_hard_conditions(input_dict)
         loss = self.loss(traj_normalized, context, hard_conds)
         loss_dict = {"diffusion_loss": loss}
 

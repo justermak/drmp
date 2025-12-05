@@ -1,18 +1,17 @@
 import os
-from datetime import datetime
 from copy import copy
+from datetime import datetime
 
 import configargparse
 import torch
-from torch.utils.data import Subset
 from einops._torch_specific import allow_ops_in_compiled_graph
+from torch.utils.data import Subset
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.inference import run_inference
-from drmp.models.models import get_models
-from drmp.utils.seed import fix_random_seed
-from drmp.utils.torch_utils import freeze_torch_model_params
+from drmp.models.diffusion import get_models
+from drmp.utils.torch_utils import fix_random_seed, freeze_torch_model_params
 from drmp.utils.yaml import load_config_from_yaml
 
 allow_ops_in_compiled_graph()
@@ -24,7 +23,7 @@ def run(args):
     fix_random_seed(args.seed)
     device = torch.device(args.device)
     tensor_args = {"device": device, "dtype": torch.float32}
-    
+
     print(f"-------- INFERENCE STARTED --------")
     print(f"model: {args.checkpoint_name}")
     print(f"dataset: {args.dataset_name}")
@@ -51,9 +50,9 @@ def run(args):
     train_subset, _, val_subset, _ = dataset.load_train_val_split()
 
     splits = eval(args.splits)
-    
+
     test_subset = None
-    
+
     if "test" in splits:
         task = dataset.task
 
@@ -62,23 +61,32 @@ def run(args):
             threshold_start_goal_pos=args.threshold_start_goal_pos,
         )
         if not success:
-            print("Could not find sufficient collision-free start/goal pairs for test tasks, try reducing the threshold, robot margin or object density")
+            print(
+                "Could not find sufficient collision-free start/goal pairs for test tasks, try reducing the threshold, robot margin or object density"
+            )
             return
         test_dataset = copy(dataset)
         test_dataset.n_trajs = args.n_tasks
         test_dataset.trajs_normalized = torch.empty((args.n_tasks,), **tensor_args)
-        test_dataset.start_states = torch.cat([start_pos, torch.zeros_like(start_pos)], dim=-1)
-        test_dataset.goal_states = torch.cat([goal_pos, torch.zeros_like(goal_pos)], dim=-1)
-        test_dataset.start_states_normalized = test_dataset.normalizer.normalize(test_dataset.start_states)
-        test_dataset.goal_states_normalized = test_dataset.normalizer.normalize(test_dataset.goal_states)
+        test_dataset.start_states = torch.cat(
+            [start_pos, torch.zeros_like(start_pos)], dim=-1
+        )
+        test_dataset.goal_states = torch.cat(
+            [goal_pos, torch.zeros_like(goal_pos)], dim=-1
+        )
+        test_dataset.start_states_normalized = test_dataset.normalizer.normalize(
+            test_dataset.start_states
+        )
+        test_dataset.goal_states_normalized = test_dataset.normalizer.normalize(
+            test_dataset.goal_states
+        )
         test_subset = Subset(test_dataset, list(range(args.n_tasks)))
-        
+
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"{args.checkpoint_name}_{args.dataset_name}_{timestamp}"
     else:
         experiment_name = args.experiment_name
-
 
     model = MODELS[model_config["model_name"]](
         state_dim=dataset.state_dim,
@@ -113,11 +121,13 @@ def run(args):
         test_subset=test_subset,
         generations_dir=args.generations_dir,
         experiment_name=experiment_name,
-        trajectory_duration=args.trajectory_duration,
         use_extra_objects=args.use_extra_objects,
-        weight_grad_cost_collision=args.weight_grad_cost_collision,
-        weight_grad_cost_smoothness=args.weight_grad_cost_smoothness,
-        num_interpolated_points_for_collision=args.num_interpolated_points_for_collision,
+        sigma_collision=args.sigma_collision,
+        sigma_gp=args.sigma_gp,
+        do_clip_grad=args.do_clip_grad,
+        max_grad_norm=args.max_grad_norm,
+        do_interpolate=args.do_interpolate,
+        n_interpolate=args.n_interpolate,
         start_guide_steps_fraction=args.start_guide_steps_fraction,
         n_tasks=args.n_tasks,
         threshold_start_goal_pos=args.threshold_start_goal_pos,

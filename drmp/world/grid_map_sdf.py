@@ -1,11 +1,10 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import torch
 from torch.autograd.functional import jacobian
 
-from drmp.config import N_DIMS
+from drmp.config import N_DIM
 from drmp.world.primitives import ObjectField
-from drmp.config import DEFAULT_TENSOR_ARGS
 
 
 class GridMapSDF:
@@ -14,7 +13,7 @@ class GridMapSDF:
         limits: torch.Tensor,
         cell_size: float,
         obj_field: ObjectField,
-        tensor_args: Dict[str, Any] = DEFAULT_TENSOR_ARGS,
+        tensor_args: Dict[str, Any],
     ) -> None:
         self.limits = limits
         self.tensor_args = tensor_args
@@ -30,24 +29,26 @@ class GridMapSDF:
                 self.grid_resolution[i],
                 **self.tensor_args,
             )
-            for i in range(N_DIMS)
+            for i in range(N_DIM)
         ]
-        
+
         points_for_sdf_meshgrid = torch.meshgrid(*basis_ranges, indexing="ij")
         self.points_for_sdf = torch.stack(points_for_sdf_meshgrid, dim=-1)
 
-        grad_fn = lambda x: self.obj_field.compute_signed_distance(x).sum(dim=tuple(range(x.dim() - 1)))
-        
+        grad_fn = lambda x: self.obj_field.compute_signed_distance(x).sum(
+            dim=tuple(range(x.dim() - 1))
+        )
+
         sdf_batches = []
         grad_batches = []
         batch_size = 64
-        
+
         for i in range(0, self.points_for_sdf.shape[0], batch_size):
             torch.cuda.empty_cache()
             points_batch = self.points_for_sdf[i : i + batch_size]
             sdf_batches.append(self.obj_field.compute_signed_distance(points_batch))
             grad_batches.append(jacobian(grad_fn, points_batch).permute(1, 2, 0, 3))
-        
+
         torch.cuda.empty_cache()
         self.sdf_tensor = torch.cat(sdf_batches, dim=0)
         self.grad_sdf_tensor = torch.cat(grad_batches, dim=0)
@@ -61,11 +62,25 @@ class GridMapSDF:
 
         max_idx = torch.tensor(self.points_for_sdf.shape[:-1], device=x.device) - 1
         x_idx = x_idx.clamp(torch.zeros_like(max_idx), max_idx)
-        x_query = tuple(x_idx[..., i] for i in range(N_DIMS))
+        x_query = tuple(x_idx[..., i] for i in range(N_DIM))
 
         sdf_vals = self.sdf_tensor[x_query]
         grad_sdf = self.grad_sdf_tensor[x_query]
-    
+
         grid_point = self.points_for_sdf[x_query]
-        sdf_vals = sdf_vals + ((x - x.detach()).unsqueeze(-2) * grad_sdf).sum(-1)
+        sdf_vals = sdf_vals + ((x - grid_point).unsqueeze(-2) * grad_sdf).sum(-1)
         return sdf_vals
+
+    def to(
+        self, device: torch.device = None, dtype: torch.dtype = None
+    ) -> "GridMapSDF":
+        if device is not None:
+            self.tensor_args["device"] = device
+        if dtype is not None:
+            self.tensor_args["dtype"] = dtype
+        self.limits = self.limits.to(device=device, dtype=dtype)
+        self.points_for_sdf = self.points_for_sdf.to(device=device, dtype=dtype)
+        self.sdf_tensor = self.sdf_tensor.to(device=device, dtype=dtype)
+        self.grad_sdf_tensor = self.grad_sdf_tensor.to(device=device, dtype=dtype)
+        self.obj_field.to(device=device, dtype=dtype)
+        return self

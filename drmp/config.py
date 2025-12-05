@@ -1,6 +1,6 @@
 import torch
 
-N_DIMS = 2
+N_DIM = 2
 
 DEFAULT_TENSOR_ARGS = {
     "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
@@ -9,26 +9,28 @@ DEFAULT_TENSOR_ARGS = {
 
 DEFAULT_TRAIN_ARGS = {
     "checkpoints_dir": "../models/",
-    "checkpoint_name": "EnvDense2D_5_20_bs32_lr0.0001_steps1000",
+    "checkpoint_name": "EnvDense2D_50_15_bs32_lr0.0001_steps100000",
     # Dataset
     "datasets_dir": "../datasets/",
-    "dataset_name": "EnvDense2D-5-20",
+    "dataset_name": "EnvDense2D-50-15",
     # Diffusion Model
     "diffusion_model_name": "GaussianDiffusion",
     "variance_schedule": "exponential",
     "n_diffusion_steps": 25,
+    "clip_denoised": True,
     "predict_epsilon": True,
     # Unet
-    "unet_input_dim": 32,
-    "unet_dim_mults": "(1, 2, 4)",
-    "time_emb_dim": 32,
-    "self_attention": False,
-    "conditioning_embed_dim": 4,
-    "conditioning_type": None,
-    "attention_num_heads": 2,
-    "attention_dim_head": 32,
+    "hidden_dim": 32,
+    "dim_mults": "(1, 2, 4, 8)",
+    "kernel_size": 5,
+    "resnet_block_groups": 8,
+    "random_fourier_features": False,
+    "learned_sin_dim": 16,
+    "attn_heads": 4,
+    "attn_head_dim": 32,
+    "context_dim": 2 * N_DIM,
     # Training parameters
-    "num_train_steps": 10000,
+    "num_train_steps": 100000,
     "lr": 1e-4,
     "batch_size": 32,
     "clip_grad": False,
@@ -42,8 +44,8 @@ DEFAULT_TRAIN_ARGS = {
     # Validation parameters
     "steps_per_validation": 10,
     # Summary parameters
-    "log_interval": 100,
-    "checkpoint_interval": 200,
+    "log_interval": 2000,
+    "checkpoint_interval": 20000,
     # Other
     "device": "cuda",
     "debug": False,
@@ -55,7 +57,7 @@ DEFAULT_INFERENCE_ARGS = {
     "experiment_name": None,
     "n_tasks": 1,
     "n_samples": 50,
-    "splits": "(\"train\", \"val\", \"test\")",
+    "splits": '("train", "val", "test")',
     # Model
     "checkpoints_dir": "../models/checkpoints/",
     "checkpoint_name": "EnvDense2D_5_20_bs32_lr0.0001_steps1000",
@@ -71,11 +73,12 @@ DEFAULT_INFERENCE_ARGS = {
     # Guidance
     "start_guide_steps_fraction": 0.25,
     "n_guide_steps": 5,
-    "weight_grad_cost_collision": 1e-2,
-    "weight_grad_cost_smoothness": 1e-7,
-    "num_interpolated_points_for_collision": 5,
-    # Trajectory
-    "trajectory_duration": 5.0,
+    "sigma_collision": 1e1,
+    "sigma_gp": 1e3,
+    "do_clip_grad": True,
+    "max_grad_norm": 1.0,
+    "do_interpolate": True,
+    "n_interpolate": 5,
     # Other
     "device": "cuda",
     "debug": True,
@@ -85,21 +88,22 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": "../datasets/",
-    "dataset_name": "EnvDense2D-5-20",
+    "dataset_name": "EnvDense2D-50-15",
     "env_name": "EnvDense2D",
     "normalizer_name": "LimitsNormalizer",
     "robot_margin": 0.01,
-    "cutoff_margin": 0.01,
-    # Task generation
-    "n_tasks": 5,
-    "n_trajectories": 5,
-    "threshold_start_goal_pos": 1.0,
-    # Planning parameters
-    "sample_iters": 10000,
-    "opt_iters": 500,
-    # Trajectory parameters
+    "cutoff_margin": 0.02,
     "n_support_points": 64,
     "duration": 5.0,
+    # Task generation
+    "n_tasks": 50,
+    "n_trajectories": 15,
+    "threshold_start_goal_pos": 1.0,
+    # Planning parameters
+    "sample_steps": 10000,
+    "opt_steps": 300,
+    "use_parallel": True,
+    "max_processes": -1,
     # Other
     "val_portion": 0.05,
     "device": "cuda",

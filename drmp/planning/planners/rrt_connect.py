@@ -1,147 +1,145 @@
-from sys import path
-import torch
 from typing import Any, Dict, List, Optional
-import matplotlib.pyplot as plt
-from drmp.utils.trajectory_utils import (
-    extend_path,
-    purge_duplicates_from_traj,
-    safe_path,
-)
+
+import torch
+
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
 
 
 class TreeNode:
-    __slots__ = ("config", "parent")  # Memory optimization
+    __slots__ = ("pos", "parent")
 
-    def __init__(self, config: torch.Tensor, parent: "TreeNode" = None):
-        self.config = config
+    def __init__(self, pos: torch.Tensor, parent: "TreeNode" = None):
+        self.pos = pos
         self.parent = parent
 
-    def retrace(self) -> list["TreeNode"]:
+    def trace(self, forward=False) -> torch.Tensor:
         sequence = []
         node = self
         while node is not None:
-            sequence.append(node)
+            sequence.append(node.pos)
             node = node.parent
-        return sequence[::-1]
-
-    def render(self, ax: plt.Axes):
-        if self.parent is not None:
-            x, y = self.config.cpu().numpy(), self.parent.config.cpu().numpy()
-            ax.plot([x[0], y[0]], [x[1], y[1]], color="k", linewidth=0.5)
+        res = torch.stack(sequence) if forward else torch.stack(sequence[::-1])
+        return res
 
 
-class RRTConnect():
+class RRTConnect:
     def __init__(
         self,
         env: EnvBase,
         robot: Robot,
-        start_pos: torch.Tensor,
-        goal_pos: torch.Tensor,
-        step_size: float = 0.1,
-        n_radius: float = 1.0,
-        n_pre_samples: int = 10000,
-        pre_samples: torch.Tensor = None,
+        step_size: float,
+        n_radius: float,
+        n_samples: int,
+        eps: float = 1e-6,
         planner_id: int = None,
         tensor_args: Dict[str, Any] = None,
     ):
         self.tensor_args = tensor_args
         self.env = env
         self.robot = robot
-        self.start_pos = start_pos
-        self.goal_pos = goal_pos
         self.step_size = step_size
         self.n_radius = n_radius
         self.planner_id = planner_id
+        self.eps = eps
 
-        # Pre-sampling for efficiency
-        self.n_pre_samples = n_pre_samples
-        self.pre_samples = self._initialize_samples(pre_samples)
+        self.n_samples = n_samples
+        self.samples: torch.Tensor = None
+        ok = self._initialize_samples()
+        if not ok:
+            raise RuntimeError("Failed to initialize RRTConnect samples")
 
-        # Tree structures
-        self.nodes_tree_1: Optional[List[TreeNode]] = None
-        self.nodes_tree_2: Optional[List[TreeNode]] = None
-        self.nodes_tree_1_torch: Optional[torch.Tensor] = None
-        self.nodes_tree_2_torch: Optional[torch.Tensor] = None
+    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
+        self.start_pos = start_pos.to(**self.tensor_args)
+        self.goal_pos = goal_pos.to(**self.tensor_args)
 
-    def _initialize_samples(self, pre_samples: Optional[torch.Tensor]) -> torch.Tensor:
-        if pre_samples is not None and len(pre_samples) > 0:
-            n_needed = max(0, self.n_pre_samples - len(pre_samples))
-            if n_needed > 0:
-                new_samples, success = self.env.random_collision_free_q(robot=self.robot, n_samples=n_needed, max_tries=1000)
-                if not success:
-                    print("Could not find sufficient collision-free start/goal pairs for test tasks, try reducing the threshold, robot margin or object density")
-                    return pre_samples
-                return torch.cat([pre_samples, new_samples], dim=0)
-            return pre_samples
-        pre_samples, success = self.env.random_collision_free_q(robot=self.robot, n_samples=self.n_pre_samples, max_tries=1000)
-        if not success:
-            print("Could not find sufficient collision-free start/goal pairs for test tasks, try reducing the threshold, robot margin or object density")
-            return torch.empty((0,), **self.tensor_args)
-        return pre_samples
+        self.samples_ptr = 0
 
-    def sample_collision_free(self) -> torch.Tensor:
-        if len(self.pre_samples) > 0:
-            idx = torch.randint(0, len(self.pre_samples), (1,))[0]
-            sample = self.pre_samples[idx]
-            # Remove used sample
-            self.pre_samples = torch.cat(
-                [self.pre_samples[:idx], self.pre_samples[idx + 1 :]]
-            )
-            return sample
-        # Fallback: generate new sample on-the-fly
-        sample, success = self.env.random_collision_free_q(robot=self.robot, n_samples=1, max_tries=1000)
-        if not success:
-            print("Could not find a collision-free sample on-the-fly, try reducing the threshold, robot margin or object density")
-            return torch.empty((0,), **self.tensor_args)
-        return sample
-
-    def distance_fn(self, q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
-        return torch.linalg.norm(q1 - q2, dim=-1)
-
-    def get_nearest_node(self, nodes: list["TreeNode"], nodes_torch: torch.Tensor, target: torch.Tensor) -> "TreeNode":
-        distances = self.distance_fn(nodes_torch, target)
-        min_idx = torch.argmin(distances)
-        return nodes[min_idx]
-
-    def extend_fn(self, q1: torch.Tensor, q2: torch.Tensor, max_step: float, max_dist: float) -> List[torch.Tensor]:
-        return extend_path(
-            self.distance_fn, q1, q2, max_step, max_dist, tensor_args=self.tensor_args
-        )
-
-    def collision_fn(self, q: torch.Tensor) -> torch.Tensor:
-        return self.env.get_collision_mask(self.robot, q).squeeze()
-
-    def optimize(self, sample_iters: int, timeout: float = None, print_freq: int = 10, debug: bool = False) -> Optional[torch.Tensor]:
-        self.sample_iters = sample_iters
-        self.timeout = timeout
-        # Check start and goal validity
-        if self.collision_fn(self.start_pos) or self.collision_fn(
-            self.goal_pos
-        ):
-            print("Start or goal state is in collision")
-            return None
-
-        # Initialize trees
         self.nodes_tree_1 = [TreeNode(self.start_pos)]
         self.nodes_tree_2 = [TreeNode(self.goal_pos)]
         self.nodes_tree_1_torch = self.start_pos.unsqueeze(0)
         self.nodes_tree_2_torch = self.goal_pos.unsqueeze(0)
 
-        iteration = 0
-        success = False
+    def _initialize_samples(self) -> bool:
+        samples, success = self.env.random_collision_free_q(
+            robot=self.robot, n_samples=self.n_samples
+        )
+        if not success:
+            print(
+                "Could not find sufficient collision-free start/goal pairs for RRTConnect samples"
+            )
+        self.samples = samples
+        return success
+
+    def sample(self) -> torch.Tensor:
+        if self.samples_ptr >= len(self.samples):
+            self._initialize_samples()
+            self.samples_ptr = 0
+
+        x = self.samples[self.samples_ptr]
+        self.samples_ptr += 1
+        return x
+
+    def get_nearest_node(
+        self, nodes: list["TreeNode"], nodes_torch: torch.Tensor, target: torch.Tensor
+    ) -> "TreeNode":
+        distances = torch.linalg.norm(nodes_torch - target, dim=-1)
+        min_idx = torch.argmin(distances)
+        return nodes[min_idx]
+
+    def extend(
+        self, q1: torch.Tensor, q2: torch.Tensor, max_step: float, max_dist: float
+    ) -> List[torch.Tensor]:
+        dist = torch.linalg.norm(q1 - q2, dim=-1)
+        if dist > max_dist:
+            q2 = q1 + (q2 - q1) * (max_dist / dist)
+
+        alpha = torch.linspace(0, 1, int(dist / max_step) + 2).to(**self.tensor_args)
+        q1 = q1.unsqueeze(0)
+        q2 = q2.unsqueeze(0)
+        extension = q1 + (q2 - q1) * alpha.unsqueeze(1)
+        return extension
+
+    def cut(self, sequence: torch.Tensor) -> torch.Tensor:
+        in_collision = self.env.get_collision_mask(self.robot, sequence).squeeze()
+        idxs_in_collision = torch.argwhere(in_collision)
+        if idxs_in_collision.nelement() == 0:
+            first_idx_in_collision = sequence.shape[0]
+        else:
+            first_idx_in_collision = idxs_in_collision[0].item()
+        return sequence[:first_idx_in_collision]
+
+    def purge_duplicates_from_traj(self, path: torch.Tensor) -> torch.Tensor:
+        if path.shape[0] <= 2:
+            return path
+
+        diff = torch.norm(torch.diff(path, dim=-2), dim=-1)
+        idxs = torch.argwhere(diff > self.eps).squeeze(-1)
+        selection = path[idxs]
+
+        if not torch.allclose(selection[0], path[0], atol=self.eps):
+            selection = torch.cat((path[:1], selection), dim=0)
+        if not torch.allclose(selection[-1], path[-1], atol=self.eps):
+            selection = torch.cat((selection, path[-1:]), dim=0)
+        return selection
+
+    def optimize(
+        self, sample_steps: int, traj_id: int, print_freq: int = 10, debug: bool = True
+    ) -> Optional[torch.Tensor]:
+        self.sample_steps = sample_steps
+        self.traj_id = traj_id
+
+        step = 0
         path = None
 
         with TimerCUDA() as t:
-            while iteration < sample_iters:
-                if iteration % print_freq == 0:
-                    self.print_info(iteration, t.elapsed, success)
+            while step < sample_steps:
+                if debug and step % print_freq == 0:
+                    self.print_info(step, t.elapsed, False)
 
-                iteration += 1
+                step += 1
 
-                # Always swap trees for bidirectional search
                 self.nodes_tree_1, self.nodes_tree_2 = (
                     self.nodes_tree_2,
                     self.nodes_tree_1,
@@ -150,87 +148,82 @@ class RRTConnect():
                     self.nodes_tree_2_torch,
                     self.nodes_tree_1_torch,
                 )
-
-                # Sample new target
-                target = self.sample_collision_free()
-
-                # Extend tree 1 towards target
+                target = self.sample()
                 nearest = self.get_nearest_node(
                     self.nodes_tree_1, self.nodes_tree_1_torch, target
                 )
-                extended = self.extend_fn(
-                    nearest.config, target, self.step_size, self.n_radius
+                extended = self.extend(
+                    nearest.pos, target, self.step_size, self.n_radius
                 )
-                path_segment = safe_path(extended, self.collision_fn)
+                path_segment = self.cut(extended)
 
-                if len(path_segment) == 0:
+                if path_segment.shape[0] == 1:
                     continue
 
-                # Add new node to tree 1
                 n1 = TreeNode(path_segment[-1], parent=nearest)
                 self.nodes_tree_1.append(n1)
-                self.nodes_tree_1_torch = torch.vstack(
-                    [self.nodes_tree_1_torch, n1.config]
+                self.nodes_tree_1_torch = torch.cat(
+                    [self.nodes_tree_1_torch, n1.pos.unsqueeze(0)], dim=0
                 )
-
-                # Try to connect tree 2 to the new node
                 nearest = self.get_nearest_node(
-                    self.nodes_tree_2, self.nodes_tree_2_torch, n1.config
+                    self.nodes_tree_2, self.nodes_tree_2_torch, n1.pos
                 )
-                extended = self.extend_fn(
-                    nearest.config, n1.config, self.step_size, self.n_radius
+                extended = self.extend(
+                    nearest.pos, n1.pos, self.step_size, self.n_radius
                 )
-                path_segment = safe_path(extended, self.collision_fn)
+                path_segment = self.cut(extended)
 
-                if len(path_segment) == 0:
+                if path_segment.shape[0] == 1:
                     continue
 
-                # Add new node to tree 2
                 n2 = TreeNode(path_segment[-1], parent=nearest)
                 self.nodes_tree_2.append(n2)
-                self.nodes_tree_2_torch = torch.vstack(
-                    [self.nodes_tree_2_torch, n2.config]
+                self.nodes_tree_2_torch = torch.cat(
+                    [self.nodes_tree_2_torch, n2.pos.unsqueeze(0)], dim=0
                 )
 
-                # Check if trees connected
-                if torch.allclose(n1.config, n2.config, atol=1e-6):
-                    success = True
+                if torch.allclose(n1.pos, n2.pos, atol=self.eps):
+                    tree_1_root = self.nodes_tree_1[0].pos
+                    if torch.allclose(tree_1_root, self.goal_pos, atol=self.eps):
+                        n1, n2 = n2, n1
 
-                    # Swap back to get correct order
-                    self.nodes_tree_1, self.nodes_tree_2 = (
-                        self.nodes_tree_2,
-                        self.nodes_tree_1,
-                    )
-                    n1, n2 = n2, n1
-
-                    # Construct path
-                    path1 = [node.config for node in n1.retrace()]
-                    path2 = [node.config for node in n2.retrace()]
-                    path = path1[:-1] + path2[::-1]
+                    path1 = n1.trace(forward=False)
+                    path2 = n2.trace(forward=True)
+                    path = torch.cat((path1, path2), dim=0)
                     break
 
-            if path is not None and len(path) > 1:
-                self.print_info(iteration, t.elapsed, success)
-                
-        return purge_duplicates_from_traj(path, eps=1e-6) if path is not None else None
+            if path is not None and debug:
+                self.print_info(step, t.elapsed, True)
 
-    def print_info(self, iteration, elapsed_time, success):
-        prefix = f"[P{self.planner_id}] " if self.planner_id is not None else ""
-        total_nodes = (
-            len(self.nodes_tree_1) + len(self.nodes_tree_2) if self.nodes_tree_1 else 0
+        return self.purge_duplicates_from_traj(path) if path is not None else None
+
+    def print_info(self, step, elapsed_time, success):
+        prefix = (
+            f"[P{self.planner_id}] [{self.traj_id}]"
+            if self.planner_id is not None
+            else f"[{self.traj_id}]"
         )
-        pad = len(str(self.sample_iters))
+        total_nodes = len(self.nodes_tree_1) + len(self.nodes_tree_2)
+        pad = len(str(self.sample_steps))
         print(
-            f"{prefix}Iteration: {iteration:>{pad}}/{self.sample_iters:>{pad}} "
+            f"{prefix} Step: {step:>{pad}}/{self.sample_steps:>{pad}} "
             f"| Time: {elapsed_time:.3f} s"
             f"| Nodes: {total_nodes} "
             f"| Success: {success}"
         )
 
-    def render(self, ax: plt.Axes):
-        if self.nodes_tree_1:
-            for node in self.nodes_tree_1:
-                node.render(ax)
-        if self.nodes_tree_2:
-            for node in self.nodes_tree_2:
-                node.render(ax)
+    def to(
+        self, device: torch.device = None, dtype: torch.dtype = None
+    ) -> "RRTConnect":
+        if device is not None:
+            self.tensor_args["device"] = device
+        if dtype is not None:
+            self.tensor_args["dtype"] = dtype
+
+        if self.samples is not None:
+            self.samples = self.samples.to(device=device, dtype=dtype)
+
+        self.env.to(device=device, dtype=dtype)
+        self.robot.to(device=device, dtype=dtype)
+
+        return self

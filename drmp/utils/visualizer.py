@@ -1,12 +1,12 @@
 from typing import List, Optional
+
 import matplotlib.collections as mcoll
 import numpy as np
+import torch
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import BoxStyle, FancyBboxPatch
-import torch
 
-from drmp.utils.torch_utils import to_numpy
 from drmp.world.environments import EnvBase
 from drmp.world.primitives import MultiBoxField, MultiSphereField
 from drmp.world.robot import Robot
@@ -24,35 +24,40 @@ class Visualizer:
         "fixed_obstacle": "gray",
         "extra_obstacle": "red",
     }
-    
+
     START_GOAL_RADIUS = 0.05
     TRAJECTORY_POINT_SIZE = 4
-    
+
     def __init__(self, env: EnvBase, robot: Robot) -> None:
         self.env: EnvBase = env
         self.robot: Robot = robot
-    
-    def _render_environment(self, ax: plt.Axes, plot_extra_objects: bool = True) -> None:
+
+    def _render_environment(
+        self, ax: plt.Axes, plot_extra_objects: bool = True
+    ) -> None:
         for field in self.env.obj_field_fixed.fields:
             self._render_primitive_field(ax, field, color=self.COLORS["fixed_obstacle"])
 
         if plot_extra_objects:
             for field in self.env.obj_field_extra.fields:
-                self._render_primitive_field(ax, field, color=self.COLORS["extra_obstacle"])
+                self._render_primitive_field(
+                    ax, field, color=self.COLORS["extra_obstacle"]
+                )
         limits = self.env.limits_np
         ax.set_xlim(limits[0][0], limits[1][0])
         ax.set_ylim(limits[0][1], limits[1][1])
-        
+
         ax.set_aspect("equal")
         ax.set_xlabel("x")
         ax.set_ylabel("y")
 
-    def _render_primitive_field(self, ax: plt.Axes, field: MultiSphereField|MultiBoxField, color: str ="gray") -> None:
+    def _render_primitive_field(
+        self, ax: plt.Axes, field: MultiSphereField | MultiBoxField, color: str = "gray"
+    ) -> None:
         if isinstance(field, MultiSphereField):
-            for center, radius in zip(field.centers, field.radii):
-                center_np = to_numpy(center)
-                radius_np = to_numpy(radius)
-                
+            centers_np = field.centers.cpu().numpy()
+            radii_np = field.radii.cpu().numpy()
+            for center_np, radius_np in zip(centers_np, radii_np):
                 circle = plt.Circle(
                     center_np,
                     radius_np,
@@ -62,68 +67,75 @@ class Visualizer:
                 )
                 ax.add_patch(circle)
         elif isinstance(field, MultiBoxField):
-            for center, half_size, radius in zip(field.centers, field.half_sizes, field.radii):
-                center_np = to_numpy(center)
-                half_size_np = to_numpy(half_size)
+            centers_np = field.centers.cpu().numpy()
+            half_sizes_np = field.half_sizes.cpu().numpy()
+            radii_np = field.radii.cpu().numpy()
+            for center_np, half_size_np, radius in zip(
+                centers_np, half_sizes_np, radii_np
+            ):
                 corner = center_np - half_size_np
-                
+
                 box = FancyBboxPatch(
                     corner,
                     2 * half_size_np[0],
                     2 * half_size_np[1],
                     color=color,
-                    boxstyle=BoxStyle.Round(pad=0.0, rounding_size=to_numpy(radius).item()),
+                    boxstyle=BoxStyle.Round(
+                        pad=0.0, rounding_size=radius
+                    ),
                 )
                 ax.add_patch(box)
 
-    def _render_start_goal_states(self, ax: plt.Axes, start_state: torch.Tensor, goal_state: torch.Tensor) -> None:
-        start_pos = to_numpy(start_state)
+    def _render_start_goal_states(
+        self, ax: plt.Axes, start_state: torch.Tensor, goal_state: torch.Tensor
+    ) -> None:
+        start_pos = start_state.cpu().numpy()
         circle = plt.Circle(
-            start_pos,
-            self.START_GOAL_RADIUS,
-            color=self.COLORS["start"],
-            zorder=100
-        )
-        ax.add_patch(circle)
-        
-        goal_pos = to_numpy(goal_state)
-        circle = plt.Circle(
-            goal_pos,
-            self.START_GOAL_RADIUS,
-            color=self.COLORS["goal"],
-            zorder=100
+            start_pos, self.START_GOAL_RADIUS, color=self.COLORS["start"], zorder=100
         )
         ax.add_patch(circle)
 
-    def _render_robot_states(self, ax: plt.Axes, states: torch.Tensor, colors: List[str] = None) -> None:          
+        goal_pos = goal_state.cpu().numpy()
+        circle = plt.Circle(
+            goal_pos, self.START_GOAL_RADIUS, color=self.COLORS["goal"], zorder=100
+        )
+        ax.add_patch(circle)
+
+    def _render_robot_states(
+        self, ax: plt.Axes, states: torch.Tensor, colors: List[str] = None
+    ) -> None:
         pos = self.robot.get_position(states).reshape(-1, 2)
-        pos_np = to_numpy(pos)
+        pos_np = pos.cpu().numpy()
         if colors is None:
             collision_mask = self.env.get_collision_mask(self.robot, pos)
             colors = [
                 self.COLORS["robot_collision"] if coll else self.COLORS["robot_free"]
                 for coll in collision_mask
             ]
-        
+
         for p, color in zip(pos_np, colors):
             circle = plt.Circle(p, self.robot.margin, color=color, alpha=0.5, zorder=10)
             ax.add_patch(circle)
 
-    def _render_trajectories(self, ax: plt.Axes, trajs: torch.Tensor, colors: List[str] = None) -> None:           
-        _, _, points_collision_mask = self.env.get_trajs_collision_and_free(self.robot, trajs)
+    def _render_trajectories(
+        self, ax: plt.Axes, trajs: torch.Tensor, colors: List[str] = None
+    ) -> None:
+        _, _, points_collision_mask = self.env.get_trajs_collision_and_free(
+            self.robot, trajs
+        )
         trajs_collision_mask = points_collision_mask.any(dim=-1)
         if colors is None:
             colors = [
                 self.COLORS["collision"] if coll else self.COLORS["free"]
                 for coll in trajs_collision_mask
-            ]   
-        
+            ]
+
         trajs_pos = self.robot.get_position(trajs)
-        trajs_np = to_numpy(trajs_pos)
+        trajs_np = trajs_pos.cpu().numpy()
         segments = [trajs_np[i] for i in range(trajs_np.shape[0])]
         line_collection = mcoll.LineCollection(segments, colors=colors)
         ax.add_collection(line_collection)
-        
+
     def render_scene(
         self,
         trajs: torch.Tensor,
@@ -140,21 +152,17 @@ class Visualizer:
         self._render_environment(ax)
         self._render_trajectories(ax, trajs)
         self._render_robot_states(ax, trajs)
-        
+
         if traj_best is not None:
             self._render_trajectories(
-                ax, 
-                traj_best.unsqueeze(0), 
-                colors=[self.COLORS["traj_best"]]
+                ax, traj_best.unsqueeze(0), colors=[self.COLORS["traj_best"]]
             )
             self._render_robot_states(
-                ax, 
-                traj_best.unsqueeze(0), 
-                colors=[self.COLORS["traj_best"]]
+                ax, traj_best.unsqueeze(0), colors=[self.COLORS["traj_best"]]
             )
+        if start_state is not None and goal_state is not None:
+            self._render_start_goal_states(ax, start_state, goal_state)
 
-        self._render_start_goal_states(ax, start_state, goal_state)
-        
         if save_path is not None:
             print("Saving figure...")
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -162,7 +170,7 @@ class Visualizer:
 
         return fig, ax
 
-    def animate_trajectories(
+    def animate_robot_motion(
         self,
         trajs: torch.Tensor,
         traj_best: Optional[torch.Tensor] = None,
@@ -170,19 +178,18 @@ class Visualizer:
         goal_state: Optional[torch.Tensor] = None,
         n_frames: int = 60,
         anim_time: int = 5,
-        save_path : str = "trajectories_animation.mp4",
+        save_path: str = "robot_motion_animation.mp4",
     ):
-
-        B, H, D = trajs.shape
-        frame_indices = np.round(np.linspace(0, H - 1, n_frames)).astype(int)
+        N = trajs.shape[1]
+        frame_indices = np.round(np.linspace(0, N - 1, n_frames)).astype(int)
         trajs_at_frames = trajs[:, frame_indices, :]
 
         fig, ax = plt.subplots()
 
         def update_frame(frame_idx):
             ax.clear()
-            ax.set_title(f"Step: {frame_indices[frame_idx]}/{H - 1}")
-            
+            ax.set_title(f"Step: {frame_indices[frame_idx]}/{N - 1}")
+
             self.render_scene(
                 fig=fig,
                 ax=ax,
@@ -202,8 +209,6 @@ class Visualizer:
             self._render_robot_states(ax, current_states, colors=colors)
 
         self._save_animation(fig, update_frame, n_frames, anim_time, save_path)
-    
-    animate_robot_trajectories = animate_trajectories
 
     def animate_optimization_iterations(
         self,
@@ -215,8 +220,7 @@ class Visualizer:
         anim_time: int = 5,
         save_path: str = "trajectories_optimization_animation.mp4",
     ):
-
-        S, B, H, D = trajs.shape
+        S = trajs.shape[0]
         frame_indices = np.round(np.linspace(0, S - 1, n_frames)).astype(int)
         trajs_at_iters = trajs[frame_indices]
 
@@ -225,9 +229,9 @@ class Visualizer:
         def update_frame(frame_idx):
             ax.clear()
             ax.set_title(f"Iteration: {frame_indices[frame_idx]}/{S - 1}")
-            
+
             is_last_frame = frame_idx == n_frames - 1
-            
+
             self.render_scene(
                 fig=fig,
                 ax=ax,
@@ -237,14 +241,14 @@ class Visualizer:
                 goal_state=goal_state,
                 save_path=None,
             )
-            
+
             self._render_start_goal_states(ax, start_state, goal_state)
 
         self._save_animation(fig, update_frame, n_frames, anim_time, save_path)
 
     def _save_animation(self, fig, update_fn, n_frames, anim_time, save_path):
         print("Creating animation...")
-        
+
         animation = FuncAnimation(
             fig,
             update_fn,
@@ -252,9 +256,9 @@ class Visualizer:
             interval=anim_time * 1000 / n_frames,
             repeat=False,
         )
-        
+
         print("Saving animation...")
         fps = max(1, int(n_frames / anim_time))
         animation.save(save_path, fps=fps, dpi=90)
-        
+
         print(f"Animation saved to {save_path}")

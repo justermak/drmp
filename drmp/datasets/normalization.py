@@ -13,7 +13,7 @@ class Normalizer(ABC):
             X_flat = X.reshape(-1, X.shape[-1])
         else:
             X_flat = X
-        
+
         self.mins = X_flat.min(dim=0).values
         self.maxs = X_flat.max(dim=0).values
 

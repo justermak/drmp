@@ -8,17 +8,24 @@ import torch
 from torch.utils.data import Subset
 
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.models.guides import GuideTrajectories
-from drmp.models.models import PlanningModel
-from drmp.planning.metrics import *
+from drmp.inference.guides import GuideTrajectories
+from drmp.models.diffusion import PlanningModel
 from drmp.planning.costs.cost_functions import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
 )
+from drmp.planning.metrics import (
+    compute_collision_intensity,
+    compute_free_fraction,
+    compute_path_length,
+    compute_smoothness,
+    compute_success,
+    compute_waypoints_variance,
+)
 from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.yaml import save_config_to_yaml
 from drmp.utils.visualizer import Visualizer
+from drmp.utils.yaml import save_config_to_yaml
 
 
 def run_inference_for_task(
@@ -35,9 +42,9 @@ def run_inference_for_task(
 ) -> Dict[str, Any]:
     robot = dataset.robot
     env = dataset.env
-    
+
     context = model.build_context(data_normalized)
-    hard_conds = model.build_hard_conds(data_normalized)
+    hard_conds = model.build_hard_conditions(data_normalized)
 
     with TimerCUDA() as timer_model_sampling:
         trajs_normalized_iters = model.run_inference(
@@ -54,9 +61,10 @@ def run_inference_for_task(
 
     trajs_iters = dataset.normalizer.unnormalize(trajs_normalized_iters)
     trajs_final = trajs_iters[-1]
-    
-    
-    trajs_final_coll, trajs_final_free, points_final_collision_mask = env.get_trajs_collision_and_free(robot, trajs_final)
+
+    trajs_final_coll, trajs_final_free, points_final_collision_mask = (
+        env.get_trajs_collision_and_free(robot, trajs_final)
+    )
 
     success = compute_success(trajs_final_free)
     free_fraction = compute_free_fraction(trajs_final_free, trajs_final_coll)
@@ -68,7 +76,7 @@ def run_inference_for_task(
     cost_path_length = None
     cost_all = None
     waypoints_variance = None
-    
+
     if trajs_final_free is not None:
         cost_smoothness = compute_smoothness(trajs_final_free, robot)
         cost_path_length = compute_path_length(trajs_final_free, robot)
@@ -76,17 +84,21 @@ def run_inference_for_task(
         idx_best_traj = torch.argmin(cost_all).item()
         traj_final_best = trajs_final_free[idx_best_traj]
         cost_best = torch.min(cost_all).item()
-        waypoints_variance = compute_waypoints_variance(
-            trajs_final_free, robot
-        ).cpu().numpy()
+        waypoints_variance = (
+            compute_waypoints_variance(trajs_final_free, robot).cpu().numpy()
+        )
         cost_smoothness = cost_smoothness.cpu().numpy()
         cost_path_length = cost_path_length.cpu().numpy()
         cost_all = cost_all.cpu().numpy()
 
     task_results = {
         "task_id": task_id,
-        "start_state_pos": robot.get_position(dataset.normalizer.unnormalize(data_normalized["start_states_normalized"])),
-        "goal_state_pos": robot.get_position(dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"])),
+        "start_state_pos": robot.get_position(
+            dataset.normalizer.unnormalize(data_normalized["start_states_normalized"])
+        ),
+        "goal_state_pos": robot.get_position(
+            dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"])
+        ),
         "trajs_iters": trajs_iters,
         "trajs_final": trajs_final,
         "trajs_final_coll": trajs_final_coll,
@@ -119,11 +131,11 @@ def run_inference_on_dataset(
 ) -> List[Dict[str, Any]]:
     results = []
     dataset: TrajectoryDataset = subset.dataset
-    
+
     for i in range(n_tasks):
         idx = np.random.choice(subset.indices)
         data_normalized = dataset[idx]
-        
+
         task_results = run_inference_for_task(
             task_id=i,
             data_normalized=data_normalized,
@@ -137,26 +149,37 @@ def run_inference_on_dataset(
             ddim=ddim,
         )
         results.append(task_results)
-    
+
     return results
 
 
 def compute_stats(results_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if len(results_list) == 0:
         return None
-    
+
     n_tasks = len(results_list)
     total_success = sum(r["success"] for r in results_list)
     total_free_fraction = sum(r["free_fraction"] for r in results_list)
     total_collision_intensity = sum(r["collision_intensity"] for r in results_list)
     total_time = sum(r["t_task"] for r in results_list)
-    
-    # Compute average costs for tasks with collision-free trajectories
+
     costs_best = [r["cost_best"] for r in results_list if r["cost_best"] is not None]
-    costs_smoothness = [r["cost_smoothness"].mean().item() for r in results_list if r["cost_smoothness"] is not None]
-    costs_path_length = [r["cost_path_length"].mean().item() for r in results_list if r["cost_path_length"] is not None]
-    waypoints_variance = [r["waypoints_variance"] for r in results_list if r["waypoints_variance"] is not None]
-    
+    costs_smoothness = [
+        r["cost_smoothness"].mean().item()
+        for r in results_list
+        if r["cost_smoothness"] is not None
+    ]
+    costs_path_length = [
+        r["cost_path_length"].mean().item()
+        for r in results_list
+        if r["cost_path_length"] is not None
+    ]
+    waypoints_variance = [
+        r["waypoints_variance"]
+        for r in results_list
+        if r["waypoints_variance"] is not None
+    ]
+
     stats = {
         "n_tasks": n_tasks,
         "total_time": total_time,
@@ -167,15 +190,19 @@ def compute_stats(results_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]
         "avg_cost_best": np.mean(costs_best) if costs_best else None,
         "std_cost_best": np.std(costs_best) if costs_best else None,
         "avg_cost_smoothness": np.mean(costs_smoothness) if costs_smoothness else None,
-        "avg_cost_path_length": np.mean(costs_path_length) if costs_path_length else None,
-        "avg_waypoints_variance": np.mean(waypoints_variance) if waypoints_variance else None,
+        "avg_cost_path_length": np.mean(costs_path_length)
+        if costs_path_length
+        else None,
+        "avg_waypoints_variance": np.mean(waypoints_variance)
+        if waypoints_variance
+        else None,
     }
     return stats
 
 
 def print_stats(results):
     print("=" * 80)
-    
+
     for split_name in ["train", "val", "test"]:
         stats = results.get(f"{split_name}_stats")
         if stats is None:
@@ -186,28 +213,38 @@ def print_stats(results):
         print(f"  avg_time_per_task: {stats['avg_time_per_task']:.3f} sec")
         print(f"  success_rate: {stats['success_rate'] * 100:.2f}%")
         print(f"  avg_free_fraction: {stats['avg_free_fraction'] * 100:.2f}%")
-        print(f"  avg_collision_intensity: {stats['avg_collision_intensity'] * 100:.2f}%")
-        if stats['avg_cost_best'] is not None:
-            print(f"  avg_cost_best: {stats['avg_cost_best']:.4f} ± {stats['std_cost_best']:.4f}")
-        if stats['avg_cost_smoothness'] is not None:
+        print(
+            f"  avg_collision_intensity: {stats['avg_collision_intensity'] * 100:.2f}%"
+        )
+        if stats["avg_cost_best"] is not None:
+            print(
+                f"  avg_cost_best: {stats['avg_cost_best']:.4f} ± {stats['std_cost_best']:.4f}"
+            )
+        if stats["avg_cost_smoothness"] is not None:
             print(f"  avg_cost_smoothness: {stats['avg_cost_smoothness']:.4f}")
-        if stats['avg_cost_path_length'] is not None:
+        if stats["avg_cost_path_length"] is not None:
             print(f"  avg_cost_path_length: {stats['avg_cost_path_length']:.4f}")
-        if stats['avg_waypoints_variance'] is not None:
+        if stats["avg_waypoints_variance"] is not None:
             print(f"  avg_waypoints_variance: {stats['avg_waypoints_variance']:.4f}")
-    
+
+
 def visualize_results(
     results: Dict[str, List[Dict[str, Any]]],
     dataset: TrajectoryDataset,
     generation_dir: str,
-    trajectory_duration: float,
 ):
-
     robot = dataset.robot
-    task = dataset.task
-    planner_visualizer = Visualizer(task=task)
+    planner_visualizer = Visualizer(robot=robot)
 
-    first_task = results["test"][0] if "test" in results and len(results["test"]) > 0 else (results["val"][0] if "val" in results and len(results["val"]) > 0 else results["train"][0])
+    first_task = (
+        results["test"][0]
+        if "test" in results and len(results["test"]) > 0
+        else (
+            results["val"][0]
+            if "val" in results and len(results["val"]) > 0
+            else results["train"][0]
+        )
+    )
     start_state_pos = first_task["start_state_pos"]
     goal_state_pos = first_task["goal_state_pos"]
     trajs_iters = first_task["trajs_iters"]
@@ -219,36 +256,34 @@ def visualize_results(
 
     planner_visualizer.render_scene(
         trajs=trajs_final_pos,
-        traj_best=robot.get_position(traj_final_best) if traj_final_best is not None else None,
+        traj_best=robot.get_position(traj_final_best)
+        if traj_final_best is not None
+        else None,
         start_state=start_state_pos,
         goal_state=goal_state_pos,
-        save_path=os.path.join(
-            generation_dir, f"task0-trajectories.png"
-        ),
+        save_path=os.path.join(generation_dir, f"task0-trajectories.png"),
+    )
+
+    planner_visualizer.animate_robot_motion(
+        trajs=trajs_final_pos,
+        traj_best=robot.get_position(traj_final_best)
+        if traj_final_best is not None
+        else None,
+        start_state=start_state_pos,
+        goal_state=goal_state_pos,
+        save_path=os.path.join(generation_dir, f"task0-robot-motion.mp4"),
+        n_frames=min(50, trajs_final_pos.shape[1]),
     )
 
     planner_visualizer.animate_optimization_iterations(
         trajs=trajs_iters_pos,
-        traj_best=robot.get_position(traj_final_best) if traj_final_best is not None else None,
+        traj_best=robot.get_position(traj_final_best)
+        if traj_final_best is not None
+        else None,
         start_state=start_state_pos,
         goal_state=goal_state_pos,
-        save_path=os.path.join(
-            generation_dir, f"task0-opt-iters.mp4"
-        ),
+        save_path=os.path.join(generation_dir, f"task0-opt-iters.mp4"),
         n_frames=min(50, len(trajs_iters_pos)),
-        anim_time=5,
-    )
-
-    planner_visualizer.animate_robot_trajectories(
-        trajs=trajs_final_pos,
-        traj_best=robot.get_position(traj_final_best) if traj_final_best is not None else None,
-        start_state=start_state_pos,
-        goal_state=goal_state_pos,
-        save_path=os.path.join(
-            generation_dir, f"task0-robot-motion.mp4"
-        ),
-        n_frames=min(50, trajs_final_pos.shape[1]),
-        anim_time=trajectory_duration,
     )
 
     plt.show()
@@ -262,11 +297,13 @@ def run_inference(
     test_subset: Optional[Subset],
     generations_dir: str,
     experiment_name: str,
-    trajectory_duration: float,
     use_extra_objects: bool,
-    weight_grad_cost_collision: float,
-    weight_grad_cost_smoothness: float,
-    num_interpolated_points_for_collision: int,
+    sigma_collisionision: float,
+    sigma_gp: float,
+    do_clip_grad: bool,
+    max_grad_norm: float,
+    do_interpolate: bool,
+    n_interpolate: int,
     start_guide_steps_fraction: float,
     n_tasks: int,
     n_samples: int,
@@ -277,21 +314,19 @@ def run_inference(
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> Dict[str, Any]:
-    
     generation_dir = os.path.join(generations_dir, experiment_name)
     os.makedirs(generation_dir, exist_ok=True)
     robot: Robot = dataset.robot
-    
-    dt: float = trajectory_duration / (dataset.n_support_points - 1)
-    robot.dt = dt
-    
+
     config = {
-        "trajectory_duration": trajectory_duration,
         "use_extra_objects": use_extra_objects,
-        "weight_grad_cost_collision": weight_grad_cost_collision,
-        "weight_grad_cost_smoothness": weight_grad_cost_smoothness,
-        "num_interpolated_points_for_collision": num_interpolated_points_for_collision,
         "start_guide_steps_fraction": start_guide_steps_fraction,
+        "sigma_collisionision": sigma_collisionision,
+        "sigma_gp": sigma_gp,
+        "do_clip_grad": do_clip_grad,
+        "max_grad_norm": max_grad_norm,
+        "do_interpolate": do_interpolate,
+        "n_interpolate": n_interpolate,
         "n_tasks": n_tasks,
         "n_samples": n_samples,
         "threshold_start_goal_pos": threshold_start_goal_pos,
@@ -299,50 +334,49 @@ def run_inference(
         "n_diffusion_steps_without_noise": n_diffusion_steps_without_noise,
         "ddim": ddim,
     }
-    
-    save_config_to_yaml(config, os.path.join(generation_dir, "config.yaml"))
 
+    save_config_to_yaml(config, os.path.join(generation_dir, "config.yaml"))
 
     collision_costs = [
         CostCollision(
-            robot = robot,
+            robot=robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            sigma_coll=1.0,
+            sigma_collision=sigma_collisionision,
             on_extra=use_extra_objects,
             tensor_args=tensor_args,
         )
     ]
-    costs_weights = [weight_grad_cost_collision] * len(collision_costs)
 
     smoothness_costs = [
         CostGPTrajectory(
-            robot, dataset.n_support_points, dt, sigma_gp=1.0, tensor_args=tensor_args
+            robot=robot, 
+            n_support_points=dataset.n_support_points, 
+            sigma_gp=sigma_gp, 
+            tensor_args=tensor_args
         )
     ]
-    smoothness_weights = [weight_grad_cost_smoothness]
 
     costs = collision_costs + smoothness_costs
-    weights = costs_weights + smoothness_weights
 
     cost_composite = CostComposite(
         robot,
         dataset.n_support_points,
         costs=costs,
-        weights=weights,
         tensor_args=tensor_args,
     )
 
     guide = GuideTrajectories(
         dataset,
         cost_composite,
-        do_clip_grad=True,
-        interpolate_trajectories_for_collision=True,
-        num_interpolated_points_for_collision=num_interpolated_points_for_collision
+        do_clip_grad=do_clip_grad,
+        max_grad_norm=max_grad_norm,
+        do_interpolate=do_interpolate,
+        n_interpolate=n_interpolate,
     )
-    
+
     results = {}
-    
+
     print(f"{'=' * 80}")
     print(f"Starting trajectory generation for {n_tasks} tasks per split")
 
@@ -386,13 +420,16 @@ def run_inference(
         )
         results["test_stats"] = compute_stats(results["test"])
 
-
     print_stats(results)
 
     with open(os.path.join(generation_dir, "results_data_dict.pickle"), "wb") as f:
         pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     if debug:
-        visualize_results(results=results, dataset=dataset, generation_dir=generation_dir, trajectory_duration=trajectory_duration)
-    
+        visualize_results(
+            results=results,
+            dataset=dataset,
+            generation_dir=generation_dir,
+        )
+
     return results

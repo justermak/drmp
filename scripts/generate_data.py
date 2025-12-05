@@ -3,14 +3,14 @@ import torch
 
 from drmp.config import DEFAULT_DATA_GENERATION_ARGS
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.utils.seed import fix_random_seed
+from drmp.utils.torch_utils import fix_random_seed
 
 
 def run(args):
     fix_random_seed(args.seed)
     device = torch.device(args.device)
     tensor_args = {"device": device, "dtype": torch.float32}
-    
+
     print(f"-------- GENERATING DATA --------")
     print(f"env: {args.env_name}")
     print(f"n_tasks: {args.n_tasks}")
@@ -23,6 +23,8 @@ def run(args):
         normalizer_name=args.normalizer_name,
         robot_margin=args.robot_margin,
         cutoff_margin=args.cutoff_margin,
+        n_support_points=args.n_support_points,
+        duration=args.duration,
         tensor_args=tensor_args,
     )
 
@@ -30,11 +32,12 @@ def run(args):
         n_tasks=args.n_tasks,
         n_trajectories=args.n_trajectories,
         threshold_start_goal_pos=args.threshold_start_goal_pos,
-        sample_iters=args.sample_iters,
-        opt_iters=args.opt_iters,
-        n_support_points=args.n_support_points,
-        duration=args.duration,
+        sample_steps=args.sample_steps,
+        opt_steps=args.opt_steps,
         val_portion=args.val_portion,
+        use_parallel=args.use_parallel,
+        max_processes=args.max_processes,
+        seed=args.seed,
         debug=args.debug,
     )
 

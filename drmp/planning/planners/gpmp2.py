@@ -1,9 +1,8 @@
-import torch
 from typing import Any, Dict
+
+import torch
+
 from drmp.config import DEFAULT_TENSOR_ARGS
-
-
-from drmp.utils.torch_timer import TimerCUDA
 from drmp.planning.costs.cost_functions import (
     Cost,
     CostCollision,
@@ -11,171 +10,162 @@ from drmp.planning.costs.cost_functions import (
     CostGoalPrior,
     CostGP,
 )
+from drmp.utils.torch_timer import TimerCUDA
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
 
 
 def build_gpmp2_cost_composite(
-    robot:Robot,
+    robot: Robot,
     n_support_points: int,
-    dt: float,
-    start_state: torch.Tensor,
-    multi_goal_states: torch.Tensor,
-    num_particles_per_goal: int,
-    sigma_start:float,
-    sigma_gp:float,
-    sigma_coll: float,
+    start_pos: torch.Tensor,
+    goal_pos: torch.Tensor,
+    n_trajectories: int,
+    sigma_start: float,
     sigma_goal_prior: float,
+    sigma_gp: float,
+    sigma_collision: float,
     num_samples: int,
     env: EnvBase,
-    on_extra: bool = False,
-    tensor_args: Dict[str, Any]=DEFAULT_TENSOR_ARGS,
+    tensor_args: Dict[str, Any],
+    use_extra_obstacles: bool = False,
 ) -> Cost:
-    """
-    Construct cost composite function for GPMP and StochGPMP
-    """
-    cost_func_list = []
+    costs = []
 
-    # Start state + GP cost
-    cost_sigmas = dict(
-        sigma_start=sigma_start,
-        sigma_gp=sigma_gp,
-    )
-    start_state_zero_vel = torch.cat(
-        (start_state, torch.zeros(start_state.nelement(), **tensor_args))
+    start_state = torch.cat(
+        (start_pos, torch.zeros(start_pos.nelement(), **tensor_args))
     )
     cost_gp_prior = CostGP(
-        robot,
-        n_support_points,
-        start_state_zero_vel,
-        dt,
-        cost_sigmas,
+        robot=robot,
+        n_support_points=n_support_points,
+        start_state=start_state,
+        sigma_start=sigma_start,
+        sigma_gp=sigma_gp,
         tensor_args=tensor_args,
     )
-    cost_func_list.append(cost_gp_prior)
+    costs.append(cost_gp_prior)
 
-    # Goal state cost
-    if multi_goal_states is not None:
-        multi_goal_states_zero_vel = torch.cat(
-            (multi_goal_states, torch.zeros_like(multi_goal_states)), dim=-1
-        ).unsqueeze(0)  # add batch dim for interface
-        cost_goal_prior = CostGoalPrior(
-            robot,
-            n_support_points,
-            multi_goal_states=multi_goal_states_zero_vel,
-            num_particles_per_goal=num_particles_per_goal,
-            num_samples=num_samples,
-            sigma_goal_prior=sigma_goal_prior,
-            tensor_args=tensor_args,
-        )
-        cost_func_list.append(cost_goal_prior)
+    goal_state = torch.cat((goal_pos, torch.zeros_like(goal_pos)), dim=-1)
+    cost_goal_prior = CostGoalPrior(
+        robot=robot,
+        n_support_points=n_support_points,
+        goal_state=goal_state,
+        n_trajectories=n_trajectories,
+        num_samples=num_samples,
+        sigma_goal_prior=sigma_goal_prior,
+        tensor_args=tensor_args,
+    )
+    costs.append(cost_goal_prior)
 
-    # Collision costs
     cost_collision = CostCollision(
         robot=robot,
         env=env,
         n_support_points=n_support_points,
-        sigma_coll=sigma_coll,
-        on_extra=on_extra,
+        sigma_collision=sigma_collision,
+        use_extra_obstacles=use_extra_obstacles,
         tensor_args=tensor_args,
     )
-    cost_func_list.append(cost_collision)
+    costs.append(cost_collision)
 
     cost_composite = CostComposite(
-        robot, n_support_points, cost_func_list, tensor_args=tensor_args
+        robot=robot,
+        n_support_points=n_support_points,
+        costs=costs,
+        tensor_args=tensor_args,
     )
     return cost_composite
 
 
-class GPMP2():
+class GPMP2:
     def __init__(
         self,
         robot: Robot,
         env: EnvBase,
         n_dof: int,
         n_support_points: int,
-        num_particles_per_goal: int,
+        n_trajectories: int,
         dt: float,
-        start_pos: torch.Tensor,
-        multi_goal_pos: torch.Tensor,
-        num_samples:int,
-        sigma_start:float,
-        sigma_gp:float,
-        sigma_goal_prior:float,
-        sigma_coll: float,
+        num_samples: int,
+        sigma_start: float,
+        sigma_gp: float,
+        sigma_goal_prior: float,
+        sigma_collision: float,
         step_size: float,
         delta: float,
         method: str,
-        on_extra: bool = False,
-        tensor_args: Dict[str, Any]=DEFAULT_TENSOR_ARGS,
+        use_extra_obstacles: bool = False,
+        tensor_args: Dict[str, Any] = DEFAULT_TENSOR_ARGS,
     ):
         self.tensor_args = tensor_args
+        self.robot = robot
+        self.env = env
         self.n_dof = n_dof
         self.dim = 2 * self.n_dof
         self.n_support_points = n_support_points
         self.N = self.dim * self.n_support_points
-        self.num_goals = multi_goal_pos.shape[0]
-        self.num_particles_per_goal = num_particles_per_goal
-        self.num_particles = self.num_goals * self.num_particles_per_goal
+        self.n_trajectories = n_trajectories
         self.dt = dt
-        self.step_size = step_size
         self.delta = delta
         self.method = method
-        
-        self.start_state = torch.cat(
-            [start_pos, torch.zeros_like(start_pos)], dim=-1
-        )
-        self.multi_goal_states = torch.cat(
-            [multi_goal_pos, torch.zeros_like(multi_goal_pos)],
-            dim=-1,
+        self.use_extra_obstacles = use_extra_obstacles
+
+        self.num_samples = num_samples
+        self.sigma_start = sigma_start
+        self.sigma_gp = sigma_gp
+        self.sigma_goal_prior = sigma_goal_prior
+        self.sigma_collision = sigma_collision
+        self.step_size = step_size
+
+        self._particle_means: torch.Tensor = None
+
+    def _build_start_goal_cost(self, start_pos: torch.Tensor, goal_pos: torch.Tensor):
+        self.start_pos = start_pos
+        self.goal_pos = goal_pos
+        self.start_state = torch.cat([start_pos, torch.zeros_like(start_pos)], dim=-1)
+        self.goal_states = torch.cat([goal_pos, torch.zeros_like(goal_pos)], dim=-1)
+        self.cost = build_gpmp2_cost_composite(
+            robot=self.robot,
+            n_support_points=self.n_support_points,
+            start_pos=start_pos,
+            goal_pos=goal_pos,
+            n_trajectories=self.n_trajectories,
+            env=self.env,
+            use_extra_obstacles=self.use_extra_obstacles,
+            sigma_start=self.sigma_start,
+            sigma_gp=self.sigma_gp,
+            sigma_collision=self.sigma_collision,
+            sigma_goal_prior=self.sigma_goal_prior,
+            num_samples=self.num_samples,
+            tensor_args=self.tensor_args,
         )
 
-        self.cost = build_gpmp2_cost_composite(
-                robot=robot,
-                n_support_points=n_support_points,
-                dt=dt,
-                start_state=start_pos,
-                multi_goal_states=multi_goal_pos,
-                num_particles_per_goal=num_particles_per_goal,
-                env=env,
-                on_extra=on_extra,
-                sigma_start=sigma_start,
-                sigma_gp=sigma_gp,
-                sigma_coll=sigma_coll,
-                sigma_goal_prior=sigma_goal_prior,
-                num_samples=num_samples,
-                tensor_args=tensor_args,
-            )
-        
-        self._particle_means: torch.Tensor = None
-        
-        
+    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
+        self.start_pos = start_pos.to(**self.tensor_args)
+        self.goal_pos = goal_pos.to(**self.tensor_args)
+        self._build_start_goal_cost(self.start_pos, self.goal_pos)
+        self._particle_means = None
+
+    def reset_trajectories(self, initial_particle_means: torch.Tensor):
+        self._particle_means = initial_particle_means
+
     def get_trajs(self):
         trajs = self._particle_means.clone()
         return trajs
 
-    def get_costs(self, state_trajectories, **observation):
-        costs = self.cost(state_trajectories, **observation)
-        return costs
-
-
-    def reset(self, initial_particle_means: torch.Tensor):
-        self._particle_means = initial_particle_means
-
-    def optimize(self, opt_iters: int = 1, print_freq: int = 100, debug: bool=False):
-        self.opt_iters = opt_iters
+    def optimize(self, opt_steps: int = 1, print_freq: int = 100, debug: bool = True):
+        self.opt_steps = opt_steps
         with TimerCUDA() as t_opt:
-            for opt_step in range(opt_iters):
+            for opt_step in range(opt_steps):
                 b, K = self._step()
                 if debug and opt_step % print_freq == 0:
-                    costs_temp = self.get_costs(b, K)
-                    self.print_info(opt_step + 1, t_opt.elapsed, costs_temp)
-                        
+                    self.print_info(opt_step + 1, t_opt.elapsed, self.get_costs(b, K))
+
             if debug:
-                self.print_info(opt_iters, t_opt.elapsed, self.get_costs(b, K))
+                self.print_info(opt_steps, t_opt.elapsed, self.get_costs(b, K))
+
         trajs = self.get_trajs()
         return trajs
-    
+
     def _step(self):
         A, b, K = self.cost.get_linear_system(
             self._particle_means,
@@ -195,13 +185,14 @@ class GPMP2():
         )
 
         d_theta = d_theta.view(
-            self.num_particles,
+            self.n_trajectories,
             self.n_support_points,
             self.dim,
         )
 
-        self._particle_means = self._particle_means + self.step_size * d_theta
-        self._particle_means.detach_()
+        self._particle_means = (
+            self._particle_means + self.step_size * d_theta
+        ).detach()
 
         return b, K
 
@@ -214,12 +205,10 @@ class GPMP2():
     ):
         # Levenberg - Marquardt approximation
         # Original implementation with dense matrices
-        I = torch.eye(
-            self.N, self.N, device=self.tensor_args["device"], dtype=A.dtype
-        )
+        I = torch.eye(self.N, self.N, device=self.tensor_args["device"], dtype=A.dtype)
         A_t_K = A.transpose(-2, -1) @ K
         A_t_A = A_t_K @ A
-        
+
         # J_t_J = A_t_A + delta * I * torch.diagonal(A_t_A, dim1=-2, dim2=-1).unsqueeze(-1)
         # Since hessian will be averaged over particles, add diagonal matrix of the mean.
         diag_A_t_A = A_t_A.mean(0) * I
@@ -251,17 +240,16 @@ class GPMP2():
     def get_costs(self, errors: torch.Tensor, w_mat: torch.Tensor):
         costs = errors.transpose(1, 2) @ w_mat.unsqueeze(0) @ errors
         return costs.reshape(
-            self.num_particles,
+            self.n_trajectories,
         )
 
-    def print_info(self, iteration: int, t: float, costs: torch.Tensor):
-        pad = len(str(self.opt_iters))
+    def print_info(self, step: int, t: float, costs: torch.Tensor):
+        pad = len(str(self.opt_steps))
         mean_cost = costs.mean().item()
         min_cost = costs.min().item()
         max_cost = costs.max().item()
         print(
-            f"Iteration: {iteration:>{pad}}/{self.opt_iters:>{pad}} "
+            f"Step: {step:>{pad}}/{self.opt_steps:>{pad}} "
             f"| Time: {t:.3f}s "
             f"| Cost (mean/min/max): {mean_cost:.3e}/{min_cost:.3e}/{max_cost:.3e}"
         )
-

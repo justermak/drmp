@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
-from drmp.models.models import PlanningModel
+from drmp.models.diffusion import PlanningModel
 from drmp.train.logs import log
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.yaml import save_config_to_yaml
@@ -213,8 +213,6 @@ def train(
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> None:
-    
-
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
 
@@ -250,16 +248,18 @@ def train(
         "model_name": model.__class__.__name__,
         "state_dim": train_subset.dataset.state_dim,
         "n_support_points": train_subset.dataset.n_support_points,
-        "unet_input_dim": model.unet_input_dim,
+        "unet_hidden_dim": model.unet_hidden_dim,
         "unet_dim_mults": str(model.unet_dim_mults),
-        "time_emb_dim": model.time_emb_dim,
-        "self_attention": model.self_attention,
-        "conditioning_embed_dim": model.conditioning_embed_dim,
-        "conditioning_type": model.conditioning_type,
-        "attention_num_heads": model.attention_num_heads,
-        "attention_dim_head": model.attention_dim_head,
+        "unet_kernel_size": model.unet_kernel_size,
+        "unet_resnet_block_groups": model.unet_resnet_block_groups,
+        "unet_random_fourier_features": model.unet_random_fourier_features,
+        "unet_learned_sin_dim": model.unet_learned_sin_dim,
+        "unet_attn_heads": model.unet_attn_heads,
+        "unet_attn_head_dim": model.unet_attn_head_dim,
+        "unet_context_dim": model.unet_context_dim,
         "variance_schedule": model.variance_schedule,
         "n_diffusion_steps": model.n_diffusion_steps,
+        "clip_denoised": model.clip_denoised,
         "predict_epsilon": model.predict_epsilon,
         "log_interval": log_interval,
         "checkpoint_interval": checkpoint_interval,
@@ -325,9 +325,7 @@ def train(
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
                             )
-                        print(
-                            f"t_train_summary: {t_train_summary.elapsed:.4f} sec"
-                        )
+                        print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
 
                         validation_losses_log = {}
                         with TimerCUDA() as t_validation_loss:
@@ -353,9 +351,7 @@ def train(
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
                             )
-                        print(
-                            f"t_val_summary: {t_val_summary.elapsed:.4f} sec"
-                        )
+                        print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")
 
                     if early_stopper(total_val_loss):
                         print(f"Early stopped training at {step} steps.")

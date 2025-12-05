@@ -6,9 +6,9 @@ import torch
 
 from drmp.config import DEFAULT_TRAIN_ARGS
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.models.models import get_models
+from drmp.models.diffusion import get_models
 from drmp.train import train
-from drmp.utils.seed import fix_random_seed
+from drmp.utils.torch_utils import fix_random_seed
 from drmp.utils.yaml import load_config_from_yaml
 
 MODELS = get_models()
@@ -37,12 +37,24 @@ def run(args):
 
     # Filter config to only include parameters accepted by TrajectoryDataset.__init__
     # Override paths with command line arguments to ensure correct paths
+    
+    # datasets_dir: str,
+    #     dataset_name: str,
+    #     env_name: str,
+    #     normalizer_name: str,
+    #     robot_margin: float,
+    #     cutoff_margin: float,
+    #     n_support_points: int,
+    #     duration: float,
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
-        "normalizer_name": dataset_config["normalizer_name"],
-        "obstacle_cutoff_margin": dataset_config["obstacle_cutoff_margin"],
         "env_name": dataset_config["env_name"],
+        "normalizer_name": dataset_config["normalizer_name"],
+        "robot_margin": dataset_config["robot_margin"],
+        "cutoff_margin": dataset_config["cutoff_margin"],
+        "n_support_points": dataset_config["n_support_points"],
+        "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
     }
 
@@ -52,25 +64,27 @@ def run(args):
         dataset.load_train_val_split(batch_size=args.batch_size)
     )
 
-    print(f"Train dataset size: {len(train_subset.dataset)}")
-    print(f"Val dataset size: {len(val_subset.dataset)}")
+    print(f"Train dataset size: {len(train_subset)}")
+    print(f"Val dataset size: {len(val_subset)}")
 
     model = MODELS[args.diffusion_model_name](
         state_dim=train_subset.dataset.state_dim,
         n_support_points=train_subset.dataset.n_support_points,
-        unet_input_dim=args.unet_input_dim,
-        unet_dim_mults=eval(args.unet_dim_mults),
-        time_emb_dim=args.time_emb_dim,
-        self_attention=args.self_attention,
-        conditioning_embed_dim=args.conditioning_embed_dim,
-        conditioning_type=args.conditioning_type,
-        attention_num_heads=args.attention_num_heads,
-        attention_dim_head=args.attention_dim_head,
+        unet_hidden_dim=args.hidden_dim,
+        unet_dim_mults=eval(args.dim_mults),
+        unet_kernel_size=args.kernel_size,
+        unet_resnet_block_groups=args.resnet_block_groups,
+        unet_random_fourier_features=args.random_fourier_features,
+        unet_learned_sin_dim=args.learned_sin_dim,
+        unet_attn_heads=args.attn_heads,
+        unet_attn_head_dim=args.attn_head_dim,
+        unet_context_dim=args.context_dim,
         variance_schedule=args.variance_schedule,
         n_diffusion_steps=args.n_diffusion_steps,
+        clip_denoised=args.clip_denoised,
         predict_epsilon=args.predict_epsilon,
     ).to(device)
-    
+
     # you can load a checkpoint here
 
     train(
