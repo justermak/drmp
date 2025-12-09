@@ -3,7 +3,6 @@ from torch import nn
 
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.planning.costs.cost_functions import CostComposite
-from drmp.utils.trajectory_utils import interpolate_trajs
 
 
 class GuideTrajectories(nn.Module):
@@ -13,14 +12,12 @@ class GuideTrajectories(nn.Module):
         cost: CostComposite,
         do_clip_grad: bool,
         max_grad_norm: float,
-        do_interpolate: bool,
         n_interpolate: int,
     ) -> None:
         super().__init__()
         self.cost = cost
         self.dataset = dataset
 
-        self.do_interpolate = do_interpolate
         self.n_interpolate = n_interpolate
         self.do_clip_grad = do_clip_grad
         self.max_grad_norm = max_grad_norm
@@ -32,16 +29,11 @@ class GuideTrajectories(nn.Module):
 
             x = self.dataset.normalizer.unnormalize(x)
 
-            x_interpolated = interpolate_trajs(
-                    x,
-                    n_interpolate=self.n_interpolate,
-                ) if self.do_interpolate else None
-
             cost = self.cost(
-                trajs=x, trajs_interpolated=x_interpolated
-            )
-            cost.backward()
-            grad = cost.grad
+                trajectories=x, n_interpolate=self.n_interpolate
+            ).sum()
+            
+            grad = torch.autograd.grad(cost, x)[0]
             if self.do_clip_grad:
                 grad_norm = torch.linalg.norm(grad + 1e-8, dim=-1, keepdims=True)
                 scale_ratio = torch.clip(grad_norm, 0.0, self.max_grad_norm) / grad_norm

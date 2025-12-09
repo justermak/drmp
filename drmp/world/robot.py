@@ -26,12 +26,12 @@ class Robot:
         vel = x[..., N_DIM : 2 * N_DIM]
         return vel
 
-    def invert_trajectories(self, trajs: torch.Tensor) -> torch.Tensor:
-        trajs_reversed = torch.flip(trajs, dims=[-2])
-        pos_reversed = self.get_position(trajs_reversed)
-        vel_reversed = -self.get_velocity(trajs_reversed)
-        trajs_inverted = torch.cat([pos_reversed, vel_reversed], dim=-1)
-        return trajs_inverted
+    def invert_trajectories(self, trajectories: torch.Tensor) -> torch.Tensor:
+        trajectories_reversed = torch.flip(trajectories, dims=[-2])
+        pos_reversed = self.get_position(trajectories_reversed)
+        vel_reversed = -self.get_velocity(trajectories_reversed)
+        trajectories_inverted = torch.cat([pos_reversed, vel_reversed], dim=-1)
+        return trajectories_inverted
 
     def to(self, device: torch.device = None, dtype: torch.dtype = None) -> "Robot":
         """Move tensor_args to the specified device and dtype."""

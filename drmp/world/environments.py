@@ -6,7 +6,7 @@ import torch
 
 from drmp.config import N_DIM
 from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.trajectory_utils import interpolate_trajs
+from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.grid_map_sdf import GridMapSDF
 from drmp.world.primitives import MultiBoxField, MultiSphereField, ObjectField
 from drmp.world.robot import Robot
@@ -196,29 +196,23 @@ class EnvBase(ABC):
 
         return samples_start, samples_goal, cur >= n_samples
 
-    def get_trajs_collision_and_free(
+    def get_trajectories_collision_and_free(
         self,
+        trajectories: torch.Tensor,
         robot: Robot,
-        trajs: torch.Tensor,
         n_interpolate: int = 5,
         on_fixed: bool = True,
         on_extra: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        trajs_interpolated = interpolate_trajs(trajs, n_interpolate=n_interpolate)
+        trajectories_interpolated = interpolate_trajectories(trajectories=trajectories, n_interpolate=n_interpolate)
         points_collision_mask = self.get_collision_mask(
-            robot, trajs_interpolated, on_fixed=on_fixed, on_extra=on_extra
+            robot, trajectories_interpolated, on_fixed=on_fixed, on_extra=on_extra
         )
-        trajs_collision_mask = points_collision_mask.any(dim=-1)
-        trajs_collision = trajs[trajs_collision_mask]
-        trajs_free = trajs[~trajs_collision_mask]
+        trajectories_collision_mask = points_collision_mask.any(dim=-1)
+        trajectories_collision = trajectories[trajectories_collision_mask]
+        trajectories_free = trajectories[~trajectories_collision_mask]
 
-        return trajs_collision, trajs_free, points_collision_mask
-
-    def get_rrt_connect_params(self):
-        raise NotImplementedError
-
-    def get_gpmp2_params(self):
-        raise NotImplementedError
+        return trajectories_collision, trajectories_free, points_collision_mask
 
 
 class EnvSimple2D(EnvBase):
@@ -341,30 +335,6 @@ class EnvSimple2D(EnvBase):
             sdf_cell_size=0.005,
             tensor_args=tensor_args,
         )
-
-    def get_rrt_connect_params(self):
-        params = dict(
-            step_size=0.01,
-            n_radius=0.3,
-            n_samples=50000,
-        )
-        return params
-
-    def get_gpmp2_params(self):
-        params = dict(
-            n_support_points=64,
-            dt=0.04,
-            opt_iters=300,
-            num_samples=64,
-            sigma_start=1e-5,
-            sigma_goal_prior=1e-5,
-            sigma_gp=1e-2,
-            sigma_collision=1e-5,
-            step_size=1e-1,
-            delta=1e-2,
-            method="cholesky",
-        )
-        return params
 
 
 class EnvDense2D(EnvBase):
@@ -514,27 +484,3 @@ class EnvDense2D(EnvBase):
             sdf_cell_size=0.005,
             tensor_args=tensor_args,
         )
-
-    def get_rrt_connect_params(self):
-        params = dict(
-            step_size=0.01,
-            n_radius=0.3,
-            n_samples=50000,
-        )
-        return params
-
-    def get_gpmp2_params(self):
-        params = dict(
-            n_support_points=64,
-            dt=0.04,
-            opt_iters=300,
-            num_samples=64,
-            sigma_start=1e-5,
-            sigma_goal_prior=1e-5,
-            sigma_gp=1e-2,
-            sigma_collision=1e-4,
-            step_size=1e-1,
-            delta=1e-2,
-            method="cholesky",
-        )
-        return params

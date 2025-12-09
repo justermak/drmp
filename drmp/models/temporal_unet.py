@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class SinusoidalPosEmb(nn.Module):
+class RandomFourierSinusoidalPosEmb(nn.Module):
     def __init__(self, dim: int, is_random: bool = False):
         super().__init__()
         assert (dim % 2) == 0
@@ -14,6 +14,21 @@ class SinusoidalPosEmb(nn.Module):
         freqs = x * self.weights.unsqueeze(0) * 2 * torch.pi
         x = torch.cat((x, freqs.sin(), freqs.cos()), dim = -1)
         return x
+    
+class SinusoidalPosEmb(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        assert (dim % 2) == 0
+        self.dim = dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        device = x.device
+        half_dim = self.dim // 2
+        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        emb = x.unsqueeze(1) * emb.unsqueeze(0)
+        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+        return emb
 
 class Downsample1d(nn.Module):
     def __init__(self, dim):
@@ -102,8 +117,8 @@ class TemporalUNet(nn.Module):
         dim_mults: tuple,
         kernel_size: int,
         resnet_block_groups: int,
-        random_fourier_features: int,
-        learned_sin_dim: int,
+        positional_encoding: str,
+        positional_encoding_dim: int,
         attn_heads: int,
         attn_head_dim: int,
         context_dim: int = None,
@@ -112,19 +127,25 @@ class TemporalUNet(nn.Module):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.time_emb_dim = hidden_dim * 4
-        self.learned_sin_dim = learned_sin_dim
+        self.positional_encoding = positional_encoding
+        self.positional_encoding_dim = positional_encoding_dim
         self.dim_mults = dim_mults
         self.kernel_size = kernel_size
         self.resnet_block_groups = resnet_block_groups
-        self.random_fourier_features = random_fourier_features
         self.attn_heads = attn_heads
         self.attn_head_dim = attn_head_dim
+        if positional_encoding == "random_fourier":
+            positional_encodings = RandomFourierSinusoidalPosEmb(self.positional_encoding_dim, is_random=True)
+        elif positional_encoding == "learned_fourier":
+            positional_encodings = RandomFourierSinusoidalPosEmb(self.positional_encoding_dim, is_random=False)
+        elif positional_encoding == "sinusoidal":
+            positional_encodings = SinusoidalPosEmb(self.positional_encoding_dim)
+        else:
+            raise ValueError(f"Unknown positional encoding type: {positional_encoding}")
         
-        sin_pos_emb = SinusoidalPosEmb(self.learned_sin_dim, self.random_fourier_features)
-
         self.time_mlp = nn.Sequential(
-            sin_pos_emb,
-            nn.Linear(self.learned_sin_dim + 1, self.time_emb_dim),
+            positional_encodings,
+            nn.Linear(self.positional_encoding_dim + (1 if positional_encoding != "sinusoidal" else 0), self.time_emb_dim),
             nn.Mish(),
             nn.Linear(self.time_emb_dim, self.time_emb_dim)
         )

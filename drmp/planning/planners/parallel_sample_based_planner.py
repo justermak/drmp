@@ -150,33 +150,33 @@ class ParallelSampleBasedPlanner:
         ]
 
         print(
-            f"Starting parallel optimization: {self.n_trajectories} trajectories with {self._n_workers} workers..."
+            f"\nStarting parallel optimization: {self.n_trajectories} trajectories with {self._n_workers} workers..."
         )
 
-        trajs = []
+        trajectories = []
         for response in self._pool.imap_unordered(_worker_process_command, commands):
             if response.get("status") == "success":
                 result = response["result"].to(**self.planner.tensor_args)
-                trajs.append(result)
+                trajectories.append(result)
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print(f"Completed: {len(trajs)}/{self.n_trajectories} trajectories successful")
-        return trajs
+        print(f"Completed: {len(trajectories)}/{self.n_trajectories} trajectories successful")
+        return trajectories
 
     def _optimize_sequential(self, **kwargs) -> List[torch.Tensor]:
-        trajs = []
+        trajectories = []
         for i in range(self.n_trajectories):
             try:
                 kwargs["traj_id"] = i
                 self.planner.planner_id = 0
                 traj = self.planner.optimize(**kwargs)
-                trajs.append(traj)
+                trajectories.append(traj)
             except Exception as e:
                 print(f"Trajectory {i} optimization failed: {e}")
                 traceback.print_exc()
-        return trajs
+        return trajectories
 
     def shutdown(self) -> None:
         if self._pool is not None:

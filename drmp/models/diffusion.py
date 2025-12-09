@@ -6,13 +6,8 @@ from typing import Dict
 import torch
 import torch.nn as nn
 
-from drmp.models.beta_schedules import cosine_beta_schedule, exponential_beta_schedule
 from drmp.models.temporal_unet import TemporalUNet
 from drmp.world.robot import Robot
-
-def make_timesteps(batch_size, i, device):
-    t = torch.full((batch_size,), i, device=device, dtype=torch.long)
-    return t
 
 
 def get_models():
@@ -45,6 +40,15 @@ class PlanningModel(nn.Module, ABC):
     ):
         pass
 
+def cosine_beta_schedule(
+    n_diffusion_steps, s=0.008, a_min=0, a_max=0.999
+):
+    x = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
+    alphas_cumprod = torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    betas_clipped = torch.clamp(betas, min=a_min, max=a_max)
+    return betas_clipped
 
 class GaussianDiffusion(PlanningModel):
     def __init__(
@@ -55,14 +59,12 @@ class GaussianDiffusion(PlanningModel):
         unet_dim_mults: tuple,
         unet_kernel_size: int,
         unet_resnet_block_groups: int,
-        unet_random_fourier_features: bool,
-        unet_learned_sin_dim: int,
+        unet_positional_encoding: str,
+        unet_positional_encoding_dim: int,
         unet_attn_heads: int,
         unet_attn_head_dim: int,
         unet_context_dim: int,
-        variance_schedule: str,
         n_diffusion_steps: int,
-        clip_denoised: bool,
         predict_epsilon: bool,
     ):
         super().__init__()
@@ -73,14 +75,12 @@ class GaussianDiffusion(PlanningModel):
         self.unet_dim_mults = unet_dim_mults
         self.unet_kernel_size = unet_kernel_size
         self.unet_resnet_block_groups = unet_resnet_block_groups
-        self.unet_random_fourier_features = unet_random_fourier_features
-        self.unet_learned_sin_dim = unet_learned_sin_dim
+        self.unet_positional_encoding = unet_positional_encoding
+        self.unet_positional_encoding_dim = unet_positional_encoding_dim
         self.unet_attn_heads = unet_attn_heads
         self.unet_attn_head_dim = unet_attn_head_dim
         self.unet_context_dim = unet_context_dim
-        self.variance_schedule = variance_schedule
         self.n_diffusion_steps = n_diffusion_steps
-        self.clip_denoised = clip_denoised
         self.predict_epsilon = predict_epsilon
 
         self.model = TemporalUNet(
@@ -89,30 +89,17 @@ class GaussianDiffusion(PlanningModel):
             dim_mults=unet_dim_mults,
             kernel_size=unet_kernel_size,
             resnet_block_groups=unet_resnet_block_groups,
-            random_fourier_features=unet_random_fourier_features,
-            learned_sin_dim=unet_learned_sin_dim,
+            positional_encoding=unet_positional_encoding,
+            positional_encoding_dim=unet_positional_encoding_dim,
             attn_heads=unet_attn_heads,
             attn_head_dim=unet_attn_head_dim,
             context_dim=unet_context_dim,
         )
 
-        if variance_schedule == "cosine":
-            betas = cosine_beta_schedule(
-                n_diffusion_steps, s=0.008, a_min=0, a_max=0.999
-            )
-        elif variance_schedule == "exponential":
-            betas = exponential_beta_schedule(
-                n_diffusion_steps, beta_start=1e-4, beta_end=1.0
-            )
-        else:
-            raise NotImplementedError
-
+        betas = cosine_beta_schedule(n_diffusion_steps)
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, axis=0)
         alphas_cumprod_prev = torch.cat([torch.ones(1), alphas_cumprod[:-1]])
-
-        self.clip_denoised = clip_denoised
-        self.predict_epsilon = predict_epsilon
 
         self.register_buffer("betas", betas)
         self.register_buffer("alphas_cumprod", alphas_cumprod)
@@ -191,11 +178,7 @@ class GaussianDiffusion(PlanningModel):
 
     def p_mean_variance(self, x, context, t):
         x_recon = self.predict_start_from_noise(x, t=t, noise=self.model(x, t, context))
-
-        if self.clip_denoised:
-            x_recon.clamp_(-1.0, 1.0)
-        else:
-            assert RuntimeError()
+        x_recon = torch.clamp(x_recon, -1.0, 1.0)
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
             x_start=x_recon, x_t=x, t=t
@@ -228,7 +211,6 @@ class GaussianDiffusion(PlanningModel):
         shape,
         hard_conds,
         context,
-        n_diffusion_steps_without_noise=0,
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
@@ -244,13 +226,11 @@ class GaussianDiffusion(PlanningModel):
         chain = [x]
 
         for i in reversed(
-            range(-n_diffusion_steps_without_noise, self.n_diffusion_steps)
+            range(self.n_diffusion_steps)
         ):
-            t = make_timesteps(batch_size, i, device)
+            t = torch.full((batch_size,), i, device=device, dtype=torch.long)
 
             t_single = t[0]
-            if t_single < 0:
-                t = torch.zeros_like(t)
 
             model_mean, _, model_log_variance = self.p_mean_variance(
                 x=x, context=context, t=t
@@ -320,8 +300,8 @@ class GaussianDiffusion(PlanningModel):
         chain = [x]
 
         for time, time_next in time_pairs:
-            t = make_timesteps(batch_size, time, device)
-            t_next = make_timesteps(batch_size, time_next, device)
+            t = torch.full((batch_size,), time, device=device, dtype=torch.long)
+            t_next = torch.full((batch_size,), time_next, device=device, dtype=torch.long)
 
             model_out = self.model(x, t, context)
 
@@ -369,7 +349,6 @@ class GaussianDiffusion(PlanningModel):
         self,
         hard_conds,
         context,
-        n_diffusion_steps_without_noise=0,
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
@@ -383,7 +362,6 @@ class GaussianDiffusion(PlanningModel):
                 shape,
                 hard_conds,
                 context=context,
-                n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
                 start_guide_steps_fraction=start_guide_steps_fraction,
                 guide=guide,
                 n_guide_steps=n_guide_steps,
@@ -393,7 +371,6 @@ class GaussianDiffusion(PlanningModel):
             shape,
             hard_conds,
             context=context,
-            n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
             start_guide_steps_fraction=start_guide_steps_fraction,
             guide=guide,
             n_guide_steps=n_guide_steps,
@@ -405,7 +382,6 @@ class GaussianDiffusion(PlanningModel):
         context,
         hard_conds,
         n_samples=1,
-        n_diffusion_steps_without_noise=0,
         start_guide_steps_fraction=1.0,
         guide=None,
         n_guide_steps=1,
@@ -427,7 +403,6 @@ class GaussianDiffusion(PlanningModel):
             hard_conds,
             context=context,
             n_samples=n_samples,
-            n_diffusion_steps_without_noise=n_diffusion_steps_without_noise,
             start_guide_steps_fraction=start_guide_steps_fraction,
             guide=guide,
             n_guide_steps=n_guide_steps,
@@ -436,12 +411,12 @@ class GaussianDiffusion(PlanningModel):
 
         # chain: [ n_samples x (n_diffusion_steps + 1) x n_support_points x (state_dim)]
         # extract normalized trajectories
-        trajs_chain_normalized = chain
+        trajectories_chain_normalized = chain
 
-        # trajs: [ (n_diffusion_steps + 1) x n_samples x n_support_points x state_dim ]
-        trajs_chain_normalized = trajs_chain_normalized.permute(1, 0, 2, 3)
+        # trajectories: [ (n_diffusion_steps + 1) x n_samples x n_support_points x state_dim ]
+        trajectories_chain_normalized = trajectories_chain_normalized.permute(1, 0, 2, 3)
 
-        return trajs_chain_normalized
+        return trajectories_chain_normalized
 
     def q_sample(self, x_start, t, noise=None):
         if noise is None:
@@ -496,7 +471,7 @@ class GaussianDiffusion(PlanningModel):
         return hard_conds
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
-        traj_normalized = input_dict["trajs_normalized"]
+        traj_normalized = input_dict["trajectories_normalized"]
         context = self.build_context(input_dict)
         hard_conds = self.build_hard_conditions(input_dict)
         loss = self.loss(traj_normalized, context, hard_conds)

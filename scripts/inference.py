@@ -30,6 +30,10 @@ def run(args):
     print(f"n_tasks: {args.n_tasks}")
     print(f"n_samples: {args.n_samples}")
 
+    if args.checkpoint_name is None:
+        checkpoint_folders = os.listdir(args.checkpoints_dir)
+        checkpoint_folders.sort(key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)), reverse=True)
+        args.checkpoint_name = checkpoint_folders[0]
     checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
     model_config_path = os.path.join(checkpoint_dir, "config.yaml")
     model_config = load_config_from_yaml(model_config_path)
@@ -40,9 +44,12 @@ def run(args):
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
+        "env_name": dataset_config["env_name"],
         "normalizer_name": dataset_config["normalizer_name"],
         "robot_margin": dataset_config["robot_margin"],
-        "env_name": dataset_config["env_name"],
+        "cutoff_margin": dataset_config["cutoff_margin"],
+        "n_support_points": dataset_config["n_support_points"],
+        "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
     }
     dataset = TrajectoryDataset(**dataset_init_config)
@@ -54,9 +61,9 @@ def run(args):
     test_subset = None
 
     if "test" in splits:
-        task = dataset.task
 
-        start_pos, goal_pos, success = task.env.random_coll_free_start_goal(
+        start_pos, goal_pos, success = dataset.env.random_collision_free_start_goal(
+            robot=dataset.robot,
             n_samples=args.n_tasks,
             threshold_start_goal_pos=args.threshold_start_goal_pos,
         )
@@ -84,17 +91,25 @@ def run(args):
 
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        experiment_name = f"{args.checkpoint_name}_{args.dataset_name}_{timestamp}"
+        experiment_name = f"{args.checkpoint_name}_{timestamp}"
     else:
         experiment_name = args.experiment_name
 
     model = MODELS[model_config["model_name"]](
-        state_dim=dataset.state_dim,
-        n_support_points=dataset.n_support_points,
-        unet_input_dim=model_config["unet_input_dim"],
+        state_dim=model_config["state_dim"],
+        n_support_points=model_config["n_support_points"],
+        unet_hidden_dim=model_config["unet_hidden_dim"],
         unet_dim_mults=eval(model_config["unet_dim_mults"]),
+        unet_kernel_size=model_config["unet_kernel_size"],
+        unet_resnet_block_groups=model_config["unet_resnet_block_groups"],
+        unet_random_fourier_features=model_config["unet_random_fourier_features"],
+        unet_learned_sin_dim=model_config["unet_learned_sin_dim"],
+        unet_attn_heads=model_config["unet_attn_heads"],
+        unet_attn_head_dim=model_config["unet_attn_head_dim"],
+        unet_context_dim=model_config["unet_context_dim"],
         variance_schedule=model_config["variance_schedule"],
         n_diffusion_steps=model_config["n_diffusion_steps"],
+        clip_denoised=model_config["clip_denoised"],
         predict_epsilon=model_config["predict_epsilon"],
     ).to(device)
 
@@ -126,14 +141,12 @@ def run(args):
         sigma_gp=args.sigma_gp,
         do_clip_grad=args.do_clip_grad,
         max_grad_norm=args.max_grad_norm,
-        do_interpolate=args.do_interpolate,
         n_interpolate=args.n_interpolate,
         start_guide_steps_fraction=args.start_guide_steps_fraction,
         n_tasks=args.n_tasks,
         threshold_start_goal_pos=args.threshold_start_goal_pos,
         n_samples=args.n_samples,
         n_guide_steps=args.n_guide_steps,
-        n_diffusion_steps_without_noise=args.n_diffusion_steps_without_noise,
         ddim=args.ddim,
         debug=args.debug,
         tensor_args=tensor_args,

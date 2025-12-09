@@ -17,6 +17,7 @@ from drmp.world.robot import Robot
 
 def build_gpmp2_cost_composite(
     robot: Robot,
+    env: EnvBase,
     n_support_points: int,
     start_pos: torch.Tensor,
     goal_pos: torch.Tensor,
@@ -26,7 +27,6 @@ def build_gpmp2_cost_composite(
     sigma_gp: float,
     sigma_collision: float,
     num_samples: int,
-    env: EnvBase,
     tensor_args: Dict[str, Any],
     use_extra_obstacles: bool = False,
 ) -> Cost:
@@ -85,6 +85,7 @@ class GPMP2:
         n_support_points: int,
         n_trajectories: int,
         dt: float,
+        n_interpolate: int,
         num_samples: int,
         sigma_start: float,
         sigma_gp: float,
@@ -108,7 +109,8 @@ class GPMP2:
         self.delta = delta
         self.method = method
         self.use_extra_obstacles = use_extra_obstacles
-
+        
+        self.n_interpolate = n_interpolate
         self.num_samples = num_samples
         self.sigma_start = sigma_start
         self.sigma_gp = sigma_gp
@@ -125,11 +127,11 @@ class GPMP2:
         self.goal_states = torch.cat([goal_pos, torch.zeros_like(goal_pos)], dim=-1)
         self.cost = build_gpmp2_cost_composite(
             robot=self.robot,
+            env=self.env,
             n_support_points=self.n_support_points,
             start_pos=start_pos,
             goal_pos=goal_pos,
             n_trajectories=self.n_trajectories,
-            env=self.env,
             use_extra_obstacles=self.use_extra_obstacles,
             sigma_start=self.sigma_start,
             sigma_gp=self.sigma_gp,
@@ -148,9 +150,9 @@ class GPMP2:
     def reset_trajectories(self, initial_particle_means: torch.Tensor):
         self._particle_means = initial_particle_means
 
-    def get_trajs(self):
-        trajs = self._particle_means.clone()
-        return trajs
+    def get_trajectories(self):
+        trajectories = self._particle_means.clone()
+        return trajectories
 
     def optimize(self, opt_steps: int = 1, print_freq: int = 100, debug: bool = True):
         self.opt_steps = opt_steps
@@ -163,12 +165,12 @@ class GPMP2:
             if debug:
                 self.print_info(opt_steps, t_opt.elapsed, self.get_costs(b, K))
 
-        trajs = self.get_trajs()
-        return trajs
+        trajectories = self.get_trajectories()
+        return trajectories
 
     def _step(self):
         A, b, K = self.cost.get_linear_system(
-            self._particle_means,
+            trajectories=self._particle_means, n_interpolate=self.n_interpolate
         )
 
         J_t_J, g = self._get_grad_terms(
@@ -203,14 +205,10 @@ class GPMP2:
         K: torch.Tensor,
         delta: float = 0.0,
     ):
-        # Levenberg - Marquardt approximation
-        # Original implementation with dense matrices
         I = torch.eye(self.N, self.N, device=self.tensor_args["device"], dtype=A.dtype)
         A_t_K = A.transpose(-2, -1) @ K
         A_t_A = A_t_K @ A
 
-        # J_t_J = A_t_A + delta * I * torch.diagonal(A_t_A, dim1=-2, dim2=-1).unsqueeze(-1)
-        # Since hessian will be averaged over particles, add diagonal matrix of the mean.
         diag_A_t_A = A_t_A.mean(0) * I
         J_t_J = A_t_A + delta * diag_A_t_A
         g = A_t_K @ b

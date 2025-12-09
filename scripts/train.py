@@ -22,6 +22,7 @@ def run(args):
     print(f"-------- TRAINING STARTED --------")
     print(f"dataset: {args.dataset_name}")
     print(f"batch size: {args.batch_size}")
+    print(f"use filtered trajectories: {args.use_filtered_trajectories}")
     print(f"learning rate: {args.lr}")
     print(f"number of training steps: {args.num_train_steps}")
 
@@ -35,17 +36,6 @@ def run(args):
     dataset_config_path = os.path.join(dataset_dir, "config.yaml")
     dataset_config = load_config_from_yaml(dataset_config_path)
 
-    # Filter config to only include parameters accepted by TrajectoryDataset.__init__
-    # Override paths with command line arguments to ensure correct paths
-    
-    # datasets_dir: str,
-    #     dataset_name: str,
-    #     env_name: str,
-    #     normalizer_name: str,
-    #     robot_margin: float,
-    #     cutoff_margin: float,
-    #     n_support_points: int,
-    #     duration: float,
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
@@ -61,7 +51,7 @@ def run(args):
     dataset = TrajectoryDataset(**dataset_init_config)
     dataset.load_data()
     train_subset, train_dataloader, val_subset, val_dataloader = (
-        dataset.load_train_val_split(batch_size=args.batch_size)
+        dataset.load_train_val_split(batch_size=args.batch_size, use_filtered_trajectories=args.use_filtered_trajectories)
     )
 
     print(f"Train dataset size: {len(train_subset)}")
@@ -74,14 +64,12 @@ def run(args):
         unet_dim_mults=eval(args.dim_mults),
         unet_kernel_size=args.kernel_size,
         unet_resnet_block_groups=args.resnet_block_groups,
-        unet_random_fourier_features=args.random_fourier_features,
-        unet_learned_sin_dim=args.learned_sin_dim,
+        unet_positional_encoding=args.positional_encoding,
+        unet_positional_encoding_dim=args.positional_encoding_dim,
         unet_attn_heads=args.attn_heads,
         unet_attn_head_dim=args.attn_head_dim,
         unet_context_dim=args.context_dim,
-        variance_schedule=args.variance_schedule,
         n_diffusion_steps=args.n_diffusion_steps,
-        clip_denoised=args.clip_denoised,
         predict_epsilon=args.predict_epsilon,
     ).to(device)
 
@@ -106,7 +94,6 @@ def run(args):
         ema_warmup=args.ema_warmup,
         ema_update_interval=args.ema_update_interval,
         early_stopper_patience=args.early_stopper_patience,
-        steps_per_validation=args.steps_per_validation,
         use_amp=args.use_amp,
         debug=args.debug,
         tensor_args=tensor_args,
@@ -116,9 +103,7 @@ def run(args):
 if __name__ == "__main__":
     parser = configargparse.ArgumentParser()
 
-    special_args = {
-        "variance_schedule": {"choices": ["exponential", "cosine"]},
-    }
+    special_args = {}
 
     for key, value in DEFAULT_TRAIN_ARGS.items():
         arg_name = f"--{key}"

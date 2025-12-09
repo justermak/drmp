@@ -6,6 +6,7 @@ import torch
 
 from drmp.config import N_DIM
 from drmp.planning.costs.factors import FieldFactor, GPFactor, UnaryFactor
+from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
 
@@ -24,15 +25,15 @@ class Cost(ABC):
 
         self.tensor_args = tensor_args
 
-    def __call__(self, trajs, **kwargs):
-        return self.eval(trajs, **kwargs)
+    def __call__(self, trajectories, **kwargs):
+        return self.eval(trajectories, **kwargs)
 
     @abstractmethod
-    def eval(self, trajs, **kwargs):
+    def eval(self, trajectories, **kwargs):
         pass
 
     @abstractmethod
-    def get_linear_system(self, trajs: torch.Tensor):
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
         pass
 
 
@@ -49,32 +50,31 @@ class CostComposite(Cost):
 
     def eval(
         self,
-        trajs: torch.Tensor,
-        trajs_interpolated: torch.Tensor = None,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
     ):
-        print("Evaluating CostComposite...")
-        q_pos = self.robot.get_position(trajs)
-        q_vel = self.robot.get_velocity(trajs)
-
+        trajectories_interpolated = (
+            interpolate_trajectories(trajectories, n_interpolate=n_interpolate)
+        )
         cost = 0
-        for cost_fn in self.costs:
-            cost += cost_fn(
-                trajs if trajs_interpolated is None or not isinstance(cost, CostCollision) else trajs_interpolated,
-                q_pos=q_pos,
-                q_vel=q_vel,
+        for cost_class in self.costs:
+            cost += cost_class(
+                trajectories_interpolated, n_interpolate=n_interpolate
+            ) if isinstance(cost_class, CostCollision) else cost_class(
+                trajectories
             )
 
         return cost
 
-    def get_linear_system(self, trajs: torch.Tensor):
-        trajs.requires_grad = True
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
+        trajectories.requires_grad = True
 
-        batch_size = trajs.shape[0]
+        batch_size = trajectories.shape[0]
         As, bs, Ks = [], [], []
         optim_dim = 0
         for cost in self.costs:
             A, b, K = cost.get_linear_system(
-                trajs,
+                trajectories=trajectories, n_interpolate=n_interpolate
             )
             if A is None or b is None or K is None:
                 continue
@@ -118,11 +118,12 @@ class CostCollision(Cost):
             use_extra_obstacles=self.use_extra_obstacles,
         )
 
-    def eval(self, trajs: torch.Tensor):
+    def eval(self, trajectories: torch.Tensor, n_interpolate: int):
         err_obst = self.obst_factor.get_error(
-            q_trajs=trajs,
+            q_trajectories=trajectories,
             env=self.env,
             robot=self.robot,
+            n_interpolate=n_interpolate,
             calc_jacobian=False,
         )
         w_mat = self.obst_factor.K
@@ -133,15 +134,17 @@ class CostCollision(Cost):
 
     def get_linear_system(
         self,
-        trajs: torch.Tensor,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
     ):
         A, b, K = None, None, None
-        batch_size = trajs.shape[0]
+        batch_size = trajectories.shape[0]
 
         err_obst, H_obst = self.obst_factor.get_error(
-            q_trajs=trajs,
+            q_trajectories=trajectories,
             env=self.env,
             robot=self.robot,
+            n_interpolate=n_interpolate,
             calc_jacobian=True,
         )
 
@@ -197,8 +200,8 @@ class CostGPTrajectory(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajs: torch.Tensor):
-        err_gp = self.gp_prior.get_error(trajs, calc_jacobian=False)
+    def eval(self, trajectories: torch.Tensor):
+        err_gp = self.gp_prior.get_error(trajectories, calc_jacobian=False)
         w_mat = self.gp_prior.Q_inv[0]
         w_mat = w_mat.reshape(1, 1, self.dim, self.dim)
         gp_costs = err_gp.transpose(2, 3) @ w_mat @ err_gp
@@ -206,7 +209,7 @@ class CostGPTrajectory(Cost):
         costs = gp_costs
         return costs
 
-    def get_linear_system(self, trajs: torch.Tensor):
+    def get_linear_system(self, trajectories: torch.Tensor):
         pass
 
 
@@ -240,11 +243,11 @@ class CostGP(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajs: torch.Tensor):
+    def eval(self, trajectories: torch.Tensor):
         pass
 
-    def get_linear_system(self, trajs: torch.Tensor):
-        batch_size = trajs.shape[0]
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
+        batch_size = trajectories.shape[0]
         A = torch.zeros(
             batch_size,
             self.dim * self.n_support_points,
@@ -261,12 +264,12 @@ class CostGP(Cost):
             **self.tensor_args,
         )
 
-        err_p, H_p = self.start_prior.get_error(trajs[:, [0]])
+        err_p, H_p = self.start_prior.get_error(trajectories[:, [0]])
         A[:, : self.dim, : self.dim] = H_p
         b[:, : self.dim] = err_p
         K[:, : self.dim, : self.dim] = self.start_prior.K
 
-        err_gp, H1_gp, H2_gp = self.gp_prior.get_error(trajs)
+        err_gp, H1_gp, H2_gp = self.gp_prior.get_error(trajectories)
 
         A[:, self.dim :, : -self.dim] = torch.block_diag(*H1_gp)
         A[:, self.dim :, self.dim :] += torch.block_diag(*H2_gp)
@@ -300,26 +303,18 @@ class CostGoalPrior(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajs: torch.Tensor):
+    def eval(self, trajectories: torch.Tensor):
         pass
 
-    def get_linear_system(self, trajs: torch.Tensor):
-        A, b, K = None, None, None
-        trajs = trajs.reshape(
-            self.n_trajectories,
-            self.n_support_points,
-            self.dim,
-        )
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):       
         A = torch.zeros(
             self.n_trajectories,
             self.dim,
             self.dim * self.n_support_points,
             **self.tensor_args,
         )
-        b = torch.zeros(self.n_trajectories, self.dim, 1, **self.tensor_args)
-        K = torch.zeros(self.n_trajectories, self.dim, self.dim, **self.tensor_args)
 
-        err_g, H_g = self.goal_prior.get_error(trajs[:, [-1]])
+        err_g, H_g = self.goal_prior.get_error(trajectories[:, [-1]])
         A[:, :, -self.dim :] = H_g
         b = err_g
         K = self.goal_prior.K

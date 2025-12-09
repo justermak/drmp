@@ -40,12 +40,12 @@ def smoothen_trajectory(
         )
 
 
-def interpolate_trajs(trajs: torch.Tensor, n_interpolate: int = 0) -> torch.Tensor:
-    assert trajs.ndim == 3, "trajs must be of shape (n_trajs, n_waypoints, n_dims)"
-    n_waypoints = trajs.shape[-2]
+def interpolate_trajectories(trajectories: torch.Tensor, n_interpolate: int = 0) -> torch.Tensor:
+    assert trajectories.ndim == 3, "trajectories must be of shape (n_trajectories, n_waypoints, n_dims)"
+    n_waypoints = trajectories.shape[-2]
     n_total_points = (n_waypoints - 1) * (n_interpolate + 1) + 1
-    trajs_interpolate = F.interpolate(
-        trajs.transpose(-2, -1), size=n_total_points, mode="linear", align_corners=True
+    trajectories_interpolate = F.interpolate(
+        trajectories.transpose(-2, -1), size=n_total_points, mode="linear", align_corners=True
     ).transpose(-2, -1)
 
-    return trajs_interpolate
+    return trajectories_interpolate

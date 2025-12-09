@@ -6,6 +6,7 @@ import torch
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import BoxStyle, FancyBboxPatch
+from matplotlib.animation import FFMpegWriter
 
 from drmp.world.environments import EnvBase
 from drmp.world.primitives import MultiBoxField, MultiSphereField
@@ -18,6 +19,8 @@ class Visualizer:
         "free": "orange",
         "robot_collision": "black",
         "robot_free": "darkorange",
+        "robot_collision_moving": "red",
+        "robot_free_moving": "blue",
         "traj_best": "green",
         "start": "cyan",
         "goal": "magenta",
@@ -25,7 +28,7 @@ class Visualizer:
         "extra_obstacle": "red",
     }
 
-    START_GOAL_RADIUS = 0.05
+    START_GOAL_RADIUS = 0.005
     TRAJECTORY_POINT_SIZE = 4
 
     def __init__(self, env: EnvBase, robot: Robot) -> None:
@@ -101,144 +104,156 @@ class Visualizer:
         )
         ax.add_patch(circle)
 
+    def _compute_robot_state_colors(
+        self, collision_mask: torch.Tensor, best_traj_idx: int = None, moving: bool = False,
+    ) -> List[str]:  
+        colors = [
+            ((self.COLORS["robot_collision_moving" if moving else "robot_collision"]) 
+            if collision else 
+            (self.COLORS["traj_best"] if i == best_traj_idx else
+            (self.COLORS["robot_free_moving" if moving else "robot_free"])
+            ))
+            for i, row in enumerate(collision_mask) for collision in row
+        ]
+        return colors
+
+    def _compute_trajectory_colors(
+        self, trajectories_collision_mask: torch.Tensor, best_traj_idx: int = None
+    ) -> List[str]:
+        colors = [
+            self.COLORS["traj_best"] if i == best_traj_idx else
+            self.COLORS["collision"] if coll else self.COLORS["free"]
+            for i, coll in enumerate(trajectories_collision_mask)
+        ]
+        return colors
+
     def _render_robot_states(
-        self, ax: plt.Axes, states: torch.Tensor, colors: List[str] = None
+        self, ax: plt.Axes, states: torch.Tensor, colors: List[str], moving: bool = False, zorder: int = 10
     ) -> None:
         pos = self.robot.get_position(states).reshape(-1, 2)
-        pos_np = pos.cpu().numpy()
-        if colors is None:
-            collision_mask = self.env.get_collision_mask(self.robot, pos)
-            colors = [
-                self.COLORS["robot_collision"] if coll else self.COLORS["robot_free"]
-                for coll in collision_mask
-            ]
+        pos_np = pos.view(-1, 2).cpu().numpy()
 
         for p, color in zip(pos_np, colors):
-            circle = plt.Circle(p, self.robot.margin, color=color, alpha=0.5, zorder=10)
+            circle = plt.Circle(p, self.robot.margin * (2.0 if moving else 1.0), color=color, alpha=0.5, zorder=zorder)
             ax.add_patch(circle)
 
     def _render_trajectories(
-        self, ax: plt.Axes, trajs: torch.Tensor, colors: List[str] = None
+        self, ax: plt.Axes, trajectories: torch.Tensor, colors: List[str]
     ) -> None:
-        _, _, points_collision_mask = self.env.get_trajs_collision_and_free(
-            self.robot, trajs
-        )
-        trajs_collision_mask = points_collision_mask.any(dim=-1)
-        if colors is None:
-            colors = [
-                self.COLORS["collision"] if coll else self.COLORS["free"]
-                for coll in trajs_collision_mask
-            ]
-
-        trajs_pos = self.robot.get_position(trajs)
-        trajs_np = trajs_pos.cpu().numpy()
-        segments = [trajs_np[i] for i in range(trajs_np.shape[0])]
+        trajectories_pos = self.robot.get_position(trajectories)
+        trajectories_np = trajectories_pos.cpu().numpy()
+        segments = [trajectories_np[i] for i in range(trajectories_np.shape[0])]
         line_collection = mcoll.LineCollection(segments, colors=colors)
         ax.add_collection(line_collection)
 
     def render_scene(
         self,
-        trajs: torch.Tensor,
+        trajectories: torch.Tensor,
         fig: Optional[plt.Figure] = None,
         ax: Optional[plt.Axes] = None,
-        traj_best: Optional[torch.Tensor] = None,
+        best_traj_idx: Optional[int] = None,
         start_state: Optional[torch.Tensor] = None,
         goal_state: Optional[torch.Tensor] = None,
+        points_collision_mask: Optional[torch.Tensor] = None,
         save_path: Optional[str] = "trajectories_figure.png",
     ):
         if fig is None or ax is None:
             fig, ax = plt.subplots()
-
+        B, N, S = trajectories.shape
+        if points_collision_mask is None:
+            _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
+                trajectories=trajectories, robot=self.robot
+            )
+        trajectories_collision_mask = points_collision_mask.any(dim=-1)
+        points_collision_mask = points_collision_mask[:, ::6] # from interpolated to original trajectories
+        assert points_collision_mask.shape == (B, N)
+        
+        traj_colors = self._compute_trajectory_colors(trajectories_collision_mask, best_traj_idx)
+        robot_state_colors = self._compute_robot_state_colors(points_collision_mask, best_traj_idx)
+        
         self._render_environment(ax)
-        self._render_trajectories(ax, trajs)
-        self._render_robot_states(ax, trajs)
+        self._render_trajectories(ax, trajectories, traj_colors)
+        self._render_robot_states(ax, trajectories, robot_state_colors)
 
-        if traj_best is not None:
-            self._render_trajectories(
-                ax, traj_best.unsqueeze(0), colors=[self.COLORS["traj_best"]]
-            )
-            self._render_robot_states(
-                ax, traj_best.unsqueeze(0), colors=[self.COLORS["traj_best"]]
-            )
         if start_state is not None and goal_state is not None:
             self._render_start_goal_states(ax, start_state, goal_state)
 
         if save_path is not None:
             print("Saving figure...")
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
             print(f"Figure saved to {save_path}")
 
         return fig, ax
 
     def animate_robot_motion(
         self,
-        trajs: torch.Tensor,
-        traj_best: Optional[torch.Tensor] = None,
+        trajectories: torch.Tensor,
+        best_traj_idx: Optional[int] = None,
         start_state: Optional[torch.Tensor] = None,
         goal_state: Optional[torch.Tensor] = None,
         n_frames: int = 60,
         anim_time: int = 5,
         save_path: str = "robot_motion_animation.mp4",
     ):
-        N = trajs.shape[1]
+        B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, N - 1, n_frames)).astype(int)
-        trajs_at_frames = trajs[:, frame_indices, :]
-
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(trajectories=trajectories, robot=self.robot)
+        
         fig, ax = plt.subplots()
 
         def update_frame(frame_idx):
+            idx = frame_indices[frame_idx]
             ax.clear()
-            ax.set_title(f"Step: {frame_indices[frame_idx]}/{N - 1}")
+            ax.set_title(f"Step: {idx}/{N - 1}")
 
             self.render_scene(
                 fig=fig,
                 ax=ax,
-                trajs=trajs,
-                traj_best=traj_best if frame_idx == n_frames - 1 else None,
+                trajectories=trajectories,
+                best_traj_idx=best_traj_idx,
                 start_state=start_state,
                 goal_state=goal_state,
+                points_collision_mask=points_collision_mask,
                 save_path=None,
             )
 
-            current_states = trajs_at_frames[:, frame_idx, :]
-            collision_mask = self.env.get_collision_mask(self.robot, current_states)
-            colors = [
-                self.COLORS["robot_collision"] if coll else self.COLORS["robot_free"]
-                for coll in collision_mask
-            ]
-            self._render_robot_states(ax, current_states, colors=colors)
+            moving_colors = self._compute_robot_state_colors(points_collision_mask[:, [idx]], moving=True)
+            self._render_robot_states(ax, trajectories[:, [idx], :], moving_colors, moving=True, zorder=20)
 
         self._save_animation(fig, update_frame, n_frames, anim_time, save_path)
 
     def animate_optimization_iterations(
         self,
-        trajs: torch.Tensor,
-        traj_best: Optional[torch.Tensor] = None,
+        trajectories: torch.Tensor,
+        best_traj_idx: Optional[int] = None,
         start_state: Optional[torch.Tensor] = None,
         goal_state: Optional[torch.Tensor] = None,
         n_frames: int = 60,
         anim_time: int = 5,
         save_path: str = "trajectories_optimization_animation.mp4",
     ):
-        S = trajs.shape[0]
-        frame_indices = np.round(np.linspace(0, S - 1, n_frames)).astype(int)
-        trajs_at_iters = trajs[frame_indices]
-
+        I, B, N, S = trajectories.shape
+        frame_indices = np.round(np.linspace(0, I - 1, n_frames)).astype(int)
+        
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(self.robot, trajectories.reshape(-1, N, S))
+        points_collision_mask = points_collision_mask.reshape(I, B, -1)
+        
         fig, ax = plt.subplots()
 
         def update_frame(frame_idx):
+            idx = frame_indices[frame_idx]
             ax.clear()
             ax.set_title(f"Iteration: {frame_indices[frame_idx]}/{S - 1}")
-
-            is_last_frame = frame_idx == n_frames - 1
 
             self.render_scene(
                 fig=fig,
                 ax=ax,
-                trajs=trajs_at_iters[frame_idx],
-                traj_best=traj_best if is_last_frame else None,
+                trajectories=trajectories[idx],
+                best_traj_idx=best_traj_idx if frame_idx == n_frames - 1 else None,
                 start_state=start_state,
                 goal_state=goal_state,
+                points_collision_mask=points_collision_mask[idx],
                 save_path=None,
             )
 
@@ -259,6 +274,11 @@ class Visualizer:
 
         print("Saving animation...")
         fps = max(1, int(n_frames / anim_time))
-        animation.save(save_path, fps=fps, dpi=90)
+        writer = FFMpegWriter(
+            fps=fps,
+            codec='libx264',
+            extra_args=['-preset', 'ultrafast', '-crf', '23']
+        )
+        animation.save(save_path, writer=writer, dpi=90)
 
         print(f"Animation saved to {save_path}")

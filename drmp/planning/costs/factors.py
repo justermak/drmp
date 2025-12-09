@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Tuple
 
 import torch
 
+from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
 
@@ -52,19 +53,25 @@ class FieldFactor:
 
     def get_error(
         self,
-        q_trajs: torch.Tensor,
+        q_trajectories: torch.Tensor,
         env: EnvBase,
         robot: Robot,
+        n_interpolate: int,
         calc_jacobian: bool = True,
     ):
-        qs = q_trajs[:, self.traj_range[0] : self.traj_range[1], :]
-        error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_obstacles)
-
         if calc_jacobian:
-            H = -torch.autograd.grad(error.sum(), q_trajs)[0][
+            qs_interpolated = (
+                interpolate_trajectories(q_trajectories, n_interpolate=n_interpolate)
+            )
+            qs = qs_interpolated[:, self.traj_range[0] : self.traj_range[1], :]
+            error_interpolated = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_obstacles)
+            H = -torch.autograd.grad(error_interpolated.sum(), q_trajectories, retain_graph=True)[0][
                 :, self.traj_range[0] : self.traj_range[1], : self.n_dof
             ]
-            error = error.detach()
+        
+        qs = q_trajectories[:, self.traj_range[0] : self.traj_range[1], :]
+        error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_obstacles)
+        if calc_jacobian:
             return error, H
         else:
             return error

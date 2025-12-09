@@ -37,7 +37,7 @@ class HybridPlanner:
     ) -> torch.Tensor:
         with TimerCUDA() as t_hybrid:
             with TimerCUDA() as t_sample_based:
-                trajs = self.sample_based_planner.optimize(
+                trajectories = self.sample_based_planner.optimize(
                     sample_steps=sample_steps,
                     print_freq=print_freq,
                     debug=debug,
@@ -48,25 +48,25 @@ class HybridPlanner:
                     f"Sample-based Planner -- Optimization time: {t_sample_based.elapsed:.3f} sec"
                 )
 
-            trajs_smooth = [
+            trajectories_smooth = [
                 smoothen_trajectory(
                     traj,
                     n_support_points=self.opt_based_planner.n_support_points,
                     dt=self.opt_based_planner.dt,
                     tensor_args=self.tensor_args,
                 )
-                for traj in trajs
+                for traj in trajectories
             ]
 
-            init_trajs = torch.stack(trajs_smooth)
+            init_trajectories = torch.stack(trajectories_smooth)
             torch.cuda.empty_cache()
 
             with TimerCUDA() as t_opt_based:
                 self.opt_based_planner.reset_trajectories(
-                    initial_particle_means=init_trajs
+                    initial_particle_means=init_trajectories
                 )
-                trajs = self.opt_based_planner.optimize(
-                    opt_steps=opt_steps, print_freq=print_freq, debug=debug
+                trajectories = self.opt_based_planner.optimize(
+                    opt_steps=opt_steps, print_freq=print_freq // 2, debug=debug
                 )
             if debug:
                 print(
@@ -78,7 +78,7 @@ class HybridPlanner:
                 f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
             )
 
-        return trajs
+        return trajectories
 
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
         self.sample_based_planner.reset(start_pos, goal_pos)
