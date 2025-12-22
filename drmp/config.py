@@ -56,7 +56,7 @@ DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
     "n_tasks": 100,
-    "n_samples": 10,
+    "n_samples": 100,
     "splits": '("train", "val", "test")',
     # Model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
@@ -64,6 +64,76 @@ DEFAULT_INFERENCE_ARGS = {
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
+    "threshold_start_goal_pos": 1.5,
+    "use_extra_objects": True,
+    # Sampling
+    "ddim": False,
+    # Guidance
+    "start_guide_steps_fraction": 0.25,
+    "n_guide_steps": 5,
+    "sigma_collision": 1e1,
+    "sigma_gp": 2e3,
+    "do_clip_grad": True,
+    "max_grad_norm": 1.0,
+    "n_interpolate": 5,
+    # Other
+    "device": "cuda",
+    "debug": True,
+    "seed": 0,
+}
+
+DEFAULT_INFERENCE_CLASSICAL_ARGS = {
+    "generations_dir": os.path.join(dir_path, "runs"),
+    "experiment_name": None,
+    "n_tasks": 100,
+    "n_samples": 100,
+    "splits": '("train", "val", "test")',
+    # Method selection
+    "method": "rrt_connect",  # Options: "rrt_connect", "gpmp2_uninformative", "gpmp2_rrt_prior"
+    # Dataset
+    "datasets_dir": os.path.join(dir_path, "datasets"),
+    "dataset_name": "EnvDense2D_1000_100",
+    "threshold_start_goal_pos": 1.5,
+    "use_extra_objects": False,
+    # Planning parameters
+    "sample_steps": 10000,
+    "opt_steps": 1000,
+    "use_parallel": True,
+    "max_processes": 12,
+    "smoothen_rrt_trajectories": True,
+    # RRT-Connect parameters
+    "rrt_connect_step_size": 0.005,
+    "rrt_connect_n_radius": 0.3,
+    "rrt_connect_n_samples": 160000,
+    # GPMP2 parameters
+    "gpmp2_n_interpolate": 5,
+    "gpmp2_num_samples": 64,
+    "gpmp2_sigma_start": 3e-2,
+    "gpmp2_sigma_goal_prior": 3e-2,
+    "gpmp2_sigma_gp": 1,
+    "gpmp2_sigma_collision": 3e-3,
+    "gpmp2_step_size": 1e-1,
+    "gpmp2_delta": 1e-5,
+    "gpmp2_method": "cholesky",
+    # Other
+    "device": "cuda",
+    "debug": True,
+    "seed": 0,
+}
+
+DEFAULT_INFERENCE_LEGACY_ARGS = {
+    "generations_dir": os.path.join(dir_path, "runs"),
+    "experiment_name": None,
+    "n_tasks": 100,
+    "n_samples": 100,
+    "splits": '("train", "val", "test")',
+    # Model
+    "checkpoints_dir": os.path.join(dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"),
+    "checkpoint_name": "ema_model_current.pth",
+    # Dataset
+    "datasets_dir": os.path.join(dir_path, "datasets"),
+    "dataset_name": "EnvDense2D_1000_100",
+    "override_cutoff_margin": 0.1,
     "threshold_start_goal_pos": 1.5,
     "use_extra_objects": True,
     # Sampling

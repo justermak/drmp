@@ -1,0 +1,20 @@
+# Core dependencies
+torch
+numpy
+
+# Data manipulation and scientific computing
+scipy
+
+# Configuration and argument parsing
+configargparse
+pyyaml
+
+# Visualization
+matplotlib
+
+# Deep learning utilities
+einops
+
+# Training and logging
+tensorboard
+tqdm

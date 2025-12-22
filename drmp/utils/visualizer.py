@@ -90,15 +90,13 @@ class Visualizer:
                 ax.add_patch(box)
 
     def _render_start_goal_states(
-        self, ax: plt.Axes, start_state: torch.Tensor, goal_state: torch.Tensor
+        self, ax: plt.Axes, start_pos: np.ndarray, goal_pos: np.ndarray
     ) -> None:
-        start_pos = start_state.cpu().numpy()
         circle = plt.Circle(
             start_pos, self.START_GOAL_RADIUS, color=self.COLORS["start"], zorder=100
         )
         ax.add_patch(circle)
 
-        goal_pos = goal_state.cpu().numpy()
         circle = plt.Circle(
             goal_pos, self.START_GOAL_RADIUS, color=self.COLORS["goal"], zorder=100
         )
@@ -236,7 +234,7 @@ class Visualizer:
         I, B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, I - 1, n_frames)).astype(int)
         
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(self.robot, trajectories.reshape(-1, N, S))
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(robot=self.robot, trajectories=trajectories.reshape(-1, N, S))
         points_collision_mask = points_collision_mask.reshape(I, B, -1)
         
         fig, ax = plt.subplots()

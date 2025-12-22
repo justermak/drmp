@@ -8,38 +8,14 @@ import torch.nn.functional as F
 from einops.layers.torch import Rearrange
 
 
-class ContextEncoder(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, output_dim * 4),
-            nn.Mish(),
-            nn.LayerNorm(output_dim * 4),
-            nn.Linear(output_dim * 4, output_dim),
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-
 ## Fully connected Neural Network block - Multi Layer Perceptron
 class MLP(nn.Module):
-    def __init__(
-        self, in_dim, out_dim, hidden_dim=16, n_layers=1, act="relu", batch_norm=True
-    ):
+    def __init__(self, in_dim, out_dim, hidden_dim=16, n_layers=1, act='relu', batch_norm=True):
         super(MLP, self).__init__()
-        activations = {
-            "relu": nn.ReLU,
-            "sigmoid": nn.Sigmoid,
-            "tanh": nn.Tanh,
-            "leaky_relu": nn.LeakyReLU,
-            "elu": nn.ELU,
-            "prelu": nn.PReLU,
-            "softplus": nn.Softplus,
-            "mish": nn.Mish,
-            "identity": nn.Identity,
-        }
+        activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh, 'leaky_relu': nn.LeakyReLU,
+                       'elu': nn.ELU, 'prelu': nn.PReLU, 'softplus': nn.Softplus, 'mish': nn.Mish,
+                       'identity': nn.Identity
+                       }
 
         act_func = activations[act]
         layers = [nn.Linear(in_dim, hidden_dim), act_func()]
@@ -51,7 +27,9 @@ class MLP(nn.Module):
             ]
         layers.append(nn.Linear(hidden_dim, out_dim))
 
-        self._network = nn.Sequential(*layers)
+        self._network = nn.Sequential(
+            *layers
+        )
 
     def forward(self, x):
         return self._network(x)
@@ -59,14 +37,14 @@ class MLP(nn.Module):
 
 # Resnet Blocks
 class ResnetBlockFC(nn.Module):
-    """
+    '''
     Fully connected ResNet Block class.
 
     Args:
         size_in (int): input dimension
         size_out (int): output dimension
         size_h (int): hidden dimension
-    """
+    '''
 
     def __init__(self, size_in, size_out=None, size_h=None):
         super().__init__()
@@ -107,7 +85,7 @@ class ResnetBlockFC(nn.Module):
 class GaussianFourierProjection(nn.Module):
     """Gaussian random features for encoding time steps."""
 
-    def __init__(self, embed_dim, scale=30.0):
+    def __init__(self, embed_dim, scale=30.):
         super().__init__()
         # Randomly sample weights during initialization. These weights are fixed
         # during optimization and are not trainable.
@@ -229,35 +207,33 @@ class LayerNorm(nn.Module):
 class LinearAttention(nn.Module):
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
-        self.scale = dim_head**-0.5
+        self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
         self.to_out = nn.Conv1d(hidden_dim, dim, 1)
 
     def forward(self, x):
-        qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(
-            lambda t: einops.rearrange(t, "b (h c) d -> b h c d", h=self.heads), qkv
-        )
+        qkv = self.to_qkv(x).chunk(3, dim = 1)
+        q, k, v = map(lambda t: einops.rearrange(t, 'b (h c) d -> b h c d', h=self.heads), qkv)
         q = q * self.scale
 
-        k = k.softmax(dim=-1)
-        context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
+        k = k.softmax(dim = -1)
+        context = torch.einsum('b h d n, b h e n -> b h d e', k, v)
 
-        out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
-        out = einops.rearrange(out, "b h c d -> b (h c) d")
+        out = torch.einsum('b h d e, b h d n -> b h e n', context, q)
+        out = einops.rearrange(out, 'b h c d -> b (h c) d')
         return self.to_out(out)
 
 
 class TimeEncoder(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, dim, dim_out):
         super().__init__()
         self.encoder = nn.Sequential(
-            SinusoidalPosEmb(input_dim),
-            nn.Linear(input_dim, input_dim * 4),
+            SinusoidalPosEmb(dim),
+            nn.Linear(dim, dim * 4),
             nn.Mish(),
-            nn.Linear(input_dim * 4, output_dim),
+            nn.Linear(dim * 4, dim_out)
         )
 
     def forward(self, x):
@@ -265,13 +241,13 @@ class TimeEncoder(nn.Module):
 
 
 class SinusoidalPosEmb(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, dim):
         super().__init__()
-        self.input_dim = input_dim
+        self.dim = dim
 
     def forward(self, x):
         device = x.device
-        half_dim = self.input_dim // 2
+        half_dim = self.dim // 2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
         emb = x[:, None] * emb[None, :]
@@ -298,29 +274,18 @@ class Upsample1d(nn.Module):
 
 
 class Conv1dBlock(nn.Module):
-    """
-    Conv1d --> GroupNorm --> Mish
-    """
+    '''
+        Conv1d --> GroupNorm --> Mish
+    '''
 
-    def __init__(
-        self, inp_channels, out_channels, kernel_size, padding=None, n_groups=8
-    ):
+    def __init__(self, inp_channels, out_channels, kernel_size, padding=None, n_groups=8):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv1d(
-                inp_channels,
-                out_channels,
-                kernel_size,
-                stride=1,
-                padding=padding if padding is not None else kernel_size // 2,
-            ),
-            Rearrange(
-                "batch channels n_support_points -> batch channels 1 n_support_points"
-            ),
+            nn.Conv1d(inp_channels, out_channels, kernel_size, stride=1,
+                      padding=padding if padding is not None else kernel_size // 2),
+            Rearrange('batch channels n_support_points -> batch channels 1 n_support_points'),
             nn.GroupNorm(n_groups, out_channels),
-            Rearrange(
-                "batch channels 1 n_support_points -> batch channels n_support_points"
-            ),
+            Rearrange('batch channels 1 n_support_points -> batch channels n_support_points'),
             nn.Mish(),
         )
 
@@ -334,16 +299,12 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv2d(
-                in_channels, out_channels, kernel_size=3, stride=stride, padding=1
-            ),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
-        )
+            nn.ReLU())
         self.conv2 = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels),
-        )
+            nn.BatchNorm2d(out_channels))
         self.downsample = downsample
         self.relu = nn.ReLU()
         self.out_channels = out_channels
@@ -360,55 +321,141 @@ class ResidualBlock(nn.Module):
 
 
 class ResidualTemporalBlock(nn.Module):
-    def __init__(
-        self,
-        inp_channels,
-        out_channels,
-        cond_embed_dim,
-        kernel_size=5,
-    ):
+
+    def __init__(self, inp_channels, out_channels, cond_embed_dim, n_support_points, kernel_size=5):
         super().__init__()
 
-        self.blocks = nn.ModuleList(
-            [
-                Conv1dBlock(
-                    inp_channels,
-                    out_channels,
-                    kernel_size,
-                    n_groups=group_norm_n_groups(out_channels),
-                ),
-                Conv1dBlock(
-                    out_channels,
-                    out_channels,
-                    kernel_size,
-                    n_groups=group_norm_n_groups(out_channels),
-                ),
-            ]
-        )
+        self.blocks = nn.ModuleList([
+            Conv1dBlock(inp_channels, out_channels, kernel_size, n_groups=group_norm_n_groups(out_channels)),
+            Conv1dBlock(out_channels, out_channels, kernel_size, n_groups=group_norm_n_groups(out_channels)),
+        ])
 
         # Without context conditioning, cond_mlp handles only time embeddings
         self.cond_mlp = nn.Sequential(
             nn.Mish(),
             nn.Linear(cond_embed_dim, out_channels),
-            Rearrange("batch t -> batch t 1"),
+            Rearrange('batch t -> batch t 1'),
         )
 
-        self.residual_conv = (
-            nn.Conv1d(inp_channels, out_channels, kernel_size=1, stride=1, padding=0)
-            if inp_channels != out_channels
-            else nn.Identity()
-        )
+        self.residual_conv = nn.Conv1d(inp_channels, out_channels, kernel_size=1, stride=1, padding=0) \
+            if inp_channels != out_channels else nn.Identity()
 
     def forward(self, x, c):
-        """
-        x : [ batch_size x inp_channels x n_support_points ]
-        c : [ batch_size x embed_dim ]
-        returns:
-        out : [ batch_size x out_channels x n_support_points ]
-        """
+        '''
+            x : [ batch_size x inp_channels x n_support_points ]
+            c : [ batch_size x embed_dim ]
+            returns:
+            out : [ batch_size x out_channels x n_support_points ]
+        '''
         h = self.blocks[0](x) + self.cond_mlp(c)
         h = self.blocks[1](h)
         res = self.residual_conv(x)
         out = h + res
 
         return out
+
+
+class TemporalBlockMLP(nn.Module):
+
+    def __init__(self, inp_channels, out_channels, cond_embed_dim):
+        super().__init__()
+
+        self.blocks = nn.ModuleList([
+            MLP(inp_channels, out_channels, hidden_dim=out_channels, n_layers=0, act='mish')
+        ])
+
+        # Without context conditioning, cond_mlp handles only time embeddings
+        self.cond_mlp = nn.Sequential(
+            nn.Mish(),
+            nn.Linear(cond_embed_dim, out_channels),
+            # Rearrange('batch t -> batch t 1'),
+        )
+
+        self.last_act = nn.Mish()
+
+    def forward(self, x, c):
+        '''
+            x : [ batch_size x inp_channels x n_support_points ]
+            c : [ batch_size x embed_dim ]
+            returns:
+            out : [ batch_size x out_channels x n_support_points ]
+        '''
+        h = self.blocks[0](x) + self.cond_mlp(c)
+        out = self.last_act(h)
+        return out
+
+
+
+def group_norm_n_groups(n_channels, target_n_groups=8):
+    if n_channels < target_n_groups:
+        return 1
+    for n_groups in range(target_n_groups, target_n_groups + 10):
+        if n_channels % n_groups == 0:
+            return n_groups
+    return 1
+
+
+def compute_padding_conv1d(L, KSZ, S, D, deconv=False):
+    '''
+    https://gist.github.com/AhmadMoussa/d32c41c11366440bc5eaf4efb48a2e73
+    :param L:       Input length (or width)
+    :param KSZ:     Kernel size (or width)
+    :param S:       Stride
+    :param D:       Dilation Factor
+    :param deconv:  True if ConvTranspose1d
+    :return:        Returns padding such that output width is exactly half of input width
+    '''
+    print(f"INPUT SIZE {L}")
+    if not deconv:
+        return math.ceil((S * (L / 2) - L + D * (KSZ - 1) - 1) / 2)
+    else:
+        print(L, S, D, KSZ)
+        pad = math.ceil(((L - 1) * S + D * (KSZ - 1) + 1 - L * 2) / 2)
+        print("PAD", pad)
+        output_size = (L - 1) * S - 2 * pad + D * (KSZ - 1) + 1
+        print("OUTPUT SIZE", output_size)
+        return pad
+
+
+def compute_output_length_maxpool1d(L, KSZ, S, D, P):
+    '''
+    https://pytorch.org/docs/stable/generated/torch.nn.MaxPool1d.html
+    :param L:       Input length (or width)
+    :param KSZ:     Kernel size (or width)
+    :param S:       Stride
+    :param D:       Dilation Factor
+    :param P:       Padding
+    '''
+    return math.floor((L + 2 * P - D * (KSZ - 1) - 1) / S + 1)
+
+
+if __name__ == "__main__":
+    b, c, h, w = 1, 64, 12, 12
+    x = torch.full((b, c, h, w), 0.00)
+
+    i_max = 4
+    true_max = torch.randint(0, 10, size=(b, c, 2))
+    for i in range(b):
+        for j in range(c):
+            x[i, j, true_max[i, j, 0], true_max[i, j, 1]] = 1000
+        # x[i, j, i_max, true_max] = 1
+    # x[0,0,0,0] = 1000
+    soft_max = SpatialSoftArgmax(normalize=True)(x)
+    soft_max2 = SpatialSoftArgmax(normalize=False)(x)
+    diff = soft_max - (soft_max2 / 12) * 2 - 1
+    resh = soft_max.reshape(b, c, 2)
+    assert torch.allclose(true_max.float(), resh)
+
+    exit()
+    test_scales = [1, 5, 10, 30, 50, 70, 100]
+    for scale in test_scales[::-1]:
+        i_max = 4
+        true_max = torch.randint(0, 10, size=(b, c, 2))
+        for i in range(b):
+            for j in range(c):
+                x[i, j, true_max[i, j, 0], true_max[i, j, 1]] = scale
+            # x[i, j, i_max, true_max] = 1
+        # x[0,0,0,0] = 1000
+        soft_max = SpatialSoftArgmax(normalize=False)(x)
+        resh = soft_max.reshape(b, c, 2)
+        assert torch.allclose(true_max.float(), resh), scale

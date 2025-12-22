@@ -3,48 +3,53 @@ from datetime import datetime
 
 import configargparse
 import torch
-from einops._torch_specific import allow_ops_in_compiled_graph
 
-from drmp.config import DEFAULT_INFERENCE_ARGS
+from drmp.config import DEFAULT_INFERENCE_LEGACY_ARGS
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.inference.runner import run_inference, create_test_subset
-from drmp.inference.runner_config import DiffusionRunnerConfig
-from drmp.models.diffusion import get_models
-from drmp.utils.torch_utils import fix_random_seed, freeze_torch_model_params
+from drmp.inference.runner_config import LegacyDiffusionRunnerConfig
+from drmp.utils.torch_utils import fix_random_seed
 from drmp.utils.yaml import load_config_from_yaml
-
-allow_ops_in_compiled_graph()
-
-MODELS = get_models()
 
 
 def run(args):
     fix_random_seed(args.seed)
     device = torch.device(args.device)
     tensor_args = {"device": device, "dtype": torch.float32}
-
-    print("-------- INFERENCE STARTED --------")
-    print(f"model: {args.checkpoint_name}")
+    
+    print("-------- LEGACY MODEL INFERENCE STARTED --------")
+    print(f"checkpoint: {args.checkpoint_name}")
     print(f"dataset: {args.dataset_name}")
     print(f"n_tasks: {args.n_tasks}")
     print(f"n_samples: {args.n_samples}")
-
+    
     if args.checkpoint_name is None:
         checkpoint_folders = os.listdir(args.checkpoints_dir)
-        checkpoint_folders.sort(key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)), reverse=True)
+        checkpoint_folders.sort(
+            key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)), 
+            reverse=True
+        )
         args.checkpoint_name = checkpoint_folders[0]
+    
     checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
-    model_config_path = os.path.join(checkpoint_dir, "config.yaml")
-    model_config = load_config_from_yaml(model_config_path)
-
+    
+    print(f"Loading legacy model from: {checkpoint_dir}")
+    
+    if os.path.exists(checkpoint_dir):
+        model = torch.load(checkpoint_dir, map_location=device, weights_only=False)
+        
+    model.eval()
+    
     dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
     dataset_config_path = os.path.join(dataset_dir, "config.yaml")
     dataset_config = load_config_from_yaml(dataset_config_path)
+    dataset_config["cutoff_margin"] = args.override_cutoff_margin if args.override_cutoff_margin is not None else dataset_config["cutoff_margin"]
+    
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
         "env_name": dataset_config["env_name"],
-        "normalizer_name": dataset_config["normalizer_name"],
+        "normalizer_name": "TrivialNormalizer",
         "robot_margin": dataset_config["robot_margin"],
         "cutoff_margin": dataset_config["cutoff_margin"],
         "n_support_points": dataset_config["n_support_points"],
@@ -54,9 +59,9 @@ def run(args):
     dataset = TrajectoryDataset(**dataset_init_config)
     dataset.load_data()
     train_subset, _, val_subset, _ = dataset.load_train_val_split()
-
+    
     splits = eval(args.splits)
-
+    
     test_subset = None
     if "test" in splits:
         test_subset = create_test_subset(
@@ -65,49 +70,14 @@ def run(args):
             threshold_start_goal_pos=args.threshold_start_goal_pos,
             tensor_args=tensor_args,
         )
-        if test_subset is None:
-            return
-
+    
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        experiment_name = f"{args.checkpoint_name}_{timestamp}"
+        experiment_name = f"legacy_{args.checkpoint_name}_{timestamp}"
     else:
         experiment_name = args.experiment_name
-
-    model = MODELS[model_config["model_name"]](
-        state_dim=model_config["state_dim"],
-        n_support_points=model_config["n_support_points"],
-        unet_hidden_dim=model_config["unet_hidden_dim"],
-        unet_dim_mults=eval(model_config["unet_dim_mults"]),
-        unet_kernel_size=model_config["unet_kernel_size"],
-        unet_resnet_block_groups=model_config["unet_resnet_block_groups"],
-        unet_random_fourier_features=model_config["unet_random_fourier_features"],
-        unet_learned_sin_dim=model_config["unet_learned_sin_dim"],
-        unet_attn_heads=model_config["unet_attn_heads"],
-        unet_attn_head_dim=model_config["unet_attn_head_dim"],
-        unet_context_dim=model_config["unet_context_dim"],
-        variance_schedule=model_config["variance_schedule"],
-        n_diffusion_steps=model_config["n_diffusion_steps"],
-        clip_denoised=model_config["clip_denoised"],
-        predict_epsilon=model_config["predict_epsilon"],
-    ).to(device)
-
-    model.load_state_dict(
-        torch.load(
-            os.path.join(
-                checkpoint_dir,
-                "ema_model_current_state_dict.pth"
-                if model_config["use_ema"]
-                else "model_current_state_dict.pth",
-            ),
-            map_location=tensor_args["device"],
-        )
-    )
-    model.eval()
-    freeze_torch_model_params(model)
-    model = torch.compile(model)
-
-    runner_config = DiffusionRunnerConfig(
+    
+    runner_config = LegacyDiffusionRunnerConfig(
         model=model,
         use_extra_objects=args.use_extra_objects,
         sigma_collision=args.sigma_collision,
@@ -119,7 +89,7 @@ def run(args):
         n_guide_steps=args.n_guide_steps,
         ddim=args.ddim,
     )
-
+    
     run_inference(
         runner_config=runner_config,
         dataset=dataset,
@@ -137,21 +107,17 @@ def run(args):
 
 if __name__ == "__main__":
     parser = configargparse.ArgumentParser()
-
-    special_args = {}
-
-    for key, value in DEFAULT_INFERENCE_ARGS.items():
+    
+    for key, value in DEFAULT_INFERENCE_LEGACY_ARGS.items():
         arg_name = f"--{key}"
         arg_type = type(value if value is not None else str)
-
+        
         if isinstance(value, bool):
             parser.add_argument(arg_name, action="store_true", default=value)
             parser.add_argument(f"--no_{key}", dest=key, action="store_false")
         else:
             kwargs = {"type": arg_type, "default": value}
-            if key in special_args:
-                kwargs.update(special_args[key])
             parser.add_argument(arg_name, **kwargs)
-
+    
     args = parser.parse_args()
     run(args)

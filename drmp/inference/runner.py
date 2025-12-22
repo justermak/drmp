@@ -1,20 +1,15 @@
 import os
 import pickle
+from copy import copy
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import Subset
+from tqdm import tqdm
 
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.inference.guides import GuideTrajectories
-from drmp.models.diffusion import PlanningModel
-from drmp.world.robot import Robot
-from drmp.planning.costs.cost_functions import (
-    CostCollision,
-    CostComposite,
-    CostGPTrajectory,
-)
+from drmp.inference.runner_config import BaseRunnerConfig, BaseRunnerModelWrapper
 from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
@@ -30,37 +25,22 @@ from drmp.utils.yaml import save_config_to_yaml
 
 def run_inference_for_task(
     task_id: int,
+    dataset: TrajectoryDataset,
     data_normalized: dict,
     n_samples: int,
-    model: PlanningModel,
-    dataset: TrajectoryDataset,
-    guide: GuideTrajectories,
-    use_extra_objects: bool,
-    start_guide_steps_fraction: float,
-    n_guide_steps: int,
-    ddim: bool,
+    model_wrapper: BaseRunnerModelWrapper,
 ) -> Dict[str, Any]:
     robot = dataset.robot
     env = dataset.env
-
-    context = model.build_context(data_normalized)
-    hard_conds = model.build_hard_conditions(data_normalized)
-
     with TimerCUDA() as timer_model_sampling:
-        trajectories_normalized_iters = model.run_inference(
-            context,
-            hard_conds,
+        trajectories_iters, trajectories_final = model_wrapper.sample(
+            dataset=dataset,
+            data_normalized=data_normalized,
             n_samples=n_samples,
-            guide=guide,
-            n_guide_steps=n_guide_steps,
-            start_guide_steps_fraction=start_guide_steps_fraction,
-            ddim=ddim,
         )
     task_time = timer_model_sampling.elapsed
 
-    trajectories_iters = dataset.normalizer.unnormalize(trajectories_normalized_iters)
-    trajectories_final = trajectories_iters[-1]
-
+    use_extra_objects = model_wrapper.use_extra_objects
     trajectories_final_collision, trajectories_final_free, points_final_collision_mask = (
         env.get_trajectories_collision_and_free(trajectories=trajectories_final, robot=robot, on_extra=use_extra_objects)
     )
@@ -90,10 +70,10 @@ def run_inference_for_task(
     task_results = {
         "task_id": task_id,
         "start_pos": robot.get_position(
-            dataset.normalizer.unnormalize(data_normalized["start_states_normalized"])
+            dataset.normalizer.unnormalize(data_normalized["start_states_normalized"]).cpu().numpy()
         ),
         "goal_pos": robot.get_position(
-            dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"])
+            dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"]).cpu().numpy()
         ),
         "n_samples": n_samples,
         "trajectories_iters": trajectories_iters,
@@ -117,32 +97,22 @@ def run_inference_for_task(
 def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,
-    model: PlanningModel,
-    guide: GuideTrajectories,
-    use_extra_objects: bool,
-    start_guide_steps_fraction: float,
     n_samples: int,
-    n_guide_steps: int,
-    ddim: bool,
+    model_wrapper: BaseRunnerModelWrapper,
 ) -> List[Dict[str, Any]]:
     results = []
     dataset: TrajectoryDataset = subset.dataset
 
-    for i in range(n_tasks):
+    for i in tqdm(range(n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
         data_normalized = dataset[idx]
 
         task_results = run_inference_for_task(
             task_id=i,
+            dataset=dataset,
             data_normalized=data_normalized,
             n_samples=n_samples,
-            model=model,
-            dataset=dataset,
-            guide=guide,
-            use_extra_objects=use_extra_objects,
-            start_guide_steps_fraction=start_guide_steps_fraction,
-            n_guide_steps=n_guide_steps,
-            ddim=ddim,
+            model_wrapper=model_wrapper,
         )
         results.append(task_results)
 
@@ -158,7 +128,7 @@ def compute_stats(results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     success = [r["success"] for r in results]
     free_fraction = [r["free_fraction"] for r in results]
     collision_intensity = [r["collision_intensity"] for r in results]
-    time = [r["t_task"] for r in results]
+    t = [r["t_task"] for r in results]
     path_length_best = [
         r["path_length_best"]
         for r in results
@@ -183,8 +153,8 @@ def compute_stats(results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     stats = {
         "n_tasks": n_tasks,
         "n_samples": n_samples,
-        "time_avg": np.mean(time),
-        "time_std": np.std(time),
+        "time_avg": np.mean(t),
+        "time_std": np.std(t),
         "success_rate_avg": np.mean(success),
         "success_rate_std": np.std(success),
         "free_fraction_avg": np.mean(free_fraction),
@@ -224,11 +194,11 @@ def print_stats(results):
                 f"Best path length: {stats['path_length_best_avg']:.4f} ± {stats['path_length_best_std']:.4f}"
             )
         if stats["sharpness_avg"] is not None:
-            print(f"sharpness: {stats['sharpness_avg']:.4f}")
+            print(f"Sharpness: {stats['sharpness_avg']:.4f} ± {stats['sharpness_std']:.4f}")
         if stats["path_length_avg"] is not None:
-            print(f"Path length: {stats['path_length_avg']:.4f}")
+            print(f"Path length: {stats['path_length_avg']:.4f} ± {stats['path_length_std']:.4f}")
         if stats["waypoints_variance_avg"] is not None:
-            print(f"Waypoints variance: {stats['waypoints_variance_avg']:.4f}")
+            print(f"Waypoints variance: {stats['waypoints_variance_avg']:.4f} ± {stats['waypoints_variance_std']:.4f}")
 
 
 def visualize_results(
@@ -258,7 +228,7 @@ def visualize_results(
         best_traj_idx=best_traj_idx,
         start_state=start_pos,
         goal_state=goal_pos,
-        save_path=os.path.join(generation_dir, f"task0-trajectories.png"),
+        save_path=os.path.join(generation_dir, "task0-trajectories.png"),
     )
 
     planner_visualizer.animate_robot_motion(
@@ -279,129 +249,98 @@ def visualize_results(
         n_frames=min(60, len(trajectories_iters)),
     )
 
+def create_test_subset(
+    dataset: TrajectoryDataset,
+    n_tasks: int,
+    threshold_start_goal_pos: float,
+    tensor_args: Dict[str, Any],
+) -> Optional[Subset]:
+    start_pos, goal_pos, success = dataset.env.random_collision_free_start_goal(
+        robot=dataset.robot,
+        n_samples=n_tasks,
+        threshold_start_goal_pos=threshold_start_goal_pos,
+    )
+    if not success:
+        print(
+            "Could not find sufficient collision-free start/goal pairs for test tasks, "
+            "try reducing the threshold, robot margin or object density"
+        )
+        return None
+    
+    test_dataset = copy(dataset)
+    test_dataset.n_trajs = n_tasks
+    test_dataset.trajs_normalized = torch.empty((n_tasks,), **tensor_args)
+    test_dataset.start_states = torch.cat(
+        [start_pos, torch.zeros_like(start_pos)], dim=-1
+    )
+    test_dataset.goal_states = torch.cat(
+        [goal_pos, torch.zeros_like(goal_pos)], dim=-1
+    )
+    test_dataset.start_states_normalized = test_dataset.normalizer.normalize(
+        test_dataset.start_states
+    )
+    test_dataset.goal_states_normalized = test_dataset.normalizer.normalize(
+        test_dataset.goal_states
+    )
+    return Subset(test_dataset, list(range(n_tasks)))
+
+
 def run_inference(
-    model: PlanningModel,
+    runner_config: BaseRunnerConfig,
     dataset: TrajectoryDataset,
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
     test_subset: Optional[Subset],
     generations_dir: str,
     experiment_name: str,
-    use_extra_objects: bool,
-    sigma_collision: float,
-    sigma_gp: float,
-    do_clip_grad: bool,
-    max_grad_norm: float,
-    n_interpolate: int,
-    start_guide_steps_fraction: float,
     n_tasks: int,
     n_samples: int,
-    threshold_start_goal_pos: float,
-    n_guide_steps: int,
-    ddim: bool,
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> Dict[str, Any]:
     generation_dir = os.path.join(generations_dir, experiment_name)
     os.makedirs(generation_dir, exist_ok=True)
-    robot: Robot = dataset.robot
-    
-    config = {
-        "use_extra_objects": use_extra_objects,
-        "start_guide_steps_fraction": start_guide_steps_fraction,
-        "sigma_collision": sigma_collision,
-        "sigma_gp": sigma_gp,
-        "do_clip_grad": do_clip_grad,
-        "max_grad_norm": max_grad_norm,
-        "n_interpolate": n_interpolate,
-        "n_tasks": n_tasks,
-        "n_samples": n_samples,
-        "threshold_start_goal_pos": threshold_start_goal_pos,
-        "n_guide_steps": n_guide_steps,
-        "ddim": ddim,
-    }
 
-    save_config_to_yaml(config, os.path.join(generation_dir, "config.yaml"))
+    config_dict = runner_config.to_dict()
+    config_dict["n_tasks"] = n_tasks
+    config_dict["n_samples"] = n_samples
+    save_config_to_yaml(config_dict, os.path.join(generation_dir, "config.yaml"))
 
-    collision_costs = [
-        CostCollision(
-            robot=robot,
-            env=dataset.env,
-            n_support_points=dataset.n_support_points,
-            sigma_collision=sigma_collision,
-            use_extra_obstacles=use_extra_objects,
-            tensor_args=tensor_args,
-        )
-    ]
-
-    sharpness_costs = [
-        CostGPTrajectory(
-            robot=robot, 
-            n_support_points=dataset.n_support_points, 
-            sigma_gp=sigma_gp, 
-            tensor_args=tensor_args
-        )
-    ]
-
-    costs = collision_costs + sharpness_costs
-
-    cost = CostComposite(
-        robot=robot,
-        n_support_points=dataset.n_support_points,
-        costs=costs,
-        tensor_args=tensor_args,
-    )
-
-    guide = GuideTrajectories(
-        dataset=dataset,
-        cost=cost,
-        do_clip_grad=do_clip_grad,
-        max_grad_norm=max_grad_norm,
-        n_interpolate=n_interpolate,
-    )
+    model_wrapper = runner_config.prepare(dataset=dataset, tensor_args=tensor_args, n_samples=n_samples)
 
     results = {}
 
-    print(f"{'=' * 80}")
+    print('=' * 80)
     print(f"Starting trajectory generation for {n_tasks} tasks per split")
 
     if train_subset is not None:
+        print('=' * 80)
+        print("Processing TRAIN split...")
         results["train"] = run_inference_on_dataset(
             subset=train_subset,
             n_tasks=n_tasks,
-            model=model,
-            guide=guide,
-            use_extra_objects=use_extra_objects,
-            start_guide_steps_fraction=start_guide_steps_fraction,
             n_samples=n_samples,
-            n_guide_steps=n_guide_steps,
-            ddim=ddim,
+            model_wrapper=model_wrapper,
         )
         results["train_stats"] = compute_stats(results["train"])
     if val_subset is not None:
+        print('=' * 80)
+        print("Processing VAL split...")
         results["val"] = run_inference_on_dataset(
             subset=val_subset,
             n_tasks=n_tasks,
-            model=model,
-            guide=guide,
-            use_extra_objects=use_extra_objects,
-            start_guide_steps_fraction=start_guide_steps_fraction,
             n_samples=n_samples,
-            n_guide_steps=n_guide_steps,
-            ddim=ddim,
+            model_wrapper=model_wrapper,
         )
         results["val_stats"] = compute_stats(results["val"])
     if test_subset is not None:
+        print('=' * 80)
+        print("Processing TEST split...")
         results["test"] = run_inference_on_dataset(
             subset=test_subset,
             n_tasks=n_tasks,
-            model=model,
-            guide=guide,
-            use_extra_objects=use_extra_objects,
-            start_guide_steps_fraction=start_guide_steps_fraction,
             n_samples=n_samples,
-            n_guide_steps=n_guide_steps,
-            ddim=ddim,
+            model_wrapper=model_wrapper,
         )
         results["test_stats"] = compute_stats(results["test"])
 
