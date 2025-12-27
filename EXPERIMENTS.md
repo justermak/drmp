@@ -4,7 +4,6 @@
 | :--- | :---: | :---: | :--- |
 | **Trajectory slicing** | 5 | 5 | Cut slices of trajectories, smoothen and increase the n_support_points for the slice using B-spline |
 | **Time reversal** | 5 | 5 | Swap start and goal and reverse the trajectory |
-| **Precomputed probablity roadmap** | 3 | 5 | Use a graph to explicitly find **k-shortest paths** for more diversity. Assign higher weights to point in narrow regions to learn them better |
 | **Start/Goal jittering** | 4 | 2 | Move start/goal a little, fix trajectory by optimizing a little |
 | **Labeling samples** | 3 | 3 | Different labels for shortest and safest trajectories |
 | **Normalization** | 5 | 3 | Try $N(0, 1)$ instead of $[-1; 1]$ |
@@ -36,7 +35,6 @@ Add more metadata to trajectories: trajectory length, sharpness, costs, min dist
 
 1. Gradient based guidance
 2. Manifold projection
-3. ODE
 
 ---
 
@@ -44,4 +42,3 @@ Add more metadata to trajectories: trajectory length, sharpness, costs, min dist
 
 1. Shortcut model
 2. Energy based model contrastive training
-3. Distillation
