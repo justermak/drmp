@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
@@ -24,7 +25,7 @@ class TreeNode:
         return res
 
 
-class RRTConnect:
+class RRTConnect(ClassicalPlanner):
     def __init__(
         self,
         env: EnvBase,
@@ -32,15 +33,15 @@ class RRTConnect:
         step_size: float,
         n_radius: float,
         n_samples: int,
-        eps: float = 1e-6,
+        tensor_args: Dict[str, Any],
+        use_extra_objects: bool = False,
         planner_id: int = None,
-        tensor_args: Dict[str, Any] = None,
+        eps: float = 1e-6,
     ):
-        self.tensor_args = tensor_args
-        self.env = env
-        self.robot = robot
+        super().__init__(env=env, robot=robot, use_extra_objects=use_extra_objects, tensor_args=tensor_args)
         self.step_size = step_size
         self.n_radius = n_radius
+        self.use_extra_objects = use_extra_objects
         self.planner_id = planner_id
         self.eps = eps
 
@@ -63,7 +64,7 @@ class RRTConnect:
 
     def _initialize_samples(self) -> bool:
         samples, success = self.env.random_collision_free_q(
-            robot=self.robot, n_samples=self.n_samples
+            robot=self.robot, n_samples=self.n_samples, use_extra_objects=self.use_extra_objects
         )
         if not success:
             print(
@@ -102,7 +103,7 @@ class RRTConnect:
         return extension
 
     def cut(self, sequence: torch.Tensor) -> torch.Tensor:
-        in_collision = self.env.get_collision_mask(self.robot, sequence).squeeze()
+        in_collision = self.env.get_collision_mask(self.robot, sequence, on_extra=self.use_extra_objects).squeeze()
         idxs_in_collision = torch.argwhere(in_collision)
         if idxs_in_collision.nelement() == 0:
             first_idx_in_collision = sequence.shape[0]

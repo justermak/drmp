@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+import torch
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.inference.guides import GuideTrajectories
 from drmp.models.diffusion import PlanningModel
@@ -15,6 +16,8 @@ from drmp.planning.planners.parallel_sample_based_planner import (
     ParallelSampleBasedPlanner,
 )
 from drmp.planning.planners.rrt_connect import RRTConnect
+from drmp.utils.trajectory_utils import create_straight_line_trajectory
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 
 
 class BaseRunnerModelWrapper(ABC):
@@ -122,72 +125,66 @@ class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
 class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
     def __init__(
         self,
-        planner: Any,
+        planner: ClassicalPlanner,
         method: str,
         sample_steps: int,
         opt_steps: int,
-        smoothen: bool,
-        use_extra_objects: bool,
     ):
-        super().__init__(use_extra_objects)
+        super().__init__(planner.use_extra_objects)
         self.planner = planner
         self.method = method
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
-        self.smoothen = smoothen
-        self.dataset = None  # Will be set during prepare
 
     def sample(self, dataset: TrajectoryDataset, data_normalized: Dict[str, Any], n_samples: int):
-        import torch
-        from drmp.utils.trajectory_utils import smoothen_trajectory
-        
-        # Extract start and goal positions from normalized data
         start_states_normalized = data_normalized["start_states_normalized"]
         goal_states_normalized = data_normalized["goal_states_normalized"]
         
-        # Unnormalize to get actual positions
-        start_states = self.dataset.normalizer.unnormalize(start_states_normalized)
-        goal_states = self.dataset.normalizer.unnormalize(goal_states_normalized)
+        start_states = dataset.normalizer.unnormalize(start_states_normalized)
+        goal_states = dataset.normalizer.unnormalize(goal_states_normalized)
         
-        # Extract positions (first half of state is position)
-        start_pos = self.dataset.robot.get_position(start_states)
-        goal_pos = self.dataset.robot.get_position(goal_states)
+        start_pos = dataset.robot.get_position(start_states)
+        goal_pos = dataset.robot.get_position(goal_states)
         
-        # Reset planner with start and goal
+        qs = torch.cat((start_states.unsqueeze(0), goal_states.unsqueeze(0)), dim=0)
+        collision_mask = dataset.env.get_collision_mask(robot=self.planner.robot, qs=qs, on_extra=self.use_extra_objects)
+        if collision_mask.any():
+            return None, None
+        
         self.planner.reset(start_pos, goal_pos)
-        
-        # Run planner optimization
-        if self.method == "rrt_connect":
-            # RRT-Connect only needs sample_steps
+        if self.method == "rrt-connect":
             trajectories_list = self.planner.optimize(
                 sample_steps=self.sample_steps,
                 debug=False,
             )
-            
-            # Smooth trajectories if requested
-            if self.smoothen:
-                trajectories_smooth = [
-                    smoothen_trajectory(
-                        traj,
-                        n_support_points=self.dataset.n_support_points,
-                        dt=self.dataset.robot.dt,
-                        tensor_args=self.dataset.tensor_args,
-                    )
-                    for traj in trajectories_list if traj is not None
-                ]
-                trajectories_list = trajectories_smooth
-            
-            # Stack into tensor
-            trajectories = torch.stack([t for t in trajectories_list if t is not None])
+            if all(t is None for t in trajectories_list):
+                return None, None
+            max_len = max([t.shape[0] for t in trajectories_list if t is not None])
+            trajectories = torch.stack([
+                torch.cat((t, goal_pos.repeat((max_len - t.shape[0], 1))), dim=0) if t is not None else 
+                torch.cat((start_pos, goal_pos.repeat((max_len - 1, 1))), dim=0) for t in trajectories_list
+            ])
+            trajectories = torch.cat((trajectories, torch.zeros_like(trajectories)), dim=-1)
+        elif self.method == "gpmp2-uninformative":
+            initial_trajectories = create_straight_line_trajectory(
+                start_pos=start_pos,
+                goal_pos=goal_pos,
+                n_support_points=dataset.n_support_points,
+                dt=dataset.robot.dt,
+                tensor_args=dataset.tensor_args,
+            ).repeat((n_samples, 1, 1))
+            self.planner.reset_trajectories(initial_trajectories)
+            trajectories = self.planner.optimize(
+                opt_steps=self.opt_steps,
+                debug=False,
+            )
         else:
-            # GPMP2 methods need both sample_steps and opt_steps
             trajectories = self.planner.optimize(
                 sample_steps=self.sample_steps,
                 opt_steps=self.opt_steps,
                 debug=False,
             )
         
-        # Classical planners don't have iterations, so return None for iters
         trajectories_iters = None
         trajectories_final = trajectories
         
@@ -202,7 +199,6 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
         }
     
     def cleanup(self):
-        """Cleanup planner resources."""
         if hasattr(self.planner, 'shutdown'):
             self.planner.shutdown()
         elif hasattr(self.planner, 'sample_based_planner'):
@@ -261,7 +257,7 @@ class DiffusionRunnerConfig(BaseRunnerConfig):
                 env=dataset.env,
                 n_support_points=dataset.n_support_points,
                 sigma_collision=self.sigma_collision,
-                use_extra_obstacles=self.use_extra_objects,
+                use_extra_objects=self.use_extra_objects,
                 tensor_args=tensor_args,
             )
         ]
@@ -355,7 +351,7 @@ class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
                     env=dataset.env,
                     n_support_points=dataset.n_support_points,
                     sigma_collision=self.sigma_collision,
-                    use_extra_obstacles=self.use_extra_objects,
+                    use_extra_objects=self.use_extra_objects,
                     tensor_args=tensor_args,
                 )
             ]
@@ -416,7 +412,6 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         sample_steps: int,
         use_parallel: bool,
         max_processes: int,
-        smoothen: bool,
         use_extra_objects: bool,
         rrt_connect_step_size: float,
         rrt_connect_n_radius: float,
@@ -426,7 +421,6 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         self.sample_steps = sample_steps
         self.use_parallel = use_parallel
         self.max_processes = max_processes
-        self.smoothen = smoothen
         self.use_extra_objects = use_extra_objects
         self.rrt_connect_step_size = rrt_connect_step_size
         self.rrt_connect_n_radius = rrt_connect_n_radius
@@ -446,6 +440,7 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
             step_size=self.rrt_connect_step_size,
             n_radius=self.rrt_connect_n_radius,
             n_samples=self.rrt_connect_n_samples,
+            use_extra_objects=self.use_extra_objects,
         )
         planner = ParallelSampleBasedPlanner(
             planner=rrt_planner,
@@ -457,11 +452,9 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
 
         wrapper = ClassicalPlannerWrapper(
             planner=planner,
-            method="rrt_connect",
+            method="rrt-connect",
             sample_steps=self.sample_steps,
             opt_steps=0,
-            smoothen=self.smoothen,
-            use_extra_objects=self.use_extra_objects,
         )
         return wrapper
 
@@ -471,7 +464,6 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
             "sample_steps": self.sample_steps,
             "use_parallel": self.use_parallel,
             "max_processes": self.max_processes,
-            "smoothen": self.smoothen,
             "use_extra_objects": self.use_extra_objects,
             "rrt_connect_step_size": self.rrt_connect_step_size,
             "rrt_connect_n_radius": self.rrt_connect_n_radius,
@@ -516,13 +508,13 @@ class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
         n_samples: int,
     ) -> ClassicalPlannerWrapper:
         planner = GPMP2(
-            robot=dataset.robot,
+            robot=dataset.generating_robot,
             n_dof=self.n_dof,
             n_trajectories=n_samples,
             env=dataset.env,
             tensor_args=tensor_args,
             n_support_points=dataset.n_support_points,
-            dt=dataset.robot.dt,
+            dt=dataset.generating_robot.dt,
             n_interpolate=self.gpmp2_n_interpolate,
             num_samples=self.gpmp2_num_samples,
             sigma_start=self.gpmp2_sigma_start,
@@ -532,16 +524,14 @@ class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
             step_size=self.gpmp2_step_size,
             delta=self.gpmp2_delta,
             method=self.gpmp2_method,
-            use_extra_obstacles=self.use_extra_objects,
+            use_extra_objects=self.use_extra_objects,
         )
 
         wrapper = ClassicalPlannerWrapper(
             planner=planner,
-            method="gpmp2_uninformative",
+            method="gpmp2-uninformative",
             sample_steps=0,
             opt_steps=self.opt_steps,
-            smoothen=False,
-            use_extra_objects=self.use_extra_objects,
         )
         return wrapper
 
@@ -614,11 +604,12 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
     ) -> ClassicalPlannerWrapper:
         rrt_planner = RRTConnect(
             env=dataset.env,
-            robot=dataset.robot,
+            robot=dataset.generating_robot,
             tensor_args=tensor_args,
             step_size=self.rrt_connect_step_size,
             n_radius=self.rrt_connect_n_radius,
             n_samples=self.rrt_connect_n_samples,
+            use_extra_objects=self.use_extra_objects,
         )
         sample_based_planner = ParallelSampleBasedPlanner(
             planner=rrt_planner,
@@ -629,13 +620,13 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         )
 
         gpmp2_planner = GPMP2(
-            robot=dataset.robot,
+            robot=dataset.generating_robot,
             n_dof=self.n_dof,
             n_trajectories=n_samples,
             env=dataset.env,
             tensor_args=tensor_args,
             n_support_points=dataset.n_support_points,
-            dt=dataset.robot.dt,
+            dt=dataset.generating_robot.dt,
             n_interpolate=self.gpmp2_n_interpolate,
             num_samples=self.gpmp2_num_samples,
             sigma_start=self.gpmp2_sigma_start,
@@ -645,22 +636,20 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             step_size=self.gpmp2_step_size,
             delta=self.gpmp2_delta,
             method=self.gpmp2_method,
-            use_extra_obstacles=self.use_extra_objects,
+            use_extra_objects=self.use_extra_objects,
         )
 
         planner = HybridPlanner(
             sample_based_planner=sample_based_planner,
-            optimizer=gpmp2_planner,
+            opt_based_planner=gpmp2_planner,
             tensor_args=tensor_args,
         )
 
         wrapper = ClassicalPlannerWrapper(
             planner=planner,
-            method="gpmp2_rrt_prior",
+            method="gpmp2-rrt-prior",
             sample_steps=self.sample_steps,
             opt_steps=self.opt_steps,
-            smoothen=False,
-            use_extra_objects=self.use_extra_objects,
         )
         return wrapper
 

@@ -19,7 +19,7 @@ def run(args):
     device = torch.device(args.device)
     tensor_args = {"device": device, "dtype": torch.float32}
 
-    print(f"-------- TRAINING STARTED --------")
+    print("-------- TRAINING STARTED --------")
     print(f"dataset: {args.dataset_name}")
     print(f"batch size: {args.batch_size}")
     print(f"use filtered trajectories: {args.use_filtered_trajectories}")

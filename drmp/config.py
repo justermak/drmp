@@ -49,7 +49,7 @@ DEFAULT_TRAIN_ARGS = {
     # Other
     "device": "cuda",
     "debug": False,
-    "seed": 0,
+    "seed": 42,
 }
 
 DEFAULT_INFERENCE_ARGS = {
@@ -57,18 +57,18 @@ DEFAULT_INFERENCE_ARGS = {
     "experiment_name": None,
     "n_tasks": 100,
     "n_samples": 100,
-    "splits": '("train", "val", "test")',
-    # Model
-    "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": None,
+    "splits": '("test",)', # '("train", "val", "test")',
+    # Algorithm selection
+    "algorithm": "gpmp2-rrt-prior",  # Options: "diffusion", "legacy-diffusion", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
     "threshold_start_goal_pos": 1.5,
     "use_extra_objects": True,
-    # Sampling
+    # Diffusion model
+    "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
+    "checkpoint_name": None,
     "ddim": False,
-    # Guidance
     "start_guide_steps_fraction": 0.25,
     "n_guide_steps": 5,
     "sigma_collision": 1e1,
@@ -76,31 +76,24 @@ DEFAULT_INFERENCE_ARGS = {
     "do_clip_grad": True,
     "max_grad_norm": 1.0,
     "n_interpolate": 5,
-    # Other
-    "device": "cuda",
-    "debug": True,
-    "seed": 0,
-}
-
-DEFAULT_INFERENCE_CLASSICAL_ARGS = {
-    "generations_dir": os.path.join(dir_path, "runs"),
-    "experiment_name": None,
-    "n_tasks": 100,
-    "n_samples": 100,
-    "splits": '("train", "val", "test")',
-    # Method selection
-    "method": "rrt_connect",  # Options: "rrt_connect", "gpmp2_uninformative", "gpmp2_rrt_prior"
-    # Dataset
-    "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
-    "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": False,
-    # Planning parameters
-    "sample_steps": 10000,
-    "opt_steps": 1000,
-    "use_parallel": True,
-    "max_processes": 12,
-    "smoothen_rrt_trajectories": True,
+    # Legacy diffusion model
+    "legacy_checkpoints_dir": os.path.join(dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"),
+    "legacy_checkpoint_name": "ema_model_current.pth",
+    "legacy_ddim": False,
+    "legacy_start_guide_steps_fraction": 0.25,
+    "legacy_n_guide_steps": 5,
+    "legacy_sigma_collision": 1e1,
+    "legacy_sigma_gp": 2e3,
+    "legacy_do_clip_grad": True,
+    "legacy_max_grad_norm": 1.0,
+    "legacy_n_interpolate": 5,
+    # Classical algorithm
+    "classical_n_dof": N_DIM,
+    "classical_sample_steps": 10000,
+    "classical_opt_steps": 300,
+    "classical_use_parallel": True,
+    "classical_max_processes": 12,
+    "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_step_size": 0.005,
     "rrt_connect_n_radius": 0.3,
@@ -118,38 +111,7 @@ DEFAULT_INFERENCE_CLASSICAL_ARGS = {
     # Other
     "device": "cuda",
     "debug": True,
-    "seed": 0,
-}
-
-DEFAULT_INFERENCE_LEGACY_ARGS = {
-    "generations_dir": os.path.join(dir_path, "runs"),
-    "experiment_name": None,
-    "n_tasks": 100,
-    "n_samples": 100,
-    "splits": '("train", "val", "test")',
-    # Model
-    "checkpoints_dir": os.path.join(dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"),
-    "checkpoint_name": "ema_model_current.pth",
-    # Dataset
-    "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
-    "override_cutoff_margin": 0.1,
-    "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": True,
-    # Sampling
-    "ddim": False,
-    # Guidance
-    "start_guide_steps_fraction": 0.25,
-    "n_guide_steps": 5,
-    "sigma_collision": 1e1,
-    "sigma_gp": 2e3,
-    "do_clip_grad": True,
-    "max_grad_norm": 1.0,
-    "n_interpolate": 5,
-    # Other
-    "device": "cuda",
-    "debug": True,
-    "seed": 0,
+    "seed": 42,
 }
 
 DEFAULT_DATA_GENERATION_ARGS = {
@@ -159,7 +121,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "env_name": "EnvDense2D",
     "normalizer_name": "LimitsNormalizer",
     "robot_margin": 0.01,
-    "cutoff_margin": 0.02,
+    "generating_robot_margin": 0.02,
     "n_support_points": 64,
     "duration": 5.0,
     # Task generation
@@ -168,9 +130,9 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "sample_steps": 10000,
-    "opt_steps": 1000,
+    "opt_steps": 300,
     "use_parallel": True,
-    "max_processes": 12,
+    "max_processes": 15,
     # RRT-Connect parameters
     "rrt_connect_step_size": 0.005,
     "rrt_connect_n_radius": 0.3,
@@ -191,5 +153,5 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "filter_sharpest_portion": 0.25,
     "device": "cuda",
     "debug": False,
-    "seed": 0,
+    "seed": 42,
 }

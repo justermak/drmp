@@ -43,15 +43,14 @@ def run(args):
     dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
     dataset_config_path = os.path.join(dataset_dir, "config.yaml")
     dataset_config = load_config_from_yaml(dataset_config_path)
-    dataset_config["cutoff_margin"] = args.override_cutoff_margin if args.override_cutoff_margin is not None else dataset_config["cutoff_margin"]
-    
+
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
         "env_name": dataset_config["env_name"],
         "normalizer_name": "TrivialNormalizer",
         "robot_margin": dataset_config["robot_margin"],
-        "cutoff_margin": dataset_config["cutoff_margin"],
+        "generating_robot_margin": dataset_config["generating_robot_margin"],
         "n_support_points": dataset_config["n_support_points"],
         "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
@@ -121,3 +120,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     run(args)
+    

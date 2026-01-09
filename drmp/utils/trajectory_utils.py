@@ -13,35 +13,13 @@ def create_straight_line_trajectory(
     dt: float,
     tensor_args: Dict[str, Any],
 ) -> torch.Tensor:
-    """
-    Creates a straight-line trajectory from start to goal with average velocity.
-    
-    Args:
-        start_pos: Start position tensor of shape (n_dof,)
-        goal_pos: Goal position tensor of shape (n_dof,)
-        n_support_points: Number of support points in the trajectory
-        dt: Time step between waypoints
-        tensor_args: Dictionary with device and dtype
-        
-    Returns:
-        Trajectory tensor of shape (n_support_points, 2*n_dof) with positions and velocities
-    """
-    assert start_pos.ndim == 1, "start_pos must be of shape (n_dof,)"
-    assert goal_pos.ndim == 1, "goal_pos must be of shape (n_dof,)"
-    assert start_pos.shape == goal_pos.shape
-    
-    # Create positions along straight line
     alphas = torch.linspace(0, 1, n_support_points, **tensor_args)
     positions = start_pos.unsqueeze(0) + (goal_pos - start_pos).unsqueeze(0) * alphas.unsqueeze(1)
-    
-    # Create velocities (average velocity for middle points, zero for start and goal)
     velocities = torch.zeros_like(positions)
     avg_vel = (goal_pos - start_pos) / ((n_support_points - 1) * dt)
     velocities[1:-1, :] = avg_vel
-    
-    # Concatenate positions and velocities
     trajectory = torch.cat((positions, velocities), dim=-1)
-    
+
     return trajectory
 
 

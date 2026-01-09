@@ -3,27 +3,28 @@ from typing import Any, Dict
 import torch
 
 from drmp.config import DEFAULT_TENSOR_ARGS
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.parallel_sample_based_planner import (
     ParallelSampleBasedPlanner,
 )
 from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.trajectory_utils import smoothen_trajectory
+from drmp.utils.trajectory_utils import create_straight_line_trajectory, smoothen_trajectory
 
 
-class HybridPlanner:
-    """
-    Runs a sampled-based planner to get an initial trajectory in position, followed by an optimization-based planner
-    to optimize for positions and velocities.
-    """
-
+class HybridPlanner(ClassicalPlanner):
     def __init__(
         self,
         sample_based_planner: ParallelSampleBasedPlanner,
         opt_based_planner: GPMP2,
         tensor_args: Dict[str, Any] = DEFAULT_TENSOR_ARGS,
     ):
-        self.tensor_args = tensor_args
+        super().__init__(
+            env=sample_based_planner.env,
+            robot=sample_based_planner.robot,
+            use_extra_objects=sample_based_planner.use_extra_objects,
+            tensor_args=tensor_args,
+        )
         self.sample_based_planner = sample_based_planner
         self.opt_based_planner = opt_based_planner
 
@@ -54,6 +55,12 @@ class HybridPlanner:
                     n_support_points=self.opt_based_planner.n_support_points,
                     dt=self.opt_based_planner.dt,
                     tensor_args=self.tensor_args,
+                ) if traj is not None else create_straight_line_trajectory(
+                    start_pos=self.start_pos,
+                    goal_pos=self.goal_pos,
+                    n_support_points=self.opt_based_planner.n_support_points,
+                    dt=self.opt_based_planner.dt,
+                    tensor_args=self.tensor_args,
                 )
                 for traj in trajectories
             ]
@@ -81,8 +88,10 @@ class HybridPlanner:
         return trajectories
 
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
+        self.start_pos = start_pos
+        self.goal_pos = goal_pos
         self.sample_based_planner.reset(start_pos, goal_pos)
-        self.opt_based_planner.reset(start_pos, goal_pos.unsqueeze(0))
+        self.opt_based_planner.reset(start_pos, goal_pos)
 
     def shutdown(self) -> None:
         self.sample_based_planner.shutdown()

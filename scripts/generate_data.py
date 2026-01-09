@@ -11,7 +11,7 @@ def run(args):
     device = torch.device(args.device)
     tensor_args = {"device": device, "dtype": torch.float32}
 
-    print(f"-------- GENERATING DATA --------")
+    print("-------- GENERATING DATA --------")
     print(f"env: {args.env_name}")
     print(f"n_tasks: {args.n_tasks}")
     print(f"n_trajectories per task: {args.n_trajectories}")

@@ -11,6 +11,7 @@ from tqdm import tqdm
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.inference.runner_config import BaseRunnerConfig, BaseRunnerModelWrapper
 from drmp.planning.metrics import (
+    bootstrap_confidence_interval,
     compute_collision_intensity,
     compute_free_fraction,
     compute_path_length,
@@ -39,10 +40,10 @@ def run_inference_for_task(
             n_samples=n_samples,
         )
     task_time = timer_model_sampling.elapsed
-
-    use_extra_objects = model_wrapper.use_extra_objects
+    if trajectories_final is None:
+        return None
     trajectories_final_collision, trajectories_final_free, points_final_collision_mask = (
-        env.get_trajectories_collision_and_free(trajectories=trajectories_final, robot=robot, on_extra=use_extra_objects)
+        env.get_trajectories_collision_and_free(trajectories=trajectories_final, robot=robot, on_extra=model_wrapper.use_extra_objects)
     )
 
     success = compute_success(trajectories_final_free)
@@ -114,7 +115,8 @@ def run_inference_on_dataset(
             n_samples=n_samples,
             model_wrapper=model_wrapper,
         )
-        results.append(task_results)
+        if task_results is not None:
+            results.append(task_results)
 
     return results
 
@@ -150,25 +152,34 @@ def compute_stats(results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if r["waypoints_variance"] is not None
     ]
 
+    time_center, time_hw = bootstrap_confidence_interval(t)
+    success_center, success_hw = bootstrap_confidence_interval(success)
+    free_fraction_center, free_fraction_hw = bootstrap_confidence_interval(free_fraction)
+    collision_intensity_center, collision_intensity_hw = bootstrap_confidence_interval(collision_intensity)
+    path_length_best_center, path_length_best_hw = bootstrap_confidence_interval(path_length_best) if path_length_best else (None, None)
+    sharpness_center, sharpness_hw = bootstrap_confidence_interval(sharpness) if sharpness else (None, None)
+    path_length_center, path_length_hw = bootstrap_confidence_interval(path_length) if path_length else (None, None)
+    waypoints_variance_center, waypoints_variance_hw = bootstrap_confidence_interval(waypoints_variance) if waypoints_variance else (None, None)
+
     stats = {
         "n_tasks": n_tasks,
         "n_samples": n_samples,
-        "time_avg": np.mean(t),
-        "time_std": np.std(t),
-        "success_rate_avg": np.mean(success),
-        "success_rate_std": np.std(success),
-        "free_fraction_avg": np.mean(free_fraction),
-        "free_fraction_std": np.std(free_fraction),
-        "collision_intensity_avg": np.mean(collision_intensity),
-        "collision_intensity_std": np.std(collision_intensity),
-        "path_length_best_avg": np.mean(path_length_best) if path_length_best else None,
-        "path_length_best_std": np.std(path_length_best) if path_length_best else None,
-        "sharpness_avg": np.mean(sharpness) if sharpness else None,
-        "sharpness_std": np.std(sharpness) if sharpness else None,
-        "path_length_avg": np.mean(path_length) if path_length else None,
-        "path_length_std": np.std(path_length) if path_length else None,
-        "waypoints_variance_avg": np.mean(waypoints_variance) if waypoints_variance else None,
-        "waypoints_variance_std": np.std(waypoints_variance) if waypoints_variance else None,
+        "time_center": time_center,
+        "time_hw": time_hw,
+        "success_rate_center": success_center,
+        "success_rate_hw": success_hw,
+        "free_fraction_center": free_fraction_center,
+        "free_fraction_hw": free_fraction_hw,
+        "collision_intensity_center": collision_intensity_center,
+        "collision_intensity_hw": collision_intensity_hw,
+        "path_length_best_center": path_length_best_center,
+        "path_length_best_hw": path_length_best_hw,
+        "sharpness_center": sharpness_center,
+        "sharpness_hw": sharpness_hw,
+        "path_length_center": path_length_center,
+        "path_length_hw": path_length_hw,
+        "waypoints_variance_center": waypoints_variance_center,
+        "waypoints_variance_hw": waypoints_variance_hw,
     }
     return stats
 
@@ -181,84 +192,82 @@ def print_stats(results):
         if stats is None:
             continue
         print(f"-------- {split_name.upper()} SPLIT --------")
-        print(f"n_tasks: {stats['n_tasks']}")
-        print(f"n_samples: {stats['n_samples']}")
-        print(f"Time to generate n_samples: {stats['time_avg']:.3f} ± {2 * stats['time_std']:.3f} sec")
-        print(f"Success rate: {stats['success_rate_avg'] * 100:.2f} ± {2 * stats['success_rate_std'] * 100:.2f}%")
-        print(f"Free fraction: {stats['free_fraction_avg'] * 100:.2f} ± {2 * stats['free_fraction_std'] * 100:.2f}%")
+        print(f"| n_tasks | {stats['n_tasks']} |")
+        print(f"| n_samples | {stats['n_samples']} |")
+        print(f"| Time to generate n_samples | {stats['time_center']:.3f} ± {stats['time_hw']:.3f} sec |")
+        print(f"| Success rate | {stats['success_rate_center'] * 100:.2f} ± {stats['success_rate_hw'] * 100:.2f}% |")
+        print(f"| Free fraction | {stats['free_fraction_center'] * 100:.2f} ± {stats['free_fraction_hw'] * 100:.2f}% |")
         print(
-            f"Collision intensity: {stats['collision_intensity_avg'] * 100:.2f} ± {2 * stats['collision_intensity_std'] * 100:.2f} %"
+            f"| Collision intensity | {stats['collision_intensity_center'] * 100:.2f} ± {stats['collision_intensity_hw'] * 100:.2f}% |"
         )
-        if stats["path_length_best_avg"] is not None:
+        if stats["path_length_best_center"] is not None:
             print(
-                f"Best path length: {stats['path_length_best_avg']:.4f} ± {stats['path_length_best_std']:.4f}"
+                f"| Best path length | {stats['path_length_best_center']:.4f} ± {stats['path_length_best_hw']:.4f} |"
             )
-        if stats["sharpness_avg"] is not None:
-            print(f"Sharpness: {stats['sharpness_avg']:.4f} ± {stats['sharpness_std']:.4f}")
-        if stats["path_length_avg"] is not None:
-            print(f"Path length: {stats['path_length_avg']:.4f} ± {stats['path_length_std']:.4f}")
-        if stats["waypoints_variance_avg"] is not None:
-            print(f"Waypoints variance: {stats['waypoints_variance_avg']:.4f} ± {stats['waypoints_variance_std']:.4f}")
+        if stats["sharpness_center"] is not None:
+            print(f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |")
+        if stats["path_length_center"] is not None:
+            print(f"| Path length | {stats['path_length_center']:.4f} ± {stats['path_length_hw']:.4f} |")
+        if stats["waypoints_variance_center"] is not None:
+            print(f"| Waypoints variance | {stats['waypoints_variance_center']:.4f} ± {stats['waypoints_variance_hw']:.4f} |")
 
 
 def visualize_results(
-    results: Dict[str, List[Dict[str, Any]]],
+    task: Dict[str, Any],
     dataset: TrajectoryDataset,
     generation_dir: str,
+    generate_animation: bool = True,
+    name_prefix: str = "task0",
 ):
     planner_visualizer = Visualizer(env=dataset.env, robot=dataset.robot)
-
-    first_task = (
-        results["test"][0]
-        if "test" in results and len(results["test"]) > 0
-        else (
-            results["val"][0]
-            if "val" in results and len(results["val"]) > 0
-            else results["train"][0]
-        )
-    )
-    start_pos = first_task["start_pos"]
-    goal_pos = first_task["goal_pos"]
-    trajectories_iters = first_task["trajectories_iters"]
-    trajectories_final = first_task["trajectories_final"]
-    best_traj_idx = first_task["best_traj_idx"]
+    start_pos = task["start_pos"]
+    goal_pos = task["goal_pos"]
+    trajectories_iters = task["trajectories_iters"]
+    trajectories_final = task["trajectories_final"]
+    best_traj_idx = task["best_traj_idx"]
 
     planner_visualizer.render_scene(
         trajectories=trajectories_final,
         best_traj_idx=best_traj_idx,
         start_state=start_pos,
         goal_state=goal_pos,
-        save_path=os.path.join(generation_dir, "task0-trajectories.png"),
+        save_path=os.path.join(generation_dir, f"{name_prefix}-trajectories.png"),
     )
+    
+    if not generate_animation:
+        return
 
     planner_visualizer.animate_robot_motion(
         trajectories=trajectories_final,
         best_traj_idx=best_traj_idx,
         start_state=start_pos,
         goal_state=goal_pos,
-        save_path=os.path.join(generation_dir, f"task0-robot-motion.mp4"),
+        save_path=os.path.join(generation_dir, f"{name_prefix}-robot-motion.mp4"),
         n_frames=min(60, trajectories_final.shape[1]),
     )
 
-    planner_visualizer.animate_optimization_iterations(
-        trajectories=trajectories_iters,
-        best_traj_idx=best_traj_idx,
-        start_state=start_pos,
-        goal_state=goal_pos,
-        save_path=os.path.join(generation_dir, f"task0-opt-iters.mp4"),
-        n_frames=min(60, len(trajectories_iters)),
-    )
+    if trajectories_iters is not None:
+        planner_visualizer.animate_optimization_iterations(
+            trajectories=trajectories_iters,
+            best_traj_idx=best_traj_idx,
+            start_state=start_pos,
+            goal_state=goal_pos,
+            save_path=os.path.join(generation_dir, f"{name_prefix}-opt-iters.mp4"),
+            n_frames=min(60, len(trajectories_iters)),
+        )
 
 def create_test_subset(
     dataset: TrajectoryDataset,
     n_tasks: int,
     threshold_start_goal_pos: float,
     tensor_args: Dict[str, Any],
+    use_extra_objects: bool = False,
 ) -> Optional[Subset]:
     start_pos, goal_pos, success = dataset.env.random_collision_free_start_goal(
         robot=dataset.robot,
         n_samples=n_tasks,
         threshold_start_goal_pos=threshold_start_goal_pos,
+        use_extra_objects=use_extra_objects,
     )
     if not success:
         print(
@@ -351,9 +360,18 @@ def run_inference(
 
     if debug:
         visualize_results(
-            results=results,
+            task = (
+                results["test"][0]
+                if "test" in results and len(results["test"]) > 0
+                else (
+                    results["val"][0]
+                    if "val" in results and len(results["val"]) > 0
+                    else results["train"][0]
+                )
+            ),
             dataset=dataset,
             generation_dir=generation_dir,
+            generate_animation=False,
         )
 
     return results

@@ -145,13 +145,13 @@ class EnvBase(ABC):
         return total_cost
 
     def random_collision_free_q(
-        self, robot: Robot, n_samples: int, batch_size=100000, max_tries=1000
+        self, robot: Robot, n_samples: int, use_extra_objects: bool = False, batch_size=100000, max_tries=1000
     ) -> torch.Tensor:
         samples = torch.zeros((n_samples, N_DIM), **self.tensor_args)
         cur = 0
         for i in range(max_tries):
             qs = self.random_q((batch_size,))
-            collision_mask = self.get_collision_mask(robot=robot, qs=qs).squeeze()
+            collision_mask = self.get_collision_mask(robot=robot, qs=qs, on_extra=use_extra_objects).squeeze()
             n = torch.sum(~collision_mask).item()
             n = min(n, n_samples - cur)
             samples[cur : cur + n] = qs[~collision_mask][:n]
@@ -165,9 +165,10 @@ class EnvBase(ABC):
         self,
         robot: Robot,
         n_samples: int,
-        threshold_start_goal_pos,
-        batch_size=100000,
-        max_tries=1000,
+        threshold_start_goal_pos: float,
+        use_extra_objects: bool = False,
+        batch_size: int = 100000,
+        max_tries: int = 1000,
     ) -> Tuple[torch.Tensor, torch.Tensor, bool]:
         samples_start = torch.zeros((n_samples, N_DIM), **self.tensor_args)
         samples_goal = torch.zeros((n_samples, N_DIM), **self.tensor_args)
@@ -176,6 +177,7 @@ class EnvBase(ABC):
             qs, success = self.random_collision_free_q(
                 robot=robot,
                 n_samples=n_samples * 2,
+                use_extra_objects=use_extra_objects,
                 batch_size=batch_size,
                 max_tries=max_tries,
             )

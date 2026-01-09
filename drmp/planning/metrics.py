@@ -1,4 +1,6 @@
+import numpy as np
 import torch
+from scipy import stats
 
 from drmp.world.robot import Robot
 
@@ -16,7 +18,8 @@ def compute_sharpness(trajectories: torch.Tensor, robot: Robot):
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
-    trajectories_vel = robot.get_velocity(trajectories)
+    trajectories_pos = robot.get_position(trajectories)
+    trajectories_vel = torch.diff(trajectories_pos, dim=-2)
     sharpness = torch.linalg.norm(torch.diff(trajectories_vel, dim=-2), dim=-1).sum(-1)
     return sharpness
 
@@ -59,3 +62,24 @@ def compute_collision_intensity(trajectories_collision_mask: torch.Tensor):
 def compute_success(trajectories_free: torch.Tensor):
     assert trajectories_free.ndim == 3
     return float(trajectories_free.nelement() > 0)
+
+
+def bootstrap_confidence_interval(data: list, confidence_level: float = 0.95, n_resamples: int = 10000):
+    if len(data) == 0:
+        return None, None
+    
+    res = stats.bootstrap(
+        (data,),
+        np.mean,
+        n_resamples=n_resamples,
+        confidence_level=confidence_level,
+        method='percentile'
+    )
+    
+    ci_lower = res.confidence_interval.low
+    ci_upper = res.confidence_interval.high
+    
+    center = (ci_lower + ci_upper) / 2
+    half_width = (ci_upper - ci_lower) / 2
+    
+    return center, half_width

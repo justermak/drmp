@@ -39,7 +39,7 @@ class TrajectoryDataset(Dataset):
         env_name: str,
         normalizer_name: str,
         robot_margin: float,
-        cutoff_margin: float,
+        generating_robot_margin: float,
         n_support_points: int,
         duration: float,
         tensor_args: Dict[str, Any],
@@ -49,7 +49,7 @@ class TrajectoryDataset(Dataset):
         self.n_support_points = n_support_points
         self.duration: float = duration
         self.robot_margin = robot_margin
-        self.cutoff_margin = cutoff_margin
+        self.generating_robot_margin = generating_robot_margin
         self.env: EnvBase = ENVS[env_name](tensor_args=tensor_args)
         self.robot: Robot = Robot(
             margin=robot_margin,
@@ -57,7 +57,7 @@ class TrajectoryDataset(Dataset):
             tensor_args=tensor_args,
         )
         self.generating_robot: Robot = Robot(
-            margin=cutoff_margin,
+            margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
             tensor_args=tensor_args,
         )
@@ -250,7 +250,7 @@ class TrajectoryDataset(Dataset):
             self.env.get_trajectories_collision_and_free(robot=self.robot, trajectories=trajectories)
         )
 
-        print(f"--------- STATISTICS ---------")
+        print("--------- STATISTICS ---------")
         print(f"total trajectories: {len(trajectories)}")
         print(
             f"free fraction: {compute_free_fraction(trajectories_free, trajectories_collision) * 100:.2f}"
@@ -262,8 +262,8 @@ class TrajectoryDataset(Dataset):
 
         results_dir = os.path.join(self.dataset_dir, id)
         os.makedirs(results_dir, exist_ok=True)
-        torch.save(trajectories_collision, os.path.join(results_dir, f"trajectories-collision.pt"))
-        torch.save(trajectories_free, os.path.join(results_dir, f"trajectories-free.pt"))
+        torch.save(trajectories_collision, os.path.join(results_dir, "trajectories-collision.pt"))
+        torch.save(trajectories_free, os.path.join(results_dir, "trajectories-free.pt"))
         
         if debug:
             planning_visualizer = Visualizer(
@@ -275,7 +275,7 @@ class TrajectoryDataset(Dataset):
                 trajectories=trajectories,
                 start_state=start_pos,
                 goal_state=goal_pos,
-                save_path=os.path.join(results_dir, f"trajectories_figure.png"),
+                save_path=os.path.join(results_dir, "trajectories_figure.png"),
             )
 
         n_trajectories_collision, n_trajectories_free = len(trajectories_collision), len(trajectories_free)
@@ -384,7 +384,7 @@ class TrajectoryDataset(Dataset):
             "n_support_points": self.n_support_points,
             "duration": self.duration,
             "robot_margin": self.robot_margin,
-            "cutoff_margin": self.cutoff_margin,
+            "generating_robot_margin": self.generating_robot_margin,
             "n_tasks": n_tasks,
             "n_trajectories": n_trajectories,
             "threshold_start_goal_pos": threshold_start_goal_pos,
@@ -433,67 +433,66 @@ class TrajectoryDataset(Dataset):
         print(f"Starting trajectory generation for {n_tasks} tasks")
         print(f"{'=' * 80}\n")
 
-        try:
-            with tqdm(
-                total=n_tasks,
-                mininterval=1 if debug else 10,
-                desc="Generating data",
-            ) as pbar:
-                for i in range(n_tasks):
-                    id = str(i)
-                    pbar.set_description(f"Task {i + 1}/{n_tasks}")
 
-                    try:
-                        if i in existing_tasks:
-                            n_coll, n_free = existing_tasks[i]
-                            n_skipped_tasks += 1
-                            pbar.set_postfix({
-                                "status": "skipped",
-                                "free": n_free,
-                                "coll": n_coll,
-                                "total_free": n_free_trajectories,
-                                "skipped": n_skipped_tasks,
-                            })
-                            torch.manual_seed(seed + i)
-                        else:
-                            n_coll, n_free = self.generate_trajectories_for_task(
-                                id=id,
-                                planner=planner,
-                                threshold_start_goal_pos=threshold_start_goal_pos,
-                                sample_steps=sample_steps,
-                                opt_steps=opt_steps,
-                                debug=debug,
-                            )
-                            
-                            if n_free == 0:
-                                print(f"Found no collision-free trajectories for task {id}")
-                                return
-                            
-                            pbar.set_postfix({
-                                "status": "generated",
-                                "free": n_free,
-                                "coll": n_coll,
-                                "total_free": n_free_trajectories,
-                                "skipped": n_skipped_tasks,
-                            })
+        with tqdm(
+            total=n_tasks,
+            mininterval=1 if debug else 10,
+            desc="Generating data",
+        ) as pbar:
+            for i in range(n_tasks):
+                id = str(i)
+                pbar.set_description(f"Task {i + 1}/{n_tasks}")
+
+                try:
+                    if i in existing_tasks:
+                        n_coll, n_free = existing_tasks[i]
+                        n_skipped_tasks += 1
+                        pbar.set_postfix({
+                            "status": "skipped",
+                            "free": n_free,
+                            "coll": n_coll,
+                            "total_free": n_free_trajectories,
+                            "skipped": n_skipped_tasks,
+                        })
+                        torch.manual_seed(seed + i)
+                    else:
+                        n_coll, n_free = self.generate_trajectories_for_task(
+                            id=id,
+                            planner=planner,
+                            threshold_start_goal_pos=threshold_start_goal_pos,
+                            sample_steps=sample_steps,
+                            opt_steps=opt_steps,
+                            debug=debug,
+                        )
                         
-                        task_start_idxs.append(n_free_trajectories)
-                        n_free_trajectories += n_free
-                        n_coll_trajectories += n_coll
-
-                    except Exception as e:
-                        n_failed_tasks += 1
-                        error_msg = f"{type(e).__name__}: {str(e)}"
-                        print(f"Task {id} failed with error: {error_msg}")
-                        traceback.print_exc()
-
-                        print("Failed tasks:", n_failed_tasks)
-                        raise
+                        if n_free == 0:
+                            print(f"Found no collision-free trajectories for task {id}")
+                            return
+                        
+                        pbar.set_postfix({
+                            "status": "generated",
+                            "free": n_free,
+                            "coll": n_coll,
+                            "total_free": n_free_trajectories,
+                            "skipped": n_skipped_tasks,
+                        })
                     
-                    pbar.update(1)
+                    task_start_idxs.append(n_free_trajectories)
+                    n_free_trajectories += n_free
+                    n_coll_trajectories += n_coll
+
+                except Exception as e:
+                    n_failed_tasks += 1
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    print(f"Task {id} failed with error: {error_msg}")
+                    traceback.print_exc()
+
+                    print("Failed tasks:", n_failed_tasks)
+                    raise
                 
-                task_start_idxs.append(n_free_trajectories)
-        finally:
+                pbar.update(1)
+            
+            task_start_idxs.append(n_free_trajectories)
             planner.shutdown()
 
         task_start_idxs = torch.tensor(task_start_idxs, dtype=torch.long)
@@ -503,8 +502,8 @@ class TrajectoryDataset(Dataset):
         train_idxs = [i for task_start_idx, task_end_idx in zip(task_start_idxs[train_tasks_idxs], task_start_idxs[train_tasks_idxs + 1]) for i in range(task_start_idx, task_end_idx)]
         val_idxs = [i for task_start_idx, task_end_idx in zip(task_start_idxs[val_tasks_idxs], task_start_idxs[val_tasks_idxs + 1]) for i in range(task_start_idx, task_end_idx)]
         
-        torch.save( train_idxs, os.path.join(self.dataset_dir, f"train_idx.pt"),)
-        torch.save(val_idxs, os.path.join(self.dataset_dir, f"val_idx.pt"))
+        torch.save( train_idxs, os.path.join(self.dataset_dir, "train_idx.pt"),)
+        torch.save(val_idxs, os.path.join(self.dataset_dir, "val_idx.pt"))
 
         if filter_longest_portion > 0 or filter_sharpest_portion > 0:
             print(f"Filtering {filter_longest_portion * 100:.1f}% longest trajectories and {filter_sharpest_portion * 100:.1f}% sharpest trajectories...")
@@ -517,8 +516,8 @@ class TrajectoryDataset(Dataset):
                 filter_longest_portion=filter_longest_portion,
                 filter_sharpest_portion=filter_sharpest_portion,
             )
-            torch.save(train_filtered_idxs, os.path.join(self.dataset_dir, f"train_filtered_idx.pt"))
-            torch.save(val_filtered_idxs, os.path.join(self.dataset_dir, f"val_filtered_idx.pt"))
+            torch.save(train_filtered_idxs, os.path.join(self.dataset_dir, "train_filtered_idx.pt"))
+            torch.save(val_filtered_idxs, os.path.join(self.dataset_dir, "val_filtered_idx.pt"))
             print(f"Original train size: {len(train_idxs)}, filtered: {len(train_filtered_idxs)}")
             print(f"Original val size: {len(val_idxs)}, filtered: {len(val_filtered_idxs)}")
 
@@ -529,8 +528,8 @@ class TrajectoryDataset(Dataset):
     def load_train_val_split(
         self, batch_size: int = 1, use_filtered_trajectories: bool = False
     ) -> Tuple[Subset, DataLoader, Subset, DataLoader]:
-        train_idx = torch.load(os.path.join(self.dataset_dir, f"train_filtered_idx.pt" if use_filtered_trajectories else "train_idx.pt"))
-        val_idx = torch.load(os.path.join(self.dataset_dir, f"val_filtered_idx.pt" if use_filtered_trajectories else "val_idx.pt"))
+        train_idx = torch.load(os.path.join(self.dataset_dir, "train_filtered_idx.pt" if use_filtered_trajectories else "train_idx.pt"))
+        val_idx = torch.load(os.path.join(self.dataset_dir, "val_filtered_idx.pt" if use_filtered_trajectories else "val_idx.pt"))
         
         train_subset = Subset(self, train_idx)
         val_subset = Subset(self, val_idx)

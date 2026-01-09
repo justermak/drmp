@@ -43,12 +43,12 @@ class FieldFactor:
         n_dof: int,
         sigma: float,
         traj_range: List,
-        use_extra_obstacles: bool = False,
+        use_extra_objects: bool = False,
     ):
         self.sigma = sigma
         self.n_dof = n_dof
         self.traj_range = traj_range
-        self.use_extra_obstacles = use_extra_obstacles
+        self.use_extra_objects = use_extra_objects
         self.K = 1.0 / (sigma**2)
 
     def get_error(
@@ -64,13 +64,13 @@ class FieldFactor:
                 interpolate_trajectories(q_trajectories, n_interpolate=n_interpolate)
             )
             qs = qs_interpolated[:, self.traj_range[0] : self.traj_range[1], :]
-            error_interpolated = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_obstacles)
+            error_interpolated = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_objects)
             H = -torch.autograd.grad(error_interpolated.sum(), q_trajectories, retain_graph=True)[0][
                 :, self.traj_range[0] : self.traj_range[1], : self.n_dof
             ]
         
         qs = q_trajectories[:, self.traj_range[0] : self.traj_range[1], :]
-        error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_obstacles)
+        error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_objects)
         if calc_jacobian:
             return error, H
         else:

@@ -31,9 +31,10 @@ class Visualizer:
     START_GOAL_RADIUS = 0.005
     TRAJECTORY_POINT_SIZE = 4
 
-    def __init__(self, env: EnvBase, robot: Robot) -> None:
+    def __init__(self, env: EnvBase, robot: Robot, use_extra_objects: bool = True) -> None:
         self.env: EnvBase = env
         self.robot: Robot = robot
+        self.use_extra_objects = use_extra_objects
 
     def _render_environment(
         self, ax: plt.Axes, plot_extra_objects: bool = True
@@ -160,7 +161,7 @@ class Visualizer:
         B, N, S = trajectories.shape
         if points_collision_mask is None:
             _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
-                trajectories=trajectories, robot=self.robot
+                trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects
             )
         trajectories_collision_mask = points_collision_mask.any(dim=-1)
         points_collision_mask = points_collision_mask[:, ::6] # from interpolated to original trajectories
@@ -196,7 +197,7 @@ class Visualizer:
     ):
         B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, N - 1, n_frames)).astype(int)
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(trajectories=trajectories, robot=self.robot)
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects)
         
         fig, ax = plt.subplots()
 
@@ -234,7 +235,7 @@ class Visualizer:
         I, B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, I - 1, n_frames)).astype(int)
         
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(robot=self.robot, trajectories=trajectories.reshape(-1, N, S))
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(robot=self.robot, trajectories=trajectories.reshape(-1, N, S), on_extra=self.use_extra_objects)
         points_collision_mask = points_collision_mask.reshape(I, B, -1)
         
         fig, ax = plt.subplots()

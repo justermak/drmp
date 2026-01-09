@@ -6,6 +6,7 @@ from typing import List
 import torch
 import torch.multiprocessing as mp
 
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.torch_utils import fix_random_seed
 
@@ -65,7 +66,7 @@ def _worker_process_command(command: dict):
     return {"status": "unknown_command"}
 
 
-class ParallelSampleBasedPlanner:
+class ParallelSampleBasedPlanner(ClassicalPlanner):
     def __init__(
         self,
         planner: RRTConnect,
@@ -74,6 +75,7 @@ class ParallelSampleBasedPlanner:
         max_processes: int,
         seed: int,
     ):
+        super().__init__(env=planner.env, robot=planner.robot, use_extra_objects=planner.use_extra_objects, tensor_args=planner.tensor_args)
         self.planner = planner
         self.n_trajectories = n_trajectories
         self.use_parallel = use_parallel
@@ -114,9 +116,11 @@ class ParallelSampleBasedPlanner:
             while id_counter.value < self._n_workers:
                 sleep(1)
 
-            print(f"Worker pool initialized.")
+            print("Worker pool initialized.")
 
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
+        self.start_pos = start_pos
+        self.goal_pos = goal_pos
         if not self.use_parallel:
             self.planner.reset(start_pos, goal_pos)
             return
@@ -135,7 +139,7 @@ class ParallelSampleBasedPlanner:
 
         ok = all(r.get("status") == "reset_done" for r in results)
         if not ok:
-            print(f"Warning: Not all workers reset successfully")
+            print("Warning: Not all workers reset successfully")
 
     def optimize(self, **kwargs) -> List[torch.Tensor]:
         if self.use_parallel:
@@ -149,20 +153,17 @@ class ParallelSampleBasedPlanner:
             for i in range(self.n_trajectories)
         ]
 
-        print(
-            f"\nStarting parallel optimization: {self.n_trajectories} trajectories with {self._n_workers} workers..."
-        )
-
         trajectories = []
         for response in self._pool.imap_unordered(_worker_process_command, commands):
             if response.get("status") == "success":
                 result = response["result"].to(**self.planner.tensor_args)
                 trajectories.append(result)
+            else:
+                trajectories.append(None)
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print(f"Completed: {len(trajectories)}/{self.n_trajectories} trajectories successful")
         return trajectories
 
     def _optimize_sequential(self, **kwargs) -> List[torch.Tensor]:

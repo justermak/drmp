@@ -102,12 +102,12 @@ class CostCollision(Cost):
         n_support_points: int,
         sigma_collision: float,
         tensor_args: Dict[str, Any],
-        use_extra_obstacles: bool = False,
+        use_extra_objects: bool = False,
     ):
         super().__init__(robot, n_support_points, tensor_args=tensor_args)
         self.env = env
         self.sigma_collision = sigma_collision
-        self.use_extra_obstacles = use_extra_obstacles
+        self.use_extra_objects = use_extra_objects
         self.obst_factor = FieldFactor(
             n_dof=self.n_dof,
             sigma=self.sigma_collision,
@@ -115,7 +115,7 @@ class CostCollision(Cost):
                 1,
                 None,
             ],
-            use_extra_obstacles=self.use_extra_obstacles,
+            use_extra_objects=self.use_extra_objects,
         )
 
     def eval(self, trajectories: torch.Tensor, n_interpolate: int):

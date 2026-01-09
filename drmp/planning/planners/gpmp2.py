@@ -10,6 +10,7 @@ from drmp.planning.costs.cost_functions import (
     CostGoalPrior,
     CostGP,
 )
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.world.environments import EnvBase
 from drmp.world.robot import Robot
@@ -28,7 +29,7 @@ def build_gpmp2_cost_composite(
     sigma_collision: float,
     num_samples: int,
     tensor_args: Dict[str, Any],
-    use_extra_obstacles: bool = False,
+    use_extra_objects: bool = False,
 ) -> Cost:
     costs = []
 
@@ -62,7 +63,7 @@ def build_gpmp2_cost_composite(
         env=env,
         n_support_points=n_support_points,
         sigma_collision=sigma_collision,
-        use_extra_obstacles=use_extra_obstacles,
+        use_extra_objects=use_extra_objects,
         tensor_args=tensor_args,
     )
     costs.append(cost_collision)
@@ -76,7 +77,7 @@ def build_gpmp2_cost_composite(
     return cost_composite
 
 
-class GPMP2:
+class GPMP2(ClassicalPlanner):
     def __init__(
         self,
         robot: Robot,
@@ -94,12 +95,10 @@ class GPMP2:
         step_size: float,
         delta: float,
         method: str,
-        use_extra_obstacles: bool = False,
-        tensor_args: Dict[str, Any] = DEFAULT_TENSOR_ARGS,
+        tensor_args: Dict[str, Any],
+        use_extra_objects: bool = False,
     ):
-        self.tensor_args = tensor_args
-        self.robot = robot
-        self.env = env
+        super().__init__(env=env, robot=robot, use_extra_objects=use_extra_objects, tensor_args=tensor_args)
         self.n_dof = n_dof
         self.dim = 2 * self.n_dof
         self.n_support_points = n_support_points
@@ -108,7 +107,6 @@ class GPMP2:
         self.dt = dt
         self.delta = delta
         self.method = method
-        self.use_extra_obstacles = use_extra_obstacles
         
         self.n_interpolate = n_interpolate
         self.num_samples = num_samples
@@ -132,7 +130,7 @@ class GPMP2:
             start_pos=start_pos,
             goal_pos=goal_pos,
             n_trajectories=self.n_trajectories,
-            use_extra_obstacles=self.use_extra_obstacles,
+            use_extra_objects=self.use_extra_objects,
             sigma_start=self.sigma_start,
             sigma_gp=self.sigma_gp,
             sigma_collision=self.sigma_collision,
