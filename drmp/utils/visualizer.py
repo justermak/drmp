@@ -4,9 +4,8 @@ import matplotlib.collections as mcoll
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
-from matplotlib.animation import FuncAnimation
+from matplotlib.animation import FFMpegWriter, FuncAnimation
 from matplotlib.patches import BoxStyle, FancyBboxPatch
-from matplotlib.animation import FFMpegWriter
 
 from drmp.world.environments import EnvBase
 from drmp.world.primitives import MultiBoxField, MultiSphereField
@@ -31,18 +30,20 @@ class Visualizer:
     START_GOAL_RADIUS = 0.005
     TRAJECTORY_POINT_SIZE = 4
 
-    def __init__(self, env: EnvBase, robot: Robot, use_extra_objects: bool = True) -> None:
+    def __init__(
+        self, env: EnvBase, robot: Robot, use_extra_objects: bool = True
+    ) -> None:
         self.env: EnvBase = env
         self.robot: Robot = robot
         self.use_extra_objects = use_extra_objects
 
     def _render_environment(
-        self, ax: plt.Axes, plot_extra_objects: bool = True
+        self, ax: plt.Axes, use_extra_objects: bool = True
     ) -> None:
         for field in self.env.obj_field_fixed.fields:
             self._render_primitive_field(ax, field, color=self.COLORS["fixed_obstacle"])
 
-        if plot_extra_objects:
+        if use_extra_objects:
             for field in self.env.obj_field_extra.fields:
                 self._render_primitive_field(
                     ax, field, color=self.COLORS["extra_obstacle"]
@@ -84,35 +85,44 @@ class Visualizer:
                     2 * half_size_np[0],
                     2 * half_size_np[1],
                     color=color,
-                    boxstyle=BoxStyle.Round(
-                        pad=0.0, rounding_size=radius
-                    ),
+                    boxstyle=BoxStyle.Round(pad=0.0, rounding_size=radius),
                 )
                 ax.add_patch(box)
 
     def _render_start_goal_states(
-        self, ax: plt.Axes, start_pos: np.ndarray, goal_pos: np.ndarray
+        self, ax: plt.Axes, start_pos: torch.Tensor, goal_pos: torch.Tensor
     ) -> None:
+        start_pos_np = start_pos.cpu().numpy()
+        goal_pos_np = goal_pos.cpu().numpy()
+        
         circle = plt.Circle(
-            start_pos, self.START_GOAL_RADIUS, color=self.COLORS["start"], zorder=100
+            start_pos_np, self.START_GOAL_RADIUS, color=self.COLORS["start"], zorder=100
         )
         ax.add_patch(circle)
 
         circle = plt.Circle(
-            goal_pos, self.START_GOAL_RADIUS, color=self.COLORS["goal"], zorder=100
+            goal_pos_np, self.START_GOAL_RADIUS, color=self.COLORS["goal"], zorder=100
         )
         ax.add_patch(circle)
 
     def _compute_robot_state_colors(
-        self, collision_mask: torch.Tensor, best_traj_idx: int = None, moving: bool = False,
-    ) -> List[str]:  
+        self,
+        collision_mask: torch.Tensor,
+        best_traj_idx: int = None,
+        moving: bool = False,
+    ) -> List[str]:
         colors = [
-            ((self.COLORS["robot_collision_moving" if moving else "robot_collision"]) 
-            if collision else 
-            (self.COLORS["traj_best"] if i == best_traj_idx else
-            (self.COLORS["robot_free_moving" if moving else "robot_free"])
-            ))
-            for i, row in enumerate(collision_mask) for collision in row
+            (
+                (self.COLORS["robot_collision_moving" if moving else "robot_collision"])
+                if collision
+                else (
+                    self.COLORS["traj_best"]
+                    if i == best_traj_idx
+                    else (self.COLORS["robot_free_moving" if moving else "robot_free"])
+                )
+            )
+            for i, row in enumerate(collision_mask)
+            for collision in row
         ]
         return colors
 
@@ -120,20 +130,34 @@ class Visualizer:
         self, trajectories_collision_mask: torch.Tensor, best_traj_idx: int = None
     ) -> List[str]:
         colors = [
-            self.COLORS["traj_best"] if i == best_traj_idx else
-            self.COLORS["collision"] if coll else self.COLORS["free"]
+            self.COLORS["traj_best"]
+            if i == best_traj_idx
+            else self.COLORS["collision"]
+            if coll
+            else self.COLORS["free"]
             for i, coll in enumerate(trajectories_collision_mask)
         ]
         return colors
 
     def _render_robot_states(
-        self, ax: plt.Axes, states: torch.Tensor, colors: List[str], moving: bool = False, zorder: int = 10
+        self,
+        ax: plt.Axes,
+        states: torch.Tensor,
+        colors: List[str],
+        moving: bool = False,
+        zorder: int = 10,
     ) -> None:
         pos = self.robot.get_position(states).reshape(-1, 2)
         pos_np = pos.view(-1, 2).cpu().numpy()
 
         for p, color in zip(pos_np, colors):
-            circle = plt.Circle(p, self.robot.margin * (2.0 if moving else 1.0), color=color, alpha=0.5, zorder=zorder)
+            circle = plt.Circle(
+                p,
+                self.robot.margin * (2.0 if moving else 1.0),
+                color=color,
+                alpha=0.5,
+                zorder=zorder,
+            )
             ax.add_patch(circle)
 
     def _render_trajectories(
@@ -161,16 +185,24 @@ class Visualizer:
         B, N, S = trajectories.shape
         if points_collision_mask is None:
             _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
-                trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects
+                trajectories=trajectories,
+                robot=self.robot,
+                on_extra=self.use_extra_objects,
             )
         trajectories_collision_mask = points_collision_mask.any(dim=-1)
-        points_collision_mask = points_collision_mask[:, ::6] # from interpolated to original trajectories
+        points_collision_mask = points_collision_mask[
+            :, ::6
+        ]  # from interpolated to original trajectories
         assert points_collision_mask.shape == (B, N)
-        
-        traj_colors = self._compute_trajectory_colors(trajectories_collision_mask, best_traj_idx)
-        robot_state_colors = self._compute_robot_state_colors(points_collision_mask, best_traj_idx)
-        
-        self._render_environment(ax)
+
+        traj_colors = self._compute_trajectory_colors(
+            trajectories_collision_mask, best_traj_idx
+        )
+        robot_state_colors = self._compute_robot_state_colors(
+            points_collision_mask, best_traj_idx
+        )
+
+        self._render_environment(ax, use_extra_objects=self.use_extra_objects)
         self._render_trajectories(ax, trajectories, traj_colors)
         self._render_robot_states(ax, trajectories, robot_state_colors)
 
@@ -197,8 +229,10 @@ class Visualizer:
     ):
         B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, N - 1, n_frames)).astype(int)
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects)
-        
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
+            trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects
+        )
+
         fig, ax = plt.subplots()
 
         def update_frame(frame_idx):
@@ -217,8 +251,12 @@ class Visualizer:
                 save_path=None,
             )
 
-            moving_colors = self._compute_robot_state_colors(points_collision_mask[:, [idx]], moving=True)
-            self._render_robot_states(ax, trajectories[:, [idx], :], moving_colors, moving=True, zorder=20)
+            moving_colors = self._compute_robot_state_colors(
+                points_collision_mask[:, [idx]], moving=True
+            )
+            self._render_robot_states(
+                ax, trajectories[:, [idx], :], moving_colors, moving=True, zorder=20
+            )
 
         self._save_animation(fig, update_frame, n_frames, anim_time, save_path)
 
@@ -234,10 +272,14 @@ class Visualizer:
     ):
         I, B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, I - 1, n_frames)).astype(int)
-        
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(robot=self.robot, trajectories=trajectories.reshape(-1, N, S), on_extra=self.use_extra_objects)
+
+        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
+            robot=self.robot,
+            trajectories=trajectories.reshape(-1, N, S),
+            on_extra=self.use_extra_objects,
+        )
         points_collision_mask = points_collision_mask.reshape(I, B, -1)
-        
+
         fig, ax = plt.subplots()
 
         def update_frame(frame_idx):
@@ -274,9 +316,7 @@ class Visualizer:
         print("Saving animation...")
         fps = max(1, int(n_frames / anim_time))
         writer = FFMpegWriter(
-            fps=fps,
-            codec='libx264',
-            extra_args=['-preset', 'ultrafast', '-crf', '23']
+            fps=fps, codec="libx264", extra_args=["-preset", "ultrafast", "-crf", "23"]
         )
         animation.save(save_path, writer=writer, dpi=90)
 

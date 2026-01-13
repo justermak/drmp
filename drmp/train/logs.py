@@ -6,7 +6,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.models.diffusion import PlanningModel
-from drmp.utils.visualizer import Visualizer
 from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
@@ -15,6 +14,85 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
+from drmp.utils.visualizer import Visualizer
+
+
+def _log_trajectories_metrics(
+    model: PlanningModel,
+    context: torch.Tensor,
+    hard_conds: dict,
+    dataset: TrajectoryDataset,
+    planning_visualizer: Visualizer,
+    tensorboard_writer: SummaryWriter,
+    prefix: str,
+    suffix: str,
+    step: int,
+    guide=None,
+    use_extra_objects: bool = False,
+    start_guide_steps_fraction: float = 0.0,
+    n_guide_steps: int = 5,
+) -> None:
+    trajectories_normalized = model.run_inference(
+        context,
+        hard_conds,
+        n_samples=25,
+        start_guide_steps_fraction=start_guide_steps_fraction,
+        guide=guide,
+        n_guide_steps=n_guide_steps,
+    )[-1]
+    
+    trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
+    trajectories_collision, trajectories_free, trajectories_collision_mask = (
+        dataset.env.get_trajectories_collision_and_free(
+            trajectories=trajectories, robot=dataset.robot, on_extra=use_extra_objects
+        )
+    )
+    
+    tensorboard_writer.add_scalar(
+        f"{prefix}free_fraction{suffix}",
+        compute_free_fraction(trajectories_free, trajectories_collision),
+        step,
+    )
+    tensorboard_writer.add_scalar(
+        f"{prefix}collision_intensity{suffix}",
+        compute_collision_intensity(trajectories_collision_mask),
+        step,
+    )
+    tensorboard_writer.add_scalar(
+        f"{prefix}success{suffix}",
+        compute_success(trajectories_free),
+        step,
+    )
+    tensorboard_writer.add_scalar(
+        f"{prefix}avg_path_length{suffix}",
+        compute_path_length(trajectories_free, dataset.robot).mean(),
+        step,
+    )
+    tensorboard_writer.add_scalar(
+        f"{prefix}avg_smoothness{suffix}",
+        compute_sharpness(trajectories_free, dataset.robot).mean(),
+        step,
+    )
+    tensorboard_writer.add_scalar(
+        f"{prefix}waypoints_variance{suffix}",
+        compute_waypoints_variance(trajectories_free, dataset.robot),
+        step,
+    )
+    
+    fig, ax = planning_visualizer.render_scene(
+        trajectories=trajectories,
+        start_state=trajectories[0, 0],
+        goal_state=trajectories[0, -1],
+        save_path=None,
+    )
+    
+    tensorboard_writer.add_figure(
+        f"{prefix}trajectories_figure{suffix}",
+        fig,
+        step,
+    )
+    
+    plt.close(fig)
 
 
 def log(
@@ -26,6 +104,10 @@ def log(
     prefix: str = "",
     tensorboard_writer: SummaryWriter = None,
     debug: bool = False,
+    guide = None,
+    guide_extra = None,
+    start_guide_steps_fraction: float = 0.0,
+    n_guide_steps: int = 5,
 ):
     model.eval()
     with torch.no_grad():
@@ -43,74 +125,59 @@ def log(
                         loss_value,
                         step,
                     )
+        
         dataset: TrajectoryDataset = subset.dataset
         trajectory_id = np.random.choice(subset.indices)
         data_normalized = dataset[trajectory_id]
 
         context = model.build_context(data_normalized)
         hard_conds = model.build_hard_conditions(data_normalized)
-
-        trajectories_normalized = model.run_inference(
-            context,
-            hard_conds,
-            n_samples=25,
-        )[-1]
-
-        trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
-        trajectories_collision, trajectories_free, trajectories_collision_mask = dataset.env.get_trajectories_collision_and_free(trajectories=trajectories, robot=dataset.robot)
-
-        if tensorboard_writer is not None:
-            tensorboard_writer.add_scalar(
-                f"{prefix}free_fraction",
-                compute_free_fraction(trajectories_free, trajectories_collision),
-                step,
-            )
-            tensorboard_writer.add_scalar(
-                f"{prefix}collision_intensity",
-                compute_collision_intensity(trajectories_collision_mask),
-                step,
-            )
-            tensorboard_writer.add_scalar(
-                f"{prefix}success",
-                compute_success(trajectories_free),
-                step,
-            )
-            tensorboard_writer.add_scalar(
-                f"{prefix}avg_path_length",
-                compute_path_length(trajectories_free, dataset.robot).mean(),
-                step,
-            )
-            tensorboard_writer.add_scalar(
-                f"{prefix}avg_smoothness",
-                compute_sharpness(trajectories_free, dataset.robot).mean(),
-                step,
-            )
-            tensorboard_writer.add_scalar(
-                f"{prefix}waypoints_variance",
-                compute_waypoints_variance(trajectories_free, dataset.robot),
-                step,
-            )
-
+        
         planning_visualizer = Visualizer(dataset.env, dataset.robot)
 
-        fig, ax = planning_visualizer.render_scene(
-            trajectories=trajectories,
-            start_state=trajectories[0, 0],
-            goal_state=trajectories[0, -1],
-            save_path=None,
-        )
-
-        if fig is not None and tensorboard_writer is not None:
-            tensorboard_writer.add_figure(
-                f"{prefix}trajectories_figure",
-                fig,
-                step,
+        if tensorboard_writer is not None:
+            _log_trajectories_metrics(
+                model=model,
+                context=context,
+                hard_conds=hard_conds,
+                dataset=dataset,
+                planning_visualizer=planning_visualizer,
+                tensorboard_writer=tensorboard_writer,
+                prefix=prefix,
+                suffix="",
+                step=step,
+                guide=None,
             )
-
-        if debug:
-            plt.show()
-
-        if fig is not None:
-            plt.close(fig)
-
-    model.train()
+                
+        if guide is not None and tensorboard_writer is not None:
+            _log_trajectories_metrics(
+                model=model,
+                context=context,
+                hard_conds=hard_conds,
+                dataset=dataset,
+                planning_visualizer=planning_visualizer,
+                tensorboard_writer=tensorboard_writer,
+                prefix=prefix,
+                suffix="_guide",
+                step=step,
+                guide=guide,
+                start_guide_steps_fraction=start_guide_steps_fraction,
+                n_guide_steps=n_guide_steps,
+            )
+            
+        if guide_extra is not None and tensorboard_writer is not None:
+            _log_trajectories_metrics(
+                model=model,
+                context=context,
+                hard_conds=hard_conds,
+                dataset=dataset,
+                planning_visualizer=planning_visualizer,
+                tensorboard_writer=tensorboard_writer,
+                prefix=prefix,
+                suffix="_guide_extra",
+                step=step,
+                guide=guide_extra,
+                use_extra_objects=True,
+                start_guide_steps_fraction=start_guide_steps_fraction,
+                n_guide_steps=n_guide_steps,
+            )

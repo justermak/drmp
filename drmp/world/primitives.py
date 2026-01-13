@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-import torch
 import numpy as np
+import torch
 
 
 class PrimitiveShapeField(ABC):

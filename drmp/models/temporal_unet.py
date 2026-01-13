@@ -7,14 +7,15 @@ class RandomFourierSinusoidalPosEmb(nn.Module):
         super().__init__()
         assert (dim % 2) == 0
         half_dim = dim // 2
-        self.weights = nn.Parameter(torch.randn(half_dim), requires_grad = not is_random)
+        self.weights = nn.Parameter(torch.randn(half_dim), requires_grad=not is_random)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.unsqueeze(1)
         freqs = x * self.weights.unsqueeze(0) * 2 * torch.pi
-        x = torch.cat((x, freqs.sin(), freqs.cos()), dim = -1)
+        x = torch.cat((x, freqs.sin(), freqs.cos()), dim=-1)
         return x
-    
+
+
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim: int):
         super().__init__()
@@ -30,6 +31,7 @@ class SinusoidalPosEmb(nn.Module):
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
+
 class Downsample1d(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -37,6 +39,7 @@ class Downsample1d(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
+
 
 class Upsample1d(nn.Module):
     def __init__(self, dim):
@@ -46,10 +49,13 @@ class Upsample1d(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
+
 class Block1d(nn.Module):
     def __init__(self, input_dim, output_dim, groups=8, kernel_size=5):
         super().__init__()
-        self.conv = nn.Conv1d(input_dim, output_dim, kernel_size, padding=kernel_size//2)
+        self.conv = nn.Conv1d(
+            input_dim, output_dim, kernel_size, padding=kernel_size // 2
+        )
         self.norm = nn.GroupNorm(groups, output_dim)
         self.act = nn.Mish()
 
@@ -64,17 +70,30 @@ class Block1d(nn.Module):
         x = self.act(x)
         return x
 
-class ResnetBlock1d(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int, time_emb_dim: int, groups: int = 8, kernel_size: int = 5):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Mish(),
-            nn.Linear(time_emb_dim, output_dim * 2)
-        )
 
-        self.block1 = Block1d(input_dim, output_dim, groups=groups, kernel_size=kernel_size)
-        self.block2 = Block1d(output_dim, output_dim, groups=groups, kernel_size=kernel_size)
-        self.res_conv = nn.Conv1d(input_dim, output_dim, 1) if input_dim != output_dim else nn.Identity()
+class ResnetBlock1d(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        time_emb_dim: int,
+        groups: int = 8,
+        kernel_size: int = 5,
+    ):
+        super().__init__()
+        self.mlp = nn.Sequential(nn.Mish(), nn.Linear(time_emb_dim, output_dim * 2))
+
+        self.block1 = Block1d(
+            input_dim, output_dim, groups=groups, kernel_size=kernel_size
+        )
+        self.block2 = Block1d(
+            output_dim, output_dim, groups=groups, kernel_size=kernel_size
+        )
+        self.res_conv = (
+            nn.Conv1d(input_dim, output_dim, 1)
+            if input_dim != output_dim
+            else nn.Identity()
+        )
 
     def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
         scale_shift = None
@@ -86,10 +105,11 @@ class ResnetBlock1d(nn.Module):
         h = self.block2(h)
         return h + self.res_conv(x)
 
+
 class Attention1d(nn.Module):
     def __init__(self, dim, heads=4, head_dim=32):
         super().__init__()
-        self.scale = head_dim ** -0.5
+        self.scale = head_dim**-0.5
         self.heads = heads
         hidden_dim = head_dim * heads
 
@@ -101,13 +121,14 @@ class Attention1d(nn.Module):
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, -1, n), qkv)
 
-        sim = torch.einsum('b h d i, b h d j -> b h i j', q, k) * self.scale
+        sim = torch.einsum("b h d i, b h d j -> b h i j", q, k) * self.scale
         attn = sim.softmax(dim=-1)
 
-        out = torch.einsum('b h i j, b h d j -> b h d i', attn, v)
+        out = torch.einsum("b h i j, b h d j -> b h d i", attn, v)
         out = out.reshape(b, -1, n)
         out = self.out_proj(out)
         return out
+
 
 class TemporalUNet(nn.Module):
     def __init__(
@@ -135,19 +156,27 @@ class TemporalUNet(nn.Module):
         self.attn_heads = attn_heads
         self.attn_head_dim = attn_head_dim
         if positional_encoding == "random_fourier":
-            positional_encodings = RandomFourierSinusoidalPosEmb(self.positional_encoding_dim, is_random=True)
+            positional_encodings = RandomFourierSinusoidalPosEmb(
+                self.positional_encoding_dim, is_random=True
+            )
         elif positional_encoding == "learned_fourier":
-            positional_encodings = RandomFourierSinusoidalPosEmb(self.positional_encoding_dim, is_random=False)
+            positional_encodings = RandomFourierSinusoidalPosEmb(
+                self.positional_encoding_dim, is_random=False
+            )
         elif positional_encoding == "sinusoidal":
             positional_encodings = SinusoidalPosEmb(self.positional_encoding_dim)
         else:
             raise ValueError(f"Unknown positional encoding type: {positional_encoding}")
-        
+
         self.time_mlp = nn.Sequential(
             positional_encodings,
-            nn.Linear(self.positional_encoding_dim + (1 if positional_encoding != "sinusoidal" else 0), self.time_emb_dim),
+            nn.Linear(
+                self.positional_encoding_dim
+                + (1 if positional_encoding != "sinusoidal" else 0),
+                self.time_emb_dim,
+            ),
             nn.Mish(),
-            nn.Linear(self.time_emb_dim, self.time_emb_dim)
+            nn.Linear(self.time_emb_dim, self.time_emb_dim),
         )
 
         self.context_dim = context_dim
@@ -155,40 +184,102 @@ class TemporalUNet(nn.Module):
             self.context_mlp = nn.Sequential(
                 nn.Linear(context_dim, self.time_emb_dim),
                 nn.Mish(),
-                nn.Linear(self.time_emb_dim, self.time_emb_dim)
+                nn.Linear(self.time_emb_dim, self.time_emb_dim),
             )
 
-        self.init_conv = nn.Conv1d(input_dim, hidden_dim, kernel_size=kernel_size, padding=kernel_size//2)
-        
+        self.init_conv = nn.Conv1d(
+            input_dim, hidden_dim, kernel_size=kernel_size, padding=kernel_size // 2
+        )
+
         dims = [hidden_dim, *[hidden_dim * m for m in dim_mults]]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        self.downs = nn.ModuleList([nn.ModuleList([
-                ResnetBlock1d(input_dim, output_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size),
-                ResnetBlock1d(output_dim, output_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size),
-                Downsample1d(output_dim),
-            ]) for input_dim, output_dim in in_out])
-        self.ups = nn.ModuleList([nn.ModuleList([
-                Upsample1d(output_dim),  
-                ResnetBlock1d(output_dim * 2, input_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size),             
-                ResnetBlock1d(input_dim + output_dim, input_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size),
-            ]) for input_dim, output_dim in reversed(in_out)])
+        self.downs = nn.ModuleList(
+            [
+                nn.ModuleList(
+                    [
+                        ResnetBlock1d(
+                            input_dim,
+                            output_dim,
+                            time_emb_dim=self.time_emb_dim,
+                            groups=resnet_block_groups,
+                            kernel_size=kernel_size,
+                        ),
+                        ResnetBlock1d(
+                            output_dim,
+                            output_dim,
+                            time_emb_dim=self.time_emb_dim,
+                            groups=resnet_block_groups,
+                            kernel_size=kernel_size,
+                        ),
+                        Downsample1d(output_dim),
+                    ]
+                )
+                for input_dim, output_dim in in_out
+            ]
+        )
+        self.ups = nn.ModuleList(
+            [
+                nn.ModuleList(
+                    [
+                        Upsample1d(output_dim),
+                        ResnetBlock1d(
+                            output_dim * 2,
+                            input_dim,
+                            time_emb_dim=self.time_emb_dim,
+                            groups=resnet_block_groups,
+                            kernel_size=kernel_size,
+                        ),
+                        ResnetBlock1d(
+                            input_dim + output_dim,
+                            input_dim,
+                            time_emb_dim=self.time_emb_dim,
+                            groups=resnet_block_groups,
+                            kernel_size=kernel_size,
+                        ),
+                    ]
+                )
+                for input_dim, output_dim in reversed(in_out)
+            ]
+        )
 
         mid_dim = dims[-1]
-        self.mid_block1 = ResnetBlock1d(mid_dim, mid_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size)
+        self.mid_block1 = ResnetBlock1d(
+            mid_dim,
+            mid_dim,
+            time_emb_dim=self.time_emb_dim,
+            groups=resnet_block_groups,
+            kernel_size=kernel_size,
+        )
         self.mid_attn = Attention1d(mid_dim, heads=attn_heads, head_dim=attn_head_dim)
-        self.mid_block2 = ResnetBlock1d(mid_dim, mid_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size)
+        self.mid_block2 = ResnetBlock1d(
+            mid_dim,
+            mid_dim,
+            time_emb_dim=self.time_emb_dim,
+            groups=resnet_block_groups,
+            kernel_size=kernel_size,
+        )
 
-        self.final_res_block = ResnetBlock1d(hidden_dim * 2, hidden_dim, time_emb_dim=self.time_emb_dim, groups=resnet_block_groups, kernel_size=kernel_size)
+        self.final_res_block = ResnetBlock1d(
+            hidden_dim * 2,
+            hidden_dim,
+            time_emb_dim=self.time_emb_dim,
+            groups=resnet_block_groups,
+            kernel_size=kernel_size,
+        )
         self.final_conv = nn.Conv1d(hidden_dim, input_dim, 1)
 
-    def forward(self, x: torch.Tensor, time: torch.Tensor, context: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, time: torch.Tensor, context: torch.Tensor = None
+    ) -> torch.Tensor:
         x = x.permute(0, 2, 1)
         t = self.time_mlp(time)
 
         if self.context_dim is not None:
             if context is None:
-                raise ValueError("Model initialized with context_dim but no context provided in forward")
+                raise ValueError(
+                    "Model initialized with context_dim but no context provided in forward"
+                )
             c = self.context_mlp(context)
             t = t + c
 
@@ -212,14 +303,13 @@ class TemporalUNet(nn.Module):
             x = upsample(x)
             x = torch.cat((x, h.pop()), dim=1)
             x = block1(x, t)
-            
+
             x = torch.cat((x, h.pop()), dim=1)
             x = block2(x, t)
-            
 
         x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
         x = self.final_conv(x)
-        
+
         x = x.permute(0, 2, 1)
         return x

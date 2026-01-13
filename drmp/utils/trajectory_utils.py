@@ -14,7 +14,9 @@ def create_straight_line_trajectory(
     tensor_args: Dict[str, Any],
 ) -> torch.Tensor:
     alphas = torch.linspace(0, 1, n_support_points, **tensor_args)
-    positions = start_pos.unsqueeze(0) + (goal_pos - start_pos).unsqueeze(0) * alphas.unsqueeze(1)
+    positions = start_pos.unsqueeze(0) + (goal_pos - start_pos).unsqueeze(
+        0
+    ) * alphas.unsqueeze(1)
     velocities = torch.zeros_like(positions)
     avg_vel = (goal_pos - start_pos) / ((n_support_points - 1) * dt)
     velocities[1:-1, :] = avg_vel
@@ -57,12 +59,19 @@ def smoothen_trajectory(
         )
 
 
-def interpolate_trajectories(trajectories: torch.Tensor, n_interpolate: int = 0) -> torch.Tensor:
-    assert trajectories.ndim == 3, "trajectories must be of shape (n_trajectories, n_waypoints, n_dims)"
+def interpolate_trajectories(
+    trajectories: torch.Tensor, n_interpolate: int = 0
+) -> torch.Tensor:
+    assert trajectories.ndim == 3, (
+        "trajectories must be of shape (n_trajectories, n_waypoints, n_dims)"
+    )
     n_waypoints = trajectories.shape[-2]
     n_total_points = (n_waypoints - 1) * (n_interpolate + 1) + 1
     trajectories_interpolate = F.interpolate(
-        trajectories.transpose(-2, -1), size=n_total_points, mode="linear", align_corners=True
+        trajectories.transpose(-2, -1),
+        size=n_total_points,
+        mode="linear",
+        align_corners=True,
     ).transpose(-2, -1)
 
     return trajectories_interpolate

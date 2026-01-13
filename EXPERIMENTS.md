@@ -3,8 +3,6 @@
 | Strategy | Ease of Implementations | Potential | Description |
 | :--- | :---: | :---: | :--- |
 | **Trajectory slicing** | 5 | 5 | Cut slices of trajectories, smoothen and increase the n_support_points for the slice using B-spline |
-| **Time reversal** | 5 | 5 | Swap start and goal and reverse the trajectory |
-| **Start/Goal jittering** | 4 | 2 | Move start/goal a little, fix trajectory by optimizing a little |
 | **Labeling samples** | 3 | 3 | Different labels for shortest and safest trajectories |
 | **Normalization** | 5 | 3 | Try $N(0, 1)$ instead of $[-1; 1]$ |
 

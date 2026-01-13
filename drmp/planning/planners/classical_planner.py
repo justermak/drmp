@@ -1,9 +1,10 @@
-from drmp.world.environments import EnvBase
-from drmp.world.robot import Robot
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
+
 import torch
 
-from typing import Dict, Any, List
-from abc import ABC, abstractmethod
+from drmp.world.environments import EnvBase
+from drmp.world.robot import Robot
 
 
 class ClassicalPlanner(ABC):
@@ -20,12 +21,13 @@ class ClassicalPlanner(ABC):
         self.tensor_args = tensor_args
         self.start_pos: torch.Tensor = None
         self.goal_pos: torch.Tensor = None
-        
+
     @abstractmethod
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
         pass
-    
+
     @abstractmethod
-    def optimize(self, n_trajectories: int, **kwargs) -> torch.Tensor | List[torch.Tensor]:
-        pass    
-    
+    def optimize(
+        self, n_trajectories: int, **kwargs
+    ) -> torch.Tensor | List[torch.Tensor]:
+        pass

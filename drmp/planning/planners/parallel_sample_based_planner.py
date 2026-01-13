@@ -75,7 +75,12 @@ class ParallelSampleBasedPlanner(ClassicalPlanner):
         max_processes: int,
         seed: int,
     ):
-        super().__init__(env=planner.env, robot=planner.robot, use_extra_objects=planner.use_extra_objects, tensor_args=planner.tensor_args)
+        super().__init__(
+            env=planner.env,
+            robot=planner.robot,
+            use_extra_objects=planner.use_extra_objects,
+            tensor_args=planner.tensor_args,
+        )
         self.planner = planner
         self.n_trajectories = n_trajectories
         self.use_parallel = use_parallel

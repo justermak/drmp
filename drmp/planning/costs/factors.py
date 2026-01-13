@@ -60,15 +60,17 @@ class FieldFactor:
         calc_jacobian: bool = True,
     ):
         if calc_jacobian:
-            qs_interpolated = (
-                interpolate_trajectories(q_trajectories, n_interpolate=n_interpolate)
+            qs_interpolated = interpolate_trajectories(
+                q_trajectories, n_interpolate=n_interpolate
             )
             qs = qs_interpolated[:, self.traj_range[0] : self.traj_range[1], :]
-            error_interpolated = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_objects)
-            H = -torch.autograd.grad(error_interpolated.sum(), q_trajectories, retain_graph=True)[0][
-                :, self.traj_range[0] : self.traj_range[1], : self.n_dof
-            ]
-        
+            error_interpolated = env.compute_cost(
+                qs=qs, robot=robot, on_extra=self.use_extra_objects
+            )
+            H = -torch.autograd.grad(
+                error_interpolated.sum(), q_trajectories, retain_graph=True
+            )[0][:, self.traj_range[0] : self.traj_range[1], : self.n_dof]
+
         qs = q_trajectories[:, self.traj_range[0] : self.traj_range[1], :]
         error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_objects)
         if calc_jacobian:

@@ -9,7 +9,10 @@ from drmp.planning.planners.parallel_sample_based_planner import (
     ParallelSampleBasedPlanner,
 )
 from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.trajectory_utils import create_straight_line_trajectory, smoothen_trajectory
+from drmp.utils.trajectory_utils import (
+    create_straight_line_trajectory,
+    smoothen_trajectory,
+)
 
 
 class HybridPlanner(ClassicalPlanner):
@@ -55,7 +58,9 @@ class HybridPlanner(ClassicalPlanner):
                     n_support_points=self.opt_based_planner.n_support_points,
                     dt=self.opt_based_planner.dt,
                     tensor_args=self.tensor_args,
-                ) if traj is not None else create_straight_line_trajectory(
+                )
+                if traj is not None
+                else create_straight_line_trajectory(
                     start_pos=self.start_pos,
                     goal_pos=self.goal_pos,
                     n_support_points=self.opt_based_planner.n_support_points,

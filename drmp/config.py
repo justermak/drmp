@@ -1,7 +1,8 @@
 import os
+
 import torch
 
-dir_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
+dir_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
 
 N_DIM = 2
 
@@ -17,6 +18,9 @@ DEFAULT_TRAIN_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
     "use_filtered_trajectories": True,
+    "apply_augmentations": True,
+    "filter_longest_portion": 0.25,
+    "filter_sharpest_portion": 0.25,
     # Diffusion Model
     "diffusion_model_name": "GaussianDiffusion",
     "n_diffusion_steps": 50,
@@ -31,21 +35,28 @@ DEFAULT_TRAIN_ARGS = {
     "attn_heads": 4,
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
-    # Training parameters
-    "num_train_steps": 20000,
-    "lr": 2e-4,
+    # Training
+    "num_train_steps": 200000,
+    "lr": 1e-4,
     "batch_size": 1024,
     "clip_grad": True,
-    "clip_grad_max_norm": 2.0,
+    "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
     "ema_decay": 0.995,
     "ema_warmup": 100000,
     "ema_update_interval": 10,
-    "early_stopper_patience": 10,
-    # Summary parameters
+    # Summary
     "log_interval": 2000,
     "checkpoint_interval": 20000,
+    # Guide
+    "guide_start_guide_steps_fraction": 0.25,
+    "guide_n_guide_steps": 5,
+    "guide_sigma_collision": 1e1,
+    "guide_sigma_gp": 2e3,
+    "guide_do_clip_grad": True,
+    "guide_max_grad_norm": 1.0,
+    "guide_n_interpolate": 5,
     # Other
     "device": "cuda",
     "debug": False,
@@ -55,11 +66,11 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 100,
+    "n_tasks": 1000,
     "n_samples": 100,
     "splits": '("test",)', # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "gpmp2-rrt-prior",  # Options: "diffusion", "legacy-diffusion", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "legacy-diffusion",  # Options: "diffusion", "legacy-diffusion", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
@@ -77,7 +88,9 @@ DEFAULT_INFERENCE_ARGS = {
     "max_grad_norm": 1.0,
     "n_interpolate": 5,
     # Legacy diffusion model
-    "legacy_checkpoints_dir": os.path.join(dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"),
+    "legacy_checkpoints_dir": os.path.join(
+        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"
+    ),
     "legacy_checkpoint_name": "ema_model_current.pth",
     "legacy_ddim": False,
     "legacy_start_guide_steps_fraction": 0.25,
@@ -119,7 +132,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
     "env_name": "EnvDense2D",
-    "normalizer_name": "LimitsNormalizer",
+    "normalizer_name": "TrivialNormalizer",
     "robot_margin": 0.01,
     "generating_robot_margin": 0.02,
     "n_support_points": 64,
@@ -149,8 +162,6 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_method": "cholesky",
     # Other
     "val_portion": 0.05,
-    "filter_longest_portion": 0.25,
-    "filter_sharpest_portion": 0.25,
     "device": "cuda",
     "debug": False,
     "seed": 42,

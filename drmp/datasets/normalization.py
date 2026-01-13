@@ -9,15 +9,15 @@ class Normalizer(ABC):
 
     @abstractmethod
     def fit(self, X: torch.Tensor) -> None:
-        raise NotImplementedError()
+        pass
 
     @abstractmethod
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        pass
 
     @abstractmethod
     def unnormalize(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        pass
 
 
 class LimitsNormalizer(Normalizer):
@@ -36,7 +36,7 @@ class LimitsNormalizer(Normalizer):
         self.range = torch.where(
             self.constant_mask, torch.ones_like(self.range), self.range
         )
-    
+
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
         x = (x - self.mins) / self.range
         x = 2 * x - 1 + self.constant_mask.float()
@@ -72,9 +72,7 @@ class GaussianNormalizer(Normalizer):
         self.std = X_flat.std(dim=0)
 
         self.constant_mask = self.std.abs() < self.eps
-        self.std = torch.where(
-            self.constant_mask, torch.ones_like(self.std), self.std
-        )
+        self.std = torch.where(self.constant_mask, torch.ones_like(self.std), self.std)
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
         return (x - self.mean) / self.std

@@ -30,6 +30,7 @@ def run_inference_for_task(
     data_normalized: dict,
     n_samples: int,
     model_wrapper: BaseRunnerModelWrapper,
+    return_full_data: bool = False,
 ) -> Dict[str, Any]:
     robot = dataset.robot
     env = dataset.env
@@ -42,13 +43,23 @@ def run_inference_for_task(
     task_time = timer_model_sampling.elapsed
     if trajectories_final is None:
         return None
-    trajectories_final_collision, trajectories_final_free, points_final_collision_mask = (
-        env.get_trajectories_collision_and_free(trajectories=trajectories_final, robot=robot, on_extra=model_wrapper.use_extra_objects)
+    (
+        trajectories_final_collision,
+        trajectories_final_free,
+        points_final_collision_mask,
+    ) = env.get_trajectories_collision_and_free(
+        trajectories=trajectories_final,
+        robot=robot,
+        on_extra=model_wrapper.use_extra_objects,
     )
 
     success = compute_success(trajectories_final_free)
-    free_fraction = compute_free_fraction(trajectories_final_free, trajectories_final_collision)
-    collision_intensity = compute_collision_intensity(points_final_collision_mask).cpu().numpy()
+    free_fraction = compute_free_fraction(
+        trajectories_final_free, trajectories_final_collision
+    )
+    collision_intensity = (
+        compute_collision_intensity(points_final_collision_mask).cpu().numpy()
+    )
     sharpness = None
     path_length = None
     waypoints_variance = None
@@ -68,31 +79,41 @@ def run_inference_for_task(
         sharpness = sharpness.cpu().numpy()
         path_length = path_length.cpu().numpy()
 
-    task_results = {
+    stats = {
         "task_id": task_id,
-        "start_pos": robot.get_position(
-            dataset.normalizer.unnormalize(data_normalized["start_states_normalized"]).cpu().numpy()
-        ),
-        "goal_pos": robot.get_position(
-            dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"]).cpu().numpy()
-        ),
         "n_samples": n_samples,
-        "trajectories_iters": trajectories_iters,
-        "trajectories_final": trajectories_final,
-        "trajectories_final_collision": trajectories_final_collision,
-        "trajectories_final_free": trajectories_final_free,
         "success": success,
         "free_fraction": free_fraction,
         "collision_intensity": collision_intensity,
-        "best_traj_idx": best_traj_idx,
-        "traj_final_best": traj_final_best,
         "path_length_best": path_length_best,
         "sharpness": sharpness,
         "path_length": path_length,
         "waypoints_variance": waypoints_variance,
         "t_task": task_time,
     }
-    return task_results
+
+    if not return_full_data:
+        return stats
+
+    start_pos = robot.get_position(
+        dataset.normalizer.unnormalize(data_normalized["start_states_normalized"])
+    )
+    goal_pos = robot.get_position(
+        dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"])
+    )
+
+    full_data = {
+        "start_pos": start_pos,
+        "goal_pos": goal_pos,
+        "trajectories_iters": trajectories_iters,
+        "trajectories_final": trajectories_final,
+        "trajectories_final_collision": trajectories_final_collision,
+        "trajectories_final_free": trajectories_final_free,
+        "best_traj_idx": best_traj_idx,
+        "traj_final_best": traj_final_best,
+    }
+
+    return {"stats": stats, "full_data": full_data}
 
 
 def run_inference_on_dataset(
@@ -100,66 +121,95 @@ def run_inference_on_dataset(
     n_tasks: int,
     n_samples: int,
     model_wrapper: BaseRunnerModelWrapper,
-) -> List[Dict[str, Any]]:
-    results = []
+) -> Dict[str, Any]:
+    statistics = []
+    full_data_sample = None
     dataset: TrajectoryDataset = subset.dataset
 
     for i in tqdm(range(n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
         data_normalized = dataset[idx]
 
+        return_full_data = (i == 0)
         task_results = run_inference_for_task(
             task_id=i,
             dataset=dataset,
             data_normalized=data_normalized,
             n_samples=n_samples,
             model_wrapper=model_wrapper,
+            return_full_data=return_full_data,
         )
+        
         if task_results is not None:
-            results.append(task_results)
+            if return_full_data:
+                statistics.append(task_results["stats"])
+                full_data_sample = task_results["full_data"]
+            else:
+                statistics.append(task_results)
 
-    return results
+    result = {"statistics": statistics}
+    
+    if full_data_sample is not None:
+        result["start_pos_sample"] = full_data_sample["start_pos"]
+        result["goal_pos_sample"] = full_data_sample["goal_pos"]
+        result["trajectories_iters_sample"] = full_data_sample["trajectories_iters"]
+        result["trajectories_final_sample"] = full_data_sample["trajectories_final"]
+        result["trajectories_final_collision_sample"] = full_data_sample["trajectories_final_collision"]
+        result["trajectories_final_free_sample"] = full_data_sample["trajectories_final_free"]
+        result["best_traj_idx_sample"] = full_data_sample["best_traj_idx"]
+        result["traj_final_best_sample"] = full_data_sample["traj_final_best"]
+
+    return result
 
 
-def compute_stats(results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if len(results) == 0:
+def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    statistics = results.get("statistics", [])
+    if len(statistics) == 0:
         return None
 
-    n_tasks = len(results)
-    n_samples = results[0]["n_samples"]
-    success = [r["success"] for r in results]
-    free_fraction = [r["free_fraction"] for r in results]
-    collision_intensity = [r["collision_intensity"] for r in results]
-    t = [r["t_task"] for r in results]
+    n_tasks = len(statistics)
+    n_samples = statistics[0]["n_samples"]
+    success = [r["success"] for r in statistics]
+    free_fraction = [r["free_fraction"] for r in statistics]
+    collision_intensity = [r["collision_intensity"] for r in statistics]
+    t = [r["t_task"] for r in statistics]
     path_length_best = [
-        r["path_length_best"]
-        for r in results
-        if r["path_length_best"] is not None
+        r["path_length_best"] for r in statistics if r["path_length_best"] is not None
     ]
     sharpness = [
-        r["sharpness"].mean().item()
-        for r in results
-        if r["sharpness"] is not None
+        r["sharpness"].mean().item() for r in statistics if r["sharpness"] is not None
     ]
     path_length = [
-        r["path_length"].mean().item()
-        for r in results
-        if r["path_length"] is not None
+        r["path_length"].mean().item() for r in statistics if r["path_length"] is not None
     ]
     waypoints_variance = [
-        r["waypoints_variance"]
-        for r in results
-        if r["waypoints_variance"] is not None
+        r["waypoints_variance"] for r in statistics if r["waypoints_variance"] is not None
     ]
 
     time_center, time_hw = bootstrap_confidence_interval(t)
     success_center, success_hw = bootstrap_confidence_interval(success)
-    free_fraction_center, free_fraction_hw = bootstrap_confidence_interval(free_fraction)
-    collision_intensity_center, collision_intensity_hw = bootstrap_confidence_interval(collision_intensity)
-    path_length_best_center, path_length_best_hw = bootstrap_confidence_interval(path_length_best) if path_length_best else (None, None)
-    sharpness_center, sharpness_hw = bootstrap_confidence_interval(sharpness) if sharpness else (None, None)
-    path_length_center, path_length_hw = bootstrap_confidence_interval(path_length) if path_length else (None, None)
-    waypoints_variance_center, waypoints_variance_hw = bootstrap_confidence_interval(waypoints_variance) if waypoints_variance else (None, None)
+    free_fraction_center, free_fraction_hw = bootstrap_confidence_interval(
+        free_fraction
+    )
+    collision_intensity_center, collision_intensity_hw = bootstrap_confidence_interval(
+        collision_intensity
+    )
+    path_length_best_center, path_length_best_hw = (
+        bootstrap_confidence_interval(path_length_best)
+        if path_length_best
+        else (None, None)
+    )
+    sharpness_center, sharpness_hw = (
+        bootstrap_confidence_interval(sharpness) if sharpness else (None, None)
+    )
+    path_length_center, path_length_hw = (
+        bootstrap_confidence_interval(path_length) if path_length else (None, None)
+    )
+    waypoints_variance_center, waypoints_variance_hw = (
+        bootstrap_confidence_interval(waypoints_variance)
+        if waypoints_variance
+        else (None, None)
+    )
 
     stats = {
         "n_tasks": n_tasks,
@@ -194,9 +244,15 @@ def print_stats(results):
         print(f"-------- {split_name.upper()} SPLIT --------")
         print(f"| n_tasks | {stats['n_tasks']} |")
         print(f"| n_samples | {stats['n_samples']} |")
-        print(f"| Time to generate n_samples | {stats['time_center']:.3f} ± {stats['time_hw']:.3f} sec |")
-        print(f"| Success rate | {stats['success_rate_center'] * 100:.2f} ± {stats['success_rate_hw'] * 100:.2f}% |")
-        print(f"| Free fraction | {stats['free_fraction_center'] * 100:.2f} ± {stats['free_fraction_hw'] * 100:.2f}% |")
+        print(
+            f"| Time to generate n_samples | {stats['time_center']:.3f} ± {stats['time_hw']:.3f} sec |"
+        )
+        print(
+            f"| Success rate | {stats['success_rate_center'] * 100:.2f} ± {stats['success_rate_hw'] * 100:.2f}% |"
+        )
+        print(
+            f"| Free fraction | {stats['free_fraction_center'] * 100:.2f} ± {stats['free_fraction_hw'] * 100:.2f}% |"
+        )
         print(
             f"| Collision intensity | {stats['collision_intensity_center'] * 100:.2f} ± {stats['collision_intensity_hw'] * 100:.2f}% |"
         )
@@ -205,26 +261,33 @@ def print_stats(results):
                 f"| Best path length | {stats['path_length_best_center']:.4f} ± {stats['path_length_best_hw']:.4f} |"
             )
         if stats["sharpness_center"] is not None:
-            print(f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |")
+            print(
+                f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |"
+            )
         if stats["path_length_center"] is not None:
-            print(f"| Path length | {stats['path_length_center']:.4f} ± {stats['path_length_hw']:.4f} |")
+            print(
+                f"| Path length | {stats['path_length_center']:.4f} ± {stats['path_length_hw']:.4f} |"
+            )
         if stats["waypoints_variance_center"] is not None:
-            print(f"| Waypoints variance | {stats['waypoints_variance_center']:.4f} ± {stats['waypoints_variance_hw']:.4f} |")
+            print(
+                f"| Waypoints variance | {stats['waypoints_variance_center']:.4f} ± {stats['waypoints_variance_hw']:.4f} |"
+            )
 
 
 def visualize_results(
-    task: Dict[str, Any],
+    results: Dict[str, Any],
     dataset: TrajectoryDataset,
+    use_extra_objects: bool,
     generation_dir: str,
     generate_animation: bool = True,
     name_prefix: str = "task0",
 ):
-    planner_visualizer = Visualizer(env=dataset.env, robot=dataset.robot)
-    start_pos = task["start_pos"]
-    goal_pos = task["goal_pos"]
-    trajectories_iters = task["trajectories_iters"]
-    trajectories_final = task["trajectories_final"]
-    best_traj_idx = task["best_traj_idx"]
+    planner_visualizer = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=use_extra_objects)
+    start_pos = results["start_pos_sample"]
+    goal_pos = results["goal_pos_sample"]
+    trajectories_iters = results["trajectories_iters_sample"]
+    trajectories_final = results["trajectories_final_sample"]
+    best_traj_idx = results["best_traj_idx_sample"]
 
     planner_visualizer.render_scene(
         trajectories=trajectories_final,
@@ -233,7 +296,7 @@ def visualize_results(
         goal_state=goal_pos,
         save_path=os.path.join(generation_dir, f"{name_prefix}-trajectories.png"),
     )
-    
+
     if not generate_animation:
         return
 
@@ -256,6 +319,7 @@ def visualize_results(
             n_frames=min(60, len(trajectories_iters)),
         )
 
+
 def create_test_subset(
     dataset: TrajectoryDataset,
     n_tasks: int,
@@ -275,16 +339,14 @@ def create_test_subset(
             "try reducing the threshold, robot margin or object density"
         )
         return None
-    
+
     test_dataset = copy(dataset)
     test_dataset.n_trajs = n_tasks
     test_dataset.trajs_normalized = torch.empty((n_tasks,), **tensor_args)
     test_dataset.start_states = torch.cat(
         [start_pos, torch.zeros_like(start_pos)], dim=-1
     )
-    test_dataset.goal_states = torch.cat(
-        [goal_pos, torch.zeros_like(goal_pos)], dim=-1
-    )
+    test_dataset.goal_states = torch.cat([goal_pos, torch.zeros_like(goal_pos)], dim=-1)
     test_dataset.start_states_normalized = test_dataset.normalizer.normalize(
         test_dataset.start_states
     )
@@ -315,15 +377,17 @@ def run_inference(
     config_dict["n_samples"] = n_samples
     save_config_to_yaml(config_dict, os.path.join(generation_dir, "config.yaml"))
 
-    model_wrapper = runner_config.prepare(dataset=dataset, tensor_args=tensor_args, n_samples=n_samples)
+    model_wrapper = runner_config.prepare(
+        dataset=dataset, tensor_args=tensor_args, n_samples=n_samples
+    )
 
     results = {}
 
-    print('=' * 80)
+    print("=" * 80)
     print(f"Starting trajectory generation for {n_tasks} tasks per split")
 
     if train_subset is not None:
-        print('=' * 80)
+        print("=" * 80)
         print("Processing TRAIN split...")
         results["train"] = run_inference_on_dataset(
             subset=train_subset,
@@ -333,7 +397,7 @@ def run_inference(
         )
         results["train_stats"] = compute_stats(results["train"])
     if val_subset is not None:
-        print('=' * 80)
+        print("=" * 80)
         print("Processing VAL split...")
         results["val"] = run_inference_on_dataset(
             subset=val_subset,
@@ -343,7 +407,7 @@ def run_inference(
         )
         results["val_stats"] = compute_stats(results["val"])
     if test_subset is not None:
-        print('=' * 80)
+        print("=" * 80)
         print("Processing TEST split...")
         results["test"] = run_inference_on_dataset(
             subset=test_subset,
@@ -355,23 +419,25 @@ def run_inference(
 
     print_stats(results)
 
-    with open(os.path.join(generation_dir, "results_data_dict.pickle"), "wb") as f:
-        pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
-
     if debug:
-        visualize_results(
-            task = (
-                results["test"][0]
-                if "test" in results and len(results["test"]) > 0
-                else (
-                    results["val"][0]
-                    if "val" in results and len(results["val"]) > 0
-                    else results["train"][0]
-                )
-            ),
-            dataset=dataset,
-            generation_dir=generation_dir,
-            generate_animation=False,
-        )
+        with open(os.path.join(generation_dir, "results_data_dict.pickle"), "wb") as f:
+            pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        vis_results = None
+        if "test" in results and results["test"].get("start_pos_sample") is not None:
+            vis_results = results["test"]
+        elif "val" in results and results["val"].get("start_pos_sample") is not None:
+            vis_results = results["val"]
+        elif "train" in results and results["train"].get("start_pos_sample") is not None:
+            vis_results = results["train"]
+        
+        if vis_results is not None:
+            visualize_results(
+                results=vis_results,
+                dataset=dataset,
+                use_extra_objects=runner_config.use_extra_objects,
+                generation_dir=generation_dir,
+                generate_animation=False,
+            )
 
     return results

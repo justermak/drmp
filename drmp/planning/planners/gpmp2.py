@@ -98,7 +98,12 @@ class GPMP2(ClassicalPlanner):
         tensor_args: Dict[str, Any],
         use_extra_objects: bool = False,
     ):
-        super().__init__(env=env, robot=robot, use_extra_objects=use_extra_objects, tensor_args=tensor_args)
+        super().__init__(
+            env=env,
+            robot=robot,
+            use_extra_objects=use_extra_objects,
+            tensor_args=tensor_args,
+        )
         self.n_dof = n_dof
         self.dim = 2 * self.n_dof
         self.n_support_points = n_support_points
@@ -107,7 +112,7 @@ class GPMP2(ClassicalPlanner):
         self.dt = dt
         self.delta = delta
         self.method = method
-        
+
         self.n_interpolate = n_interpolate
         self.num_samples = num_samples
         self.sigma_start = sigma_start

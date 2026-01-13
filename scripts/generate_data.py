@@ -22,9 +22,10 @@ def run(args):
         env_name=args.env_name,
         normalizer_name=args.normalizer_name,
         robot_margin=args.robot_margin,
-        cutoff_margin=args.cutoff_margin,
+        generating_robot_margin=args.generating_robot_margin,
         n_support_points=args.n_support_points,
         duration=args.duration,
+        apply_augmentations=False,
         tensor_args=tensor_args,
     )
 
@@ -35,8 +36,6 @@ def run(args):
         sample_steps=args.sample_steps,
         opt_steps=args.opt_steps,
         val_portion=args.val_portion,
-        filter_longest_portion=args.filter_longest_portion,
-        filter_sharpest_portion=args.filter_sharpest_portion,
         use_parallel=args.use_parallel,
         max_processes=args.max_processes,
         rrt_connect_step_size=args.rrt_connect_step_size,

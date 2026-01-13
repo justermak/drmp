@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
 import torch
+
 from drmp.datasets.dataset import TrajectoryDataset
 from drmp.inference.guides import GuideTrajectories
 from drmp.models.diffusion import PlanningModel
@@ -10,6 +11,7 @@ from drmp.planning.costs.cost_functions import (
     CostComposite,
     CostGPTrajectory,
 )
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.parallel_sample_based_planner import (
@@ -17,7 +19,6 @@ from drmp.planning.planners.parallel_sample_based_planner import (
 )
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.trajectory_utils import create_straight_line_trajectory
-from drmp.planning.planners.classical_planner import ClassicalPlanner
 
 
 class BaseRunnerModelWrapper(ABC):
@@ -25,7 +26,12 @@ class BaseRunnerModelWrapper(ABC):
         self.use_extra_objects = use_extra_objects
 
     @abstractmethod
-    def sample(self, dataset: TrajectoryDataset, data_normalized: Dict[str, Any], n_samples: int):
+    def sample(
+        self,
+        dataset: TrajectoryDataset,
+        data_normalized: Dict[str, Any],
+        n_samples: int,
+    ):
         pass
 
     @abstractmethod
@@ -50,10 +56,15 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
 
-    def sample(self, dataset: TrajectoryDataset, data_normalized: Dict[str, Any], n_samples: int):
+    def sample(
+        self,
+        dataset: TrajectoryDataset,
+        data_normalized: Dict[str, Any],
+        n_samples: int,
+    ):
         context = self.model.build_context(data_normalized)
         hard_conds = self.model.build_hard_conditions(data_normalized)
-        
+
         trajectories_iters_normalized = self.model.run_inference(
             context=context,
             hard_conds=hard_conds,
@@ -63,10 +74,12 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
             n_guide_steps=self.n_guide_steps,
             ddim=self.ddim,
         )
-        
-        trajectories_iters = dataset.normalizer.unnormalize(trajectories_iters_normalized)
+
+        trajectories_iters = dataset.normalizer.unnormalize(
+            trajectories_iters_normalized
+        )
         trajectories_final = trajectories_iters[-1]
-        
+
         return trajectories_iters, trajectories_final
 
     def to_dict(self) -> Dict[str, Any]:
@@ -94,9 +107,17 @@ class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
 
-    def sample(self, dataset: TrajectoryDataset, data_normalized: Dict[str, Any], n_samples: int):
-        hard_conds = {0: data_normalized["start_states_normalized"], dataset.n_support_points - 1: data_normalized["goal_states_normalized"]}
-        
+    def sample(
+        self,
+        dataset: TrajectoryDataset,
+        data_normalized: Dict[str, Any],
+        n_samples: int,
+    ):
+        hard_conds = {
+            0: data_normalized["start_states_normalized"],
+            dataset.n_support_points - 1: data_normalized["goal_states_normalized"],
+        }
+
         trajectories_iters_normalized = self.model.run_inference(
             context=None,
             hard_conds=hard_conds,
@@ -108,10 +129,12 @@ class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
             return_chain=True,
             ddim=self.ddim,
         )
-        
-        trajectories_iters = dataset.normalizer.unnormalize(trajectories_iters_normalized)
+
+        trajectories_iters = dataset.normalizer.unnormalize(
+            trajectories_iters_normalized
+        )
         trajectories_final = trajectories_iters[-1]
-        
+
         return trajectories_iters, trajectories_final
 
     def to_dict(self) -> Dict[str, Any]:
@@ -136,21 +159,28 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
 
-    def sample(self, dataset: TrajectoryDataset, data_normalized: Dict[str, Any], n_samples: int):
+    def sample(
+        self,
+        dataset: TrajectoryDataset,
+        data_normalized: Dict[str, Any],
+        n_samples: int,
+    ):
         start_states_normalized = data_normalized["start_states_normalized"]
         goal_states_normalized = data_normalized["goal_states_normalized"]
-        
+
         start_states = dataset.normalizer.unnormalize(start_states_normalized)
         goal_states = dataset.normalizer.unnormalize(goal_states_normalized)
-        
+
         start_pos = dataset.robot.get_position(start_states)
         goal_pos = dataset.robot.get_position(goal_states)
-        
+
         qs = torch.cat((start_states.unsqueeze(0), goal_states.unsqueeze(0)), dim=0)
-        collision_mask = dataset.env.get_collision_mask(robot=self.planner.robot, qs=qs, on_extra=self.use_extra_objects)
+        collision_mask = dataset.env.get_collision_mask(
+            robot=self.planner.robot, qs=qs, on_extra=self.use_extra_objects
+        )
         if collision_mask.any():
             return None, None
-        
+
         self.planner.reset(start_pos, goal_pos)
         if self.method == "rrt-connect":
             trajectories_list = self.planner.optimize(
@@ -160,11 +190,19 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
             if all(t is None for t in trajectories_list):
                 return None, None
             max_len = max([t.shape[0] for t in trajectories_list if t is not None])
-            trajectories = torch.stack([
-                torch.cat((t, goal_pos.repeat((max_len - t.shape[0], 1))), dim=0) if t is not None else 
-                torch.cat((start_pos, goal_pos.repeat((max_len - 1, 1))), dim=0) for t in trajectories_list
-            ])
-            trajectories = torch.cat((trajectories, torch.zeros_like(trajectories)), dim=-1)
+            trajectories = torch.stack(
+                [
+                    torch.cat((t, goal_pos.repeat((max_len - t.shape[0], 1))), dim=0)
+                    if t is not None
+                    else torch.cat(
+                        (start_pos, goal_pos.repeat((max_len - 1, 1))), dim=0
+                    )
+                    for t in trajectories_list
+                ]
+            )
+            trajectories = torch.cat(
+                (trajectories, torch.zeros_like(trajectories)), dim=-1
+            )
         elif self.method == "gpmp2-uninformative":
             initial_trajectories = create_straight_line_trajectory(
                 start_pos=start_pos,
@@ -184,10 +222,10 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
                 opt_steps=self.opt_steps,
                 debug=False,
             )
-        
+
         trajectories_iters = None
         trajectories_final = trajectories
-        
+
         return trajectories_iters, trajectories_final
 
     def to_dict(self) -> Dict[str, Any]:
@@ -197,21 +235,24 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
             "opt_steps": self.opt_steps,
             "smoothen": self.smoothen,
         }
-    
+
     def cleanup(self):
-        if hasattr(self.planner, 'shutdown'):
+        if hasattr(self.planner, "shutdown"):
             self.planner.shutdown()
-        elif hasattr(self.planner, 'sample_based_planner'):
+        elif hasattr(self.planner, "sample_based_planner"):
             self.planner.sample_based_planner.shutdown()
 
 
 class BaseRunnerConfig(ABC):
+    def __init__(self, use_extra_objects: bool):
+        self.use_extra_objects = use_extra_objects
+    
     @abstractmethod
     def prepare(
         self,
         dataset: TrajectoryDataset,
-        tensor_args: Dict[str, Any],
         n_samples: int,
+        tensor_args: Dict[str, Any],
     ) -> BaseRunnerModelWrapper:
         pass
 
@@ -234,8 +275,8 @@ class DiffusionRunnerConfig(BaseRunnerConfig):
         n_guide_steps: int,
         ddim: bool,
     ):
+        super().__init__(use_extra_objects=use_extra_objects)
         self.model = model
-        self.use_extra_objects = use_extra_objects
         self.sigma_collision = sigma_collision
         self.sigma_gp = sigma_gp
         self.do_clip_grad = do_clip_grad
@@ -326,8 +367,8 @@ class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
         n_guide_steps: int,
         ddim: bool,
     ):
+        super().__init__(use_extra_objects=use_extra_objects)
         self.model = model
-        self.use_extra_objects = use_extra_objects
         self.sigma_collision = sigma_collision
         self.sigma_gp = sigma_gp
         self.do_clip_grad = do_clip_grad
@@ -418,10 +459,10 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         rrt_connect_n_samples: int,
         seed: int,
     ):
+        super().__init__(use_extra_objects=use_extra_objects)
         self.sample_steps = sample_steps
         self.use_parallel = use_parallel
         self.max_processes = max_processes
-        self.use_extra_objects = use_extra_objects
         self.rrt_connect_step_size = rrt_connect_step_size
         self.rrt_connect_n_radius = rrt_connect_n_radius
         self.rrt_connect_n_samples = rrt_connect_n_samples
@@ -488,8 +529,8 @@ class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
         gpmp2_delta: float,
         gpmp2_method: str,
     ):
+        super().__init__(use_extra_objects=use_extra_objects)
         self.opt_steps = opt_steps
-        self.use_extra_objects = use_extra_objects
         self.n_dof = n_dof
         self.gpmp2_n_interpolate = gpmp2_n_interpolate
         self.gpmp2_num_samples = gpmp2_num_samples
@@ -576,11 +617,11 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         gpmp2_method: str,
         seed: int,
     ):
+        super().__init__(use_extra_objects=use_extra_objects)
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
         self.use_parallel = use_parallel
         self.max_processes = max_processes
-        self.use_extra_objects = use_extra_objects
         self.n_dof = n_dof
         self.rrt_connect_step_size = rrt_connect_step_size
         self.rrt_connect_n_radius = rrt_connect_n_radius

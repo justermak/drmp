@@ -6,13 +6,13 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.datasets.dataset import TrajectoryDataset
-from drmp.inference.runner import run_inference, create_test_subset
+from drmp.inference.runner import create_test_subset, run_inference
 from drmp.inference.runner_config import (
     DiffusionRunnerConfig,
+    GPMP2RRTPriorRunnerConfig,
+    GPMP2UninformativeRunnerConfig,
     LegacyDiffusionRunnerConfig,
     RRTConnectRunnerConfig,
-    GPMP2UninformativeRunnerConfig,
-    GPMP2RRTPriorRunnerConfig,
 )
 from drmp.models.diffusion import get_models
 from drmp.utils.torch_utils import fix_random_seed
@@ -37,7 +37,11 @@ def run(args):
     dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
     dataset_config_path = os.path.join(dataset_dir, "config.yaml")
     dataset_config = load_config_from_yaml(dataset_config_path)
-    normalizer_name = "TrivialNormalizer" if args.algorithm == "legacy-diffusion" else dataset_config["normalizer_name"]
+    normalizer_name = (
+        "TrivialNormalizer"
+        if args.algorithm == "legacy-diffusion"
+        else dataset_config["normalizer_name"]
+    )
 
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
@@ -48,6 +52,7 @@ def run(args):
         "generating_robot_margin": dataset_config["generating_robot_margin"],
         "n_support_points": dataset_config["n_support_points"],
         "duration": dataset_config["duration"],
+        "apply_augmentations": False,
         "tensor_args": tensor_args,
     }
     dataset = TrajectoryDataset(**dataset_init_config)
@@ -55,7 +60,7 @@ def run(args):
     train_subset, _, val_subset, _ = dataset.load_train_val_split()
 
     splits = eval(args.splits)
-    
+
     test_subset = None
     if "test" in splits:
         test_subset = create_test_subset(
@@ -67,7 +72,7 @@ def run(args):
         )
         if test_subset is None:
             return
-        
+
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if args.algorithm == "diffusion":
@@ -78,17 +83,19 @@ def run(args):
             experiment_name = f"{args.algorithm}_{timestamp}"
     else:
         experiment_name = args.experiment_name
-        
-        
-    if args.algorithm == "diffusion": 
+
+    if args.algorithm == "diffusion":
         if args.checkpoint_name is None:
             checkpoint_folders = os.listdir(args.checkpoints_dir)
-            checkpoint_folders.sort(key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)), reverse=True)
+            checkpoint_folders.sort(
+                key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)),
+                reverse=True,
+            )
             args.checkpoint_name = checkpoint_folders[0]
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
         model_config_path = os.path.join(checkpoint_dir, "config.yaml")
         model_config = load_config_from_yaml(model_config_path)
-         
+
         model = MODELS[model_config["model_name"]](
             state_dim=model_config["state_dim"],
             n_support_points=model_config["n_support_points"],
@@ -133,17 +140,21 @@ def run(args):
             n_guide_steps=args.n_guide_steps,
             ddim=args.ddim,
         )
-        
+
     elif args.algorithm == "legacy-diffusion":
-        checkpoint_path = os.path.join(args.legacy_checkpoints_dir, args.legacy_checkpoint_name)
-        
+        checkpoint_path = os.path.join(
+            args.legacy_checkpoints_dir, args.legacy_checkpoint_name
+        )
+
         print(f"Loading legacy model from: {checkpoint_path}")
-        
+
         if os.path.exists(checkpoint_path):
             model = torch.load(checkpoint_path, map_location=device, weights_only=False)
         else:
-            raise FileNotFoundError(f"Legacy model checkpoint not found: {checkpoint_path}")
-            
+            raise FileNotFoundError(
+                f"Legacy model checkpoint not found: {checkpoint_path}"
+            )
+
         model.eval()
         model = torch.compile(model)
 
@@ -212,8 +223,9 @@ def run(args):
         )
 
     else:
-        raise ValueError(f"Unknown algorithm: {args.algorithm}. Valid options: diffusion, legacy-diffusion, rrt-connect, gpmp2-uninformative, gpmp2-rrt-prior")
-
+        raise ValueError(
+            f"Unknown algorithm: {args.algorithm}. Valid options: diffusion, legacy-diffusion, rrt-connect, gpmp2-uninformative, gpmp2-rrt-prior"
+        )
 
     run_inference(
         runner_config=runner_config,

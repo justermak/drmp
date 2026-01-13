@@ -38,7 +38,12 @@ class RRTConnect(ClassicalPlanner):
         planner_id: int = None,
         eps: float = 1e-6,
     ):
-        super().__init__(env=env, robot=robot, use_extra_objects=use_extra_objects, tensor_args=tensor_args)
+        super().__init__(
+            env=env,
+            robot=robot,
+            use_extra_objects=use_extra_objects,
+            tensor_args=tensor_args,
+        )
         self.step_size = step_size
         self.n_radius = n_radius
         self.use_extra_objects = use_extra_objects
@@ -64,7 +69,9 @@ class RRTConnect(ClassicalPlanner):
 
     def _initialize_samples(self) -> bool:
         samples, success = self.env.random_collision_free_q(
-            robot=self.robot, n_samples=self.n_samples, use_extra_objects=self.use_extra_objects
+            robot=self.robot,
+            n_samples=self.n_samples,
+            use_extra_objects=self.use_extra_objects,
         )
         if not success:
             print(
@@ -103,7 +110,9 @@ class RRTConnect(ClassicalPlanner):
         return extension
 
     def cut(self, sequence: torch.Tensor) -> torch.Tensor:
-        in_collision = self.env.get_collision_mask(self.robot, sequence, on_extra=self.use_extra_objects).squeeze()
+        in_collision = self.env.get_collision_mask(
+            self.robot, sequence, on_extra=self.use_extra_objects
+        ).squeeze()
         idxs_in_collision = torch.argwhere(in_collision)
         if idxs_in_collision.nelement() == 0:
             first_idx_in_collision = sequence.shape[0]

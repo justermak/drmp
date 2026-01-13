@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from copy import copy
+from typing import Dict
 
 import numpy as np
-from typing import Dict
 import torch
 import torch.nn as nn
 
@@ -19,15 +19,24 @@ class PlanningModel(nn.Module, ABC):
         super().__init__()
 
     @abstractmethod
-    def build_context(self, robot: Robot, input_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def build_context(
+        self, robot: Robot, input_dict: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
         pass
 
     @abstractmethod
-    def build_hard_conditions(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def build_hard_conditions(
+        self, input_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
         pass
 
     @abstractmethod
-    def compute_loss(self, x: torch.Tensor, context: torch.Tensor, hard_conds: Dict[str, torch.Tensor]):
+    def compute_loss(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        hard_conds: Dict[str, torch.Tensor],
+    ):
         pass
 
     @abstractmethod
@@ -35,20 +44,22 @@ class PlanningModel(nn.Module, ABC):
         self,
         context: torch.Tensor,
         hard_conds: Dict[str, torch.Tensor],
-        n_samples: int=1,
+        n_samples: int = 1,
         **kwargs,
     ):
         pass
 
-def cosine_beta_schedule(
-    n_diffusion_steps, s=0.008, a_min=0, a_max=0.999
-):
+
+def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):
     x = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
-    alphas_cumprod = torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = (
+        torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    )
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     betas_clipped = torch.clamp(betas, min=a_min, max=a_max)
     return betas_clipped
+
 
 class GaussianDiffusion(PlanningModel):
     def __init__(
@@ -225,9 +236,7 @@ class GaussianDiffusion(PlanningModel):
 
         chain = [x]
 
-        for i in reversed(
-            range(self.n_diffusion_steps)
-        ):
+        for i in reversed(range(self.n_diffusion_steps)):
             t = torch.full((batch_size,), i, device=device, dtype=torch.long)
 
             t_single = t[0]
@@ -301,7 +310,9 @@ class GaussianDiffusion(PlanningModel):
 
         for time, time_next in time_pairs:
             t = torch.full((batch_size,), time, device=device, dtype=torch.long)
-            t_next = torch.full((batch_size,), time_next, device=device, dtype=torch.long)
+            t_next = torch.full(
+                (batch_size,), time_next, device=device, dtype=torch.long
+            )
 
             model_out = self.model(x, t, context)
 
@@ -414,7 +425,9 @@ class GaussianDiffusion(PlanningModel):
         trajectories_chain_normalized = chain
 
         # trajectories: [ (n_diffusion_steps + 1) x n_samples x n_support_points x state_dim ]
-        trajectories_chain_normalized = trajectories_chain_normalized.permute(1, 0, 2, 3)
+        trajectories_chain_normalized = trajectories_chain_normalized.permute(
+            1, 0, 2, 3
+        )
 
         return trajectories_chain_normalized
 
@@ -456,8 +469,12 @@ class GaussianDiffusion(PlanningModel):
     def build_context(self, input_dict: Dict[str, torch.Tensor]):
         context = torch.cat(
             [
-                input_dict["start_states_normalized"].view(-1, self.state_dim)[:, :self.state_dim // 2],
-                input_dict["goal_states_normalized"].view(-1, self.state_dim)[:, :self.state_dim // 2],
+                input_dict["start_states_normalized"].view(-1, self.state_dim)[
+                    :, : self.state_dim // 2
+                ],
+                input_dict["goal_states_normalized"].view(-1, self.state_dim)[
+                    :, : self.state_dim // 2
+                ],
             ],
             dim=-1,
         )
@@ -465,8 +482,12 @@ class GaussianDiffusion(PlanningModel):
 
     def build_hard_conditions(self, input_dict):
         hard_conds = {
-            "start_states_normalized": input_dict["start_states_normalized"].view(-1, self.state_dim),
-            "goal_states_normalized": input_dict["goal_states_normalized"].view(-1, self.state_dim),
+            "start_states_normalized": input_dict["start_states_normalized"].view(
+                -1, self.state_dim
+            ),
+            "goal_states_normalized": input_dict["goal_states_normalized"].view(
+                -1, self.state_dim
+            ),
         }
         return hard_conds
 

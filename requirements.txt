@@ -1,5 +1,5 @@
 # Core dependencies
-torch
+# torch - installed separately for cuda
 numpy
 
 # Data manipulation and scientific computing

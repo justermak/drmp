@@ -53,15 +53,15 @@ class CostComposite(Cost):
         trajectories: torch.Tensor,
         n_interpolate: int,
     ):
-        trajectories_interpolated = (
-            interpolate_trajectories(trajectories, n_interpolate=n_interpolate)
+        trajectories_interpolated = interpolate_trajectories(
+            trajectories, n_interpolate=n_interpolate
         )
         cost = 0
         for cost_class in self.costs:
-            cost += cost_class(
-                trajectories_interpolated, n_interpolate=n_interpolate
-            ) if isinstance(cost_class, CostCollision) else cost_class(
-                trajectories
+            cost += (
+                cost_class(trajectories_interpolated, n_interpolate=n_interpolate)
+                if isinstance(cost_class, CostCollision)
+                else cost_class(trajectories)
             )
 
         return cost
@@ -306,7 +306,7 @@ class CostGoalPrior(Cost):
     def eval(self, trajectories: torch.Tensor):
         pass
 
-    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):       
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
         A = torch.zeros(
             self.n_trajectories,
             self.dim,

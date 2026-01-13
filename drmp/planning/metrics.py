@@ -10,7 +10,9 @@ def compute_path_length(trajectories: torch.Tensor, robot: Robot):
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
     trajectories_pos = robot.get_position(trajectories)
-    path_length = torch.linalg.norm(torch.diff(trajectories_pos, dim=-2), dim=-1).sum(-1)
+    path_length = torch.linalg.norm(torch.diff(trajectories_pos, dim=-2), dim=-1).sum(
+        -1
+    )
     return path_length
 
 
@@ -44,7 +46,9 @@ def compute_waypoints_variance(trajectories: torch.Tensor, robot: Robot):
     return lin
 
 
-def compute_free_fraction(trajectories_free: torch.Tensor, trajectories_collision: torch.Tensor):
+def compute_free_fraction(
+    trajectories_free: torch.Tensor, trajectories_collision: torch.Tensor
+):
     assert trajectories_free.ndim == 3
     assert trajectories_collision.ndim == 3
     cnt_free = trajectories_free.shape[0]
@@ -64,22 +68,24 @@ def compute_success(trajectories_free: torch.Tensor):
     return float(trajectories_free.nelement() > 0)
 
 
-def bootstrap_confidence_interval(data: list, confidence_level: float = 0.95, n_resamples: int = 10000):
+def bootstrap_confidence_interval(
+    data: list, confidence_level: float = 0.95, n_resamples: int = 10000
+):
     if len(data) == 0:
         return None, None
-    
+
     res = stats.bootstrap(
         (data,),
         np.mean,
         n_resamples=n_resamples,
         confidence_level=confidence_level,
-        method='percentile'
+        method="percentile",
     )
-    
+
     ci_lower = res.confidence_interval.low
     ci_upper = res.confidence_interval.high
-    
+
     center = (ci_lower + ci_upper) / 2
     half_width = (ci_upper - ci_lower) / 2
-    
+
     return center, half_width

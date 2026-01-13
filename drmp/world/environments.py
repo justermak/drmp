@@ -145,13 +145,20 @@ class EnvBase(ABC):
         return total_cost
 
     def random_collision_free_q(
-        self, robot: Robot, n_samples: int, use_extra_objects: bool = False, batch_size=100000, max_tries=1000
+        self,
+        robot: Robot,
+        n_samples: int,
+        use_extra_objects: bool = False,
+        batch_size=100000,
+        max_tries=1000,
     ) -> torch.Tensor:
         samples = torch.zeros((n_samples, N_DIM), **self.tensor_args)
         cur = 0
         for i in range(max_tries):
             qs = self.random_q((batch_size,))
-            collision_mask = self.get_collision_mask(robot=robot, qs=qs, on_extra=use_extra_objects).squeeze()
+            collision_mask = self.get_collision_mask(
+                robot=robot, qs=qs, on_extra=use_extra_objects
+            ).squeeze()
             n = torch.sum(~collision_mask).item()
             n = min(n, n_samples - cur)
             samples[cur : cur + n] = qs[~collision_mask][:n]
@@ -206,7 +213,9 @@ class EnvBase(ABC):
         on_fixed: bool = True,
         on_extra: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        trajectories_interpolated = interpolate_trajectories(trajectories=trajectories, n_interpolate=n_interpolate)
+        trajectories_interpolated = interpolate_trajectories(
+            trajectories=trajectories, n_interpolate=n_interpolate
+        )
         points_collision_mask = self.get_collision_mask(
             robot, trajectories_interpolated, on_fixed=on_fixed, on_extra=on_extra
         )

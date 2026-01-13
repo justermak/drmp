@@ -9,7 +9,7 @@ from drmp.datasets.dataset import TrajectoryDataset
 from drmp.models.diffusion import get_models
 from drmp.train import train
 from drmp.utils.torch_utils import fix_random_seed
-from drmp.utils.yaml import load_config_from_yaml
+from drmp.utils.yaml import load_config_from_yaml, save_config_to_yaml
 
 MODELS = get_models()
 
@@ -42,7 +42,7 @@ def run(args):
         "env_name": dataset_config["env_name"],
         "normalizer_name": dataset_config["normalizer_name"],
         "robot_margin": dataset_config["robot_margin"],
-        "cutoff_margin": dataset_config["cutoff_margin"],
+        "generating_robot_margin": dataset_config["generating_robot_margin"],
         "n_support_points": dataset_config["n_support_points"],
         "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
@@ -50,12 +50,25 @@ def run(args):
 
     dataset = TrajectoryDataset(**dataset_init_config)
     dataset.load_data()
+    
+    # Create filtering config if using filtered trajectories
+    filtering_config = None
+    if args.use_filtered_trajectories:
+        filtering_config = {
+            "filter_longest_trajectories": {"portion": args.filter_longest_portion},
+            "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion},
+        }
+        print("\nFiltering configuration:")
+        for filter_name, params in filtering_config.items():
+            print(f"  {filter_name}: {params}")
+    
     train_subset, train_dataloader, val_subset, val_dataloader = (
-        dataset.load_train_val_split(batch_size=args.batch_size, use_filtered_trajectories=args.use_filtered_trajectories)
+        dataset.load_train_val_split(
+            batch_size=args.batch_size,
+            use_filtered_trajectories=args.use_filtered_trajectories,
+            filtering_config=filtering_config,
+        )
     )
-
-    print(f"Train dataset size: {len(train_subset)}")
-    print(f"Val dataset size: {len(val_subset)}")
 
     model = MODELS[args.diffusion_model_name](
         state_dim=train_subset.dataset.state_dim,
@@ -74,6 +87,13 @@ def run(args):
     ).to(device)
 
     # you can load a checkpoint here
+    
+    if args.use_filtered_trajectories and filtering_config:
+        checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        filtering_config_path = os.path.join(checkpoint_dir, "filtering_config.yaml")
+        save_config_to_yaml(filtering_config, filtering_config_path)
+        print(f"\nSaved filtering config to {filtering_config_path}")
 
     train(
         checkpoint_name=checkpoint_name,
@@ -93,10 +113,16 @@ def run(args):
         ema_decay=args.ema_decay,
         ema_warmup=args.ema_warmup,
         ema_update_interval=args.ema_update_interval,
-        early_stopper_patience=args.early_stopper_patience,
         use_amp=args.use_amp,
         debug=args.debug,
         tensor_args=tensor_args,
+        guide_sigma_collision=args.guide_sigma_collision,
+        guide_sigma_gp=args.guide_sigma_gp,
+        guide_do_clip_grad=args.guide_do_clip_grad,
+        guide_max_grad_norm=args.guide_max_grad_norm,
+        guide_n_interpolate=args.guide_n_interpolate,
+        guide_start_guide_steps_fraction=args.guide_start_guide_steps_fraction,
+        guide_n_guide_steps=args.guide_n_guide_steps,
     )
 
 

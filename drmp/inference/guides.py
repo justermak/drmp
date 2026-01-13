@@ -29,10 +29,8 @@ class GuideTrajectories(nn.Module):
 
             x = self.dataset.normalizer.unnormalize(x)
 
-            cost = self.cost(
-                trajectories=x, n_interpolate=self.n_interpolate
-            ).sum()
-            
+            cost = self.cost(trajectories=x, n_interpolate=self.n_interpolate).sum()
+
             grad = torch.autograd.grad(cost, x)[0]
             if self.do_clip_grad:
                 grad_norm = torch.linalg.norm(grad + 1e-8, dim=-1, keepdims=True)
@@ -41,4 +39,3 @@ class GuideTrajectories(nn.Module):
 
             grad = -1.0 * grad
         return grad
-

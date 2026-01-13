@@ -13,6 +13,12 @@ from drmp.models.diffusion import PlanningModel
 from drmp.train.logs import log
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.yaml import save_config_to_yaml
+from drmp.inference.guides import GuideTrajectories
+from drmp.planning.costs.cost_functions import (
+    CostCollision,
+    CostComposite,
+    CostGPTrajectory,
+)
 
 
 class EMA:
@@ -28,6 +34,7 @@ class EMA:
         ):
             old_weight, current_weight = ema_params.data, current_params.data
             ema_params.data = old_weight * self.beta + (1 - self.beta) * current_weight
+
 
 def train_step(
     model: PlanningModel,
@@ -77,37 +84,10 @@ def val_step(
         for k, v in val_losses.items():
             val_losses_log[k].append(v.item())
 
-
     val_loss = np.mean(val_loss_list)
     val_losses_log = {k: np.mean(v) for k, v in val_losses_log.items()}
 
     return val_loss, val_losses_log
-
-
-class EarlyStopper:
-    def __init__(self, patience: int, min_delta: float = 1e-6) -> None:
-        self.patience: int = patience
-        self.min_delta: float = min_delta
-        self.counter: int = 0
-        self.min: Optional[float] = None
-        self.early_stop_triggered: bool = False
-
-    def __call__(self, val_metric: float) -> bool:
-        if self.patience == -1:
-            return False
-
-        if self.min is None:
-            self.min = val_metric
-        elif val_metric > self.min + self.min_delta:
-            self.counter += 1
-            if self.counter >= self.patience:
-                self.early_stop_triggered = True
-                return True
-        else:
-            self.min = val_metric
-            self.counter = 0
-
-        return False
 
 
 def save_model_to_disk(
@@ -139,9 +119,7 @@ def save_model_to_disk(
     )
     torch.save(
         model,
-        os.path.join(
-            checkpoint_dir, f"{prefix}_epoch_{epoch:04d}_iter_{step:06d}.pth"
-        ),
+        os.path.join(checkpoint_dir, f"{prefix}_epoch_{epoch:04d}_iter_{step:06d}.pth"),
     )
 
 
@@ -150,8 +128,8 @@ def save_losses_to_disk(
     val_losses: List[Tuple[int, Dict[str, float]]],
     checkpoint_dir: Optional[str] = None,
 ) -> None:
-    np.save(os.path.join(checkpoint_dir, f"train_losses.npy"), train_losses)
-    np.save(os.path.join(checkpoint_dir, f"val_losses.npy"), val_losses)
+    np.save(os.path.join(checkpoint_dir, "train_losses.npy"), train_losses)
+    np.save(os.path.join(checkpoint_dir, "val_losses.npy"), val_losses)
 
 
 def end_training(
@@ -165,16 +143,30 @@ def end_training(
     val_losses: List[Tuple[int, Dict[str, float]]],
     checkpoint_dir: str,
     tensorboard_writer: SummaryWriter,
-) -> None:  
+) -> None:
     if ema_model is not None:
         if step < ema_warmup:
             ema_model.load_state_dict(model.state_dict())
         ema.update_model_average(ema_model, model)
 
-    save_model_to_disk(model=model, epoch=epoch, step=step, checkpoint_dir=checkpoint_dir, prefix="model")
+    save_model_to_disk(
+        model=model,
+        epoch=epoch,
+        step=step,
+        checkpoint_dir=checkpoint_dir,
+        prefix="model",
+    )
     if ema_model is not None:
-        save_model_to_disk(model=ema_model, epoch=epoch, step=step, checkpoint_dir=checkpoint_dir,  prefix="ema_model")
-    save_losses_to_disk(train_losses=train_losses, val_losses=val_losses, checkpoint_dir=checkpoint_dir)
+        save_model_to_disk(
+            model=ema_model,
+            epoch=epoch,
+            step=step,
+            checkpoint_dir=checkpoint_dir,
+            prefix="ema_model",
+        )
+    save_losses_to_disk(
+        train_losses=train_losses, val_losses=val_losses, checkpoint_dir=checkpoint_dir
+    )
 
     tensorboard_writer.close()
 
@@ -198,9 +190,15 @@ def train(
     ema_warmup: int,
     ema_update_interval: int,
     use_amp: bool,
-    early_stopper_patience: int,
     debug: bool,
     tensor_args: Dict[str, Any],
+    guide_sigma_collision: float,
+    guide_sigma_gp: float,
+    guide_do_clip_grad: bool,
+    guide_max_grad_norm: float,
+    guide_n_interpolate: int,
+    guide_start_guide_steps_fraction: float,
+    guide_n_guide_steps: int,
 ) -> None:
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
@@ -220,15 +218,78 @@ def train(
     os.makedirs(checkpoint_dir, exist_ok=True)
     tensorboard_writer = SummaryWriter(log_dir=stats_dir)
 
-    early_stopper = EarlyStopper(patience=early_stopper_patience)
-    stop_training = False
-
     ema = None
     ema_model = None
     if use_ema:
         ema = EMA(beta=ema_decay)
         ema_model = copy.deepcopy(model)
 
+    dataset = train_subset.dataset
+    collision_costs = [
+        CostCollision(
+            robot=dataset.robot,
+            env=dataset.env,
+            n_support_points=dataset.n_support_points,
+            sigma_collision=guide_sigma_collision,
+            use_extra_objects=False,
+            tensor_args=tensor_args,
+        )
+    ]
+    
+    collision_costs_extra = [
+        CostCollision(
+            robot=dataset.robot,
+            env=dataset.env,
+            n_support_points=dataset.n_support_points,
+            sigma_collision=guide_sigma_collision,
+            use_extra_objects=True,
+            tensor_args=tensor_args,
+        )
+    ]
+    
+    sharpness_costs = [
+        CostGPTrajectory(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            sigma_gp=guide_sigma_gp,
+            tensor_args=tensor_args,
+        )
+    ]
+    
+    costs = collision_costs + sharpness_costs
+    
+    costs_extra = collision_costs_extra + sharpness_costs
+    
+    cost = CostComposite(
+        robot=dataset.robot,
+        n_support_points=dataset.n_support_points,
+        costs=costs,
+        tensor_args=tensor_args,
+    )
+    
+    cost_extra = CostComposite(
+        robot=dataset.robot,
+        n_support_points=dataset.n_support_points,
+        costs=costs_extra,
+        tensor_args=tensor_args,
+    )
+    
+    guide = GuideTrajectories(
+        dataset=dataset,
+        cost=cost,
+        do_clip_grad=guide_do_clip_grad,
+        max_grad_norm=guide_max_grad_norm,
+        n_interpolate=guide_n_interpolate,
+    )
+    
+    guide_extra = GuideTrajectories(
+        dataset=dataset,
+        cost=cost_extra,
+        do_clip_grad=guide_do_clip_grad,
+        max_grad_norm=guide_max_grad_norm,
+        n_interpolate=guide_n_interpolate,
+    )
+    
     config = {
         "checkpoints_dir": checkpoints_dir,
         "checkpoint_name": checkpoint_name,
@@ -242,12 +303,11 @@ def train(
         "unet_dim_mults": str(model.unet_dim_mults),
         "unet_kernel_size": model.unet_kernel_size,
         "unet_resnet_block_groups": model.unet_resnet_block_groups,
-        "unet_random_fourier_features": model.unet_random_fourier_features,
-        "unet_learned_sin_dim": model.unet_learned_sin_dim,
+        "unet_positional_encoding": model.unet_positional_encoding,
+        "unet_positional_encoding_dim": model.unet_positional_encoding_dim,
         "unet_attn_heads": model.unet_attn_heads,
         "unet_attn_head_dim": model.unet_attn_head_dim,
         "unet_context_dim": model.unet_context_dim,
-        "variance_schedule": model.variance_schedule,
         "n_diffusion_steps": model.n_diffusion_steps,
         "predict_epsilon": model.predict_epsilon,
         "log_interval": log_interval,
@@ -259,13 +319,27 @@ def train(
         "ema_warmup": ema_warmup,
         "ema_update_interval": ema_update_interval,
         "use_amp": use_amp,
-        "early_stopper_patience": early_stopper_patience,
         "debug": debug,
+        "guide_sigma_collision": guide_sigma_collision,
+        "guide_sigma_gp": guide_sigma_gp,
+        "guide_do_clip_grad": guide_do_clip_grad,
+        "guide_max_grad_norm": guide_max_grad_norm,
+        "guide_n_interpolate": guide_n_interpolate,
+        "guide_start_guide_steps_fraction": guide_start_guide_steps_fraction,
+        "guide_n_guide_steps": guide_n_guide_steps,
     }
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
-    save_model_to_disk(model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model")
+    save_model_to_disk(
+        model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
+    )
     if ema_model is not None:
-        save_model_to_disk(model=ema_model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="ema_model")
+        save_model_to_disk(
+            model=ema_model,
+            epoch=0,
+            step=0,
+            checkpoint_dir=checkpoint_dir,
+            prefix="ema_model",
+        )
 
     try:
         with tqdm(
@@ -278,6 +352,7 @@ def train(
             for epoch in range(epochs):
                 for i, train_batch_dict in enumerate(train_dataloader):
                     with TimerCUDA() as t_training_loss:
+                        model.train()
                         train_loss, train_losses_log = train_step(
                             model=model,
                             train_batch_dict=train_batch_dict,
@@ -312,6 +387,10 @@ def train(
                                 prefix="TRAIN ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
+                                guide=guide,
+                                guide_extra=guide_extra,
+                                start_guide_steps_fraction=guide_start_guide_steps_fraction,
+                                n_guide_steps=guide_n_guide_steps,
                             )
                         print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
 
@@ -337,12 +416,12 @@ def train(
                                 prefix="VAL ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
+                                guide=guide,
+                                guide_extra=guide_extra,
+                                start_guide_steps_fraction=guide_start_guide_steps_fraction,
+                                n_guide_steps=guide_n_guide_steps,
                             )
                         print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")
-
-                    if early_stopper(total_val_loss):
-                        print(f"Early stopped training at {step} steps.")
-                        stop_training = True
 
                     pbar.update(1)
                     step += 1
@@ -355,7 +434,7 @@ def train(
                             epoch=epoch,
                             step=step,
                             checkpoint_dir=checkpoint_dir,
-                            prefix="model"
+                            prefix="model",
                         )
                         if ema_model is not None:
                             save_model_to_disk(
@@ -365,13 +444,11 @@ def train(
                                 checkpoint_dir=checkpoint_dir,
                                 prefix="ema_model",
                             )
-                        save_losses_to_disk(train_losses=train_losses, val_losses=val_losses, checkpoint_dir=checkpoint_dir)
-
-                    if stop_training:
-                        break
-
-                if stop_training:
-                    break
+                        save_losses_to_disk(
+                            train_losses=train_losses,
+                            val_losses=val_losses,
+                            checkpoint_dir=checkpoint_dir,
+                        )
 
             end_training(
                 model=model,
@@ -386,10 +463,10 @@ def train(
                 tensorboard_writer=tensorboard_writer,
             )
 
-            print(f"\n-------- TRAINING FINISHED --------")
+            print("\n-------- TRAINING FINISHED --------")
 
     except KeyboardInterrupt:
-        print(f"\n\n-------- TRAINING INTERRUPTED BY USER --------")
+        print("\n\n-------- TRAINING INTERRUPTED --------")
         print(f"Saving checkpoint at step {step}...")
 
         end_training(
@@ -405,5 +482,5 @@ def train(
             tensorboard_writer=tensorboard_writer,
         )
 
-        print(f"-------- TRAINING STOPPED --------\n")
+        print("-------- TRAINING STOPPED --------\n")
         raise
