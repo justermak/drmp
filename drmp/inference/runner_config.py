@@ -451,22 +451,16 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
     def __init__(
         self,
         sample_steps: int,
-        use_parallel: bool,
-        max_processes: int,
         use_extra_objects: bool,
-        rrt_connect_step_size: float,
-        rrt_connect_n_radius: float,
+        rrt_connect_max_step_size: float,
+        rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
-        seed: int,
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.sample_steps = sample_steps
-        self.use_parallel = use_parallel
-        self.max_processes = max_processes
-        self.rrt_connect_step_size = rrt_connect_step_size
-        self.rrt_connect_n_radius = rrt_connect_n_radius
+        self.rrt_connect_max_step_size = rrt_connect_max_step_size
+        self.rrt_connect_max_radius = rrt_connect_max_radius
         self.rrt_connect_n_samples = rrt_connect_n_samples
-        self.seed = seed
 
     def prepare(
         self,
@@ -474,21 +468,15 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> ClassicalPlannerWrapper:
-        rrt_planner = RRTConnect(
+        planner = RRTConnect(
             env=dataset.env,
             robot=dataset.robot,
             tensor_args=tensor_args,
-            step_size=self.rrt_connect_step_size,
-            n_radius=self.rrt_connect_n_radius,
+            n_trajectories=n_samples,
+            max_step_size=self.rrt_connect_max_step_size,
+            n_radius=self.rrt_connect_max_radius,
             n_samples=self.rrt_connect_n_samples,
             use_extra_objects=self.use_extra_objects,
-        )
-        planner = ParallelSampleBasedPlanner(
-            planner=rrt_planner,
-            n_trajectories=n_samples,
-            use_parallel=self.use_parallel,
-            max_processes=self.max_processes,
-            seed=self.seed,
         )
 
         wrapper = ClassicalPlannerWrapper(
@@ -506,8 +494,8 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
             "use_parallel": self.use_parallel,
             "max_processes": self.max_processes,
             "use_extra_objects": self.use_extra_objects,
-            "rrt_connect_step_size": self.rrt_connect_step_size,
-            "rrt_connect_n_radius": self.rrt_connect_n_radius,
+            "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
+            "rrt_connect_max_radius": self.rrt_connect_max_radius,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,
             "seed": self.seed,
         }
@@ -603,8 +591,8 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         max_processes: int,
         use_extra_objects: bool,
         n_dof: int,
-        rrt_connect_step_size: float,
-        rrt_connect_n_radius: float,
+        rrt_connect_max_step_size: float,
+        rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
         gpmp2_n_interpolate: int,
         gpmp2_num_samples: int,
@@ -623,8 +611,8 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         self.use_parallel = use_parallel
         self.max_processes = max_processes
         self.n_dof = n_dof
-        self.rrt_connect_step_size = rrt_connect_step_size
-        self.rrt_connect_n_radius = rrt_connect_n_radius
+        self.rrt_connect_max_step_size = rrt_connect_max_step_size
+        self.rrt_connect_max_radius = rrt_connect_max_radius
         self.rrt_connect_n_samples = rrt_connect_n_samples
         self.gpmp2_n_interpolate = gpmp2_n_interpolate
         self.gpmp2_num_samples = gpmp2_num_samples
@@ -647,8 +635,8 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             env=dataset.env,
             robot=dataset.generating_robot,
             tensor_args=tensor_args,
-            step_size=self.rrt_connect_step_size,
-            n_radius=self.rrt_connect_n_radius,
+            max_step_size=self.rrt_connect_max_step_size,
+            n_radius=self.rrt_connect_max_radius,
             n_samples=self.rrt_connect_n_samples,
             use_extra_objects=self.use_extra_objects,
         )
@@ -703,8 +691,8 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             "max_processes": self.max_processes,
             "use_extra_objects": self.use_extra_objects,
             "n_dof": self.n_dof,
-            "rrt_connect_step_size": self.rrt_connect_step_size,
-            "rrt_connect_n_radius": self.rrt_connect_n_radius,
+            "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
+            "rrt_connect_max_radius": self.rrt_connect_max_radius,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,
             "gpmp2_n_interpolate": self.gpmp2_n_interpolate,
             "gpmp2_num_samples": self.gpmp2_num_samples,

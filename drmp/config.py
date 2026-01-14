@@ -104,12 +104,10 @@ DEFAULT_INFERENCE_ARGS = {
     "classical_n_dof": N_DIM,
     "classical_sample_steps": 10000,
     "classical_opt_steps": 300,
-    "classical_use_parallel": True,
-    "classical_max_processes": 12,
     "classical_smoothen": True,
     # RRT-Connect parameters
-    "rrt_connect_step_size": 0.005,
-    "rrt_connect_n_radius": 0.3,
+    "rrt_connect_max_step_size": 0.005,
+    "rrt_connect_max_radius": 0.3,
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
@@ -130,7 +128,7 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
+    "dataset_name": "EnvDense2D_2000_50",
     "env_name": "EnvDense2D",
     "normalizer_name": "TrivialNormalizer",
     "robot_margin": 0.01,
@@ -138,17 +136,15 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "n_support_points": 64,
     "duration": 5.0,
     # Task generation
-    "n_tasks": 1000,
-    "n_trajectories": 100,
+    "n_tasks": 2000,
+    "n_trajectories": 50,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "sample_steps": 10000,
     "opt_steps": 300,
-    "use_parallel": True,
-    "max_processes": 15,
     # RRT-Connect parameters
-    "rrt_connect_step_size": 0.005,
-    "rrt_connect_n_radius": 0.3,
+    "rrt_connect_max_step_size": 0.005,
+    "rrt_connect_max_radius": 0.3,
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
@@ -161,6 +157,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Other
+    "max_processes": 10,
     "val_portion": 0.05,
     "device": "cuda",
     "debug": False,

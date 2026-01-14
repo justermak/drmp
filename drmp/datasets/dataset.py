@@ -3,6 +3,7 @@ import traceback
 from typing import Any, Dict, List, Tuple
 
 import torch
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm.autonotebook import tqdm
 
@@ -16,9 +17,6 @@ from drmp.planning.metrics import (
 )
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
-from drmp.planning.planners.parallel_sample_based_planner import (
-    ParallelSampleBasedPlanner,
-)
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.visualizer import Visualizer
 from drmp.utils.yaml import save_config_to_yaml
@@ -28,6 +26,152 @@ from drmp.world.robot import Robot
 NORMALIZERS = get_normalizers()
 
 ENVS = get_envs()
+
+def _worker_process_task(args):
+    (
+        task_id,
+        dataset_dir,
+        env_name,
+        robot_margin,
+        generating_robot_margin,
+        n_support_points,
+        duration,
+        tensor_args,
+        n_trajectories,
+        threshold_start_goal_pos,
+        sample_steps,
+        opt_steps,
+        seed,
+        rrt_connect_max_step_size,
+        rrt_connect_max_radius,
+        rrt_connect_n_samples,
+        gpmp2_n_interpolate,
+        gpmp2_num_samples,
+        gpmp2_sigma_start,
+        gpmp2_sigma_goal_prior,
+        gpmp2_sigma_gp,
+        gpmp2_sigma_collision,
+        gpmp2_step_size,
+        gpmp2_delta,
+        gpmp2_method,
+        debug,
+        grid_map_sdf_fixed,
+        grid_map_sdf_extra,
+    ) = args
+    
+    try:
+        env: EnvBase = ENVS[env_name](
+            tensor_args=tensor_args,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
+        )
+        generating_robot = Robot(
+            margin=generating_robot_margin,
+            dt=duration / (n_support_points - 1),
+            tensor_args=tensor_args,
+        )
+        robot = Robot(
+            margin=robot_margin,
+            dt=duration / (n_support_points - 1),
+            tensor_args=tensor_args,
+        )
+
+        sample_based_planner = RRTConnect(
+            env=env,
+            robot=generating_robot,
+            tensor_args=tensor_args,
+            max_step_size=rrt_connect_max_step_size,
+            max_radius=rrt_connect_max_radius,
+            n_samples=rrt_connect_n_samples,
+            n_trajectories=n_trajectories,
+        )
+
+        optimization_based_planner = GPMP2(
+            robot=generating_robot,
+            n_dof=N_DIM,
+            n_trajectories=n_trajectories,
+            env=env,
+            tensor_args=tensor_args,
+            n_support_points=n_support_points,
+            dt=generating_robot.dt,
+            n_interpolate=gpmp2_n_interpolate,
+            num_samples=gpmp2_num_samples,
+            sigma_start=gpmp2_sigma_start,
+            sigma_gp=gpmp2_sigma_gp,
+            sigma_goal_prior=gpmp2_sigma_goal_prior,
+            sigma_collision=gpmp2_sigma_collision,
+            step_size=gpmp2_step_size,
+            delta=gpmp2_delta,
+            method=gpmp2_method,
+        )
+
+        planner = HybridPlanner(
+            sample_based_planner=sample_based_planner,
+            opt_based_planner=optimization_based_planner,
+            tensor_args=tensor_args,
+        )
+        
+        torch.manual_seed(seed + task_id)
+        
+        start_pos, goal_pos, success = env.random_collision_free_start_goal(
+            robot=generating_robot,
+            n_samples=1,
+            threshold_start_goal_pos=threshold_start_goal_pos,
+        )
+        
+        if not success:
+            return task_id, 0, 0, "failed_start_goal"
+
+        start_pos = start_pos.squeeze(0)
+        goal_pos = goal_pos.squeeze(0)
+
+        planner.reset(start_pos, goal_pos)
+
+        trajectories = planner.optimize(
+            sample_steps=sample_steps,
+            opt_steps=opt_steps,
+            debug=debug,
+        )
+
+        trajectories_collision, trajectories_free, _ = (
+            env.get_trajectories_collision_and_free(
+                robot=robot, trajectories=trajectories
+            )
+        )
+        
+        results_dir = os.path.join(dataset_dir, str(task_id))
+        os.makedirs(results_dir, exist_ok=True)
+        torch.save(
+            trajectories_collision.cpu(),
+            os.path.join(results_dir, "trajectories-collision.pt"),
+        )
+        torch.save(
+            trajectories_free.cpu(), 
+            os.path.join(results_dir, "trajectories-free.pt")
+        )
+
+        if debug:
+            planning_visualizer = Visualizer(
+                env=env,
+                robot=robot,
+                use_extra_objects=False
+            )
+            try:
+                planning_visualizer.render_scene(
+                    trajectories=trajectories.cpu(),
+                    start_state=start_pos.cpu(),
+                    goal_state=goal_pos.cpu(),
+                    save_path=os.path.join(results_dir, "trajectories_figure.png"),
+                )
+            except Exception as e:
+                print(f"Visualization failed for task {task_id}: {e}")
+
+        return task_id, len(trajectories_collision), len(trajectories_free), "success"
+        
+    except Exception as e:
+        print(f"Task {task_id} failed with error: {e}")
+        traceback.print_exc()
+        return task_id, 0, 0, str(e)
 
 
 class TrajectoryDataset(Dataset):
@@ -124,68 +268,6 @@ class TrajectoryDataset(Dataset):
 
         return data
 
-    def _create_planner(
-        self,
-        n_trajectories: int,
-        n_support_points: int,
-        use_parallel: bool,
-        max_processes: int,
-        rrt_connect_step_size: float,
-        rrt_connect_n_radius: float,
-        rrt_connect_n_samples: int,
-        gpmp2_n_interpolate: int,
-        gpmp2_num_samples: int,
-        gpmp2_sigma_start: float,
-        gpmp2_sigma_goal_prior: float,
-        gpmp2_sigma_gp: float,
-        gpmp2_sigma_collision: float,
-        gpmp2_step_size: float,
-        gpmp2_delta: float,
-        gpmp2_method: str,
-        seed: int,
-    ) -> HybridPlanner:
-        sample_based_planner = RRTConnect(
-            env=self.env,
-            robot=self.generating_robot,
-            tensor_args=self.tensor_args,
-            step_size=rrt_connect_step_size,
-            n_radius=rrt_connect_n_radius,
-            n_samples=rrt_connect_n_samples,
-        )
-
-        parallel_sample_based_planner = ParallelSampleBasedPlanner(
-            planner=sample_based_planner,
-            n_trajectories=n_trajectories,
-            use_parallel=use_parallel,
-            max_processes=max_processes,
-            seed=seed,
-        )
-
-        optimization_based_planner = GPMP2(
-            robot=self.generating_robot,
-            n_dof=N_DIM,
-            n_trajectories=n_trajectories,
-            env=self.env,
-            tensor_args=self.tensor_args,
-            n_support_points=n_support_points,
-            dt=self.generating_robot.dt,
-            n_interpolate=gpmp2_n_interpolate,
-            num_samples=gpmp2_num_samples,
-            sigma_start=gpmp2_sigma_start,
-            sigma_gp=gpmp2_sigma_gp,
-            sigma_goal_prior=gpmp2_sigma_goal_prior,
-            sigma_collision=gpmp2_sigma_collision,
-            step_size=gpmp2_step_size,
-            delta=gpmp2_delta,
-            method=gpmp2_method,
-        )
-
-        return HybridPlanner(
-            sample_based_planner=parallel_sample_based_planner,
-            opt_based_planner=optimization_based_planner,
-            tensor_args=self.tensor_args,
-        )
-
     def generate_trajectories_for_task(
         self,
         id: str,
@@ -245,6 +327,7 @@ class TrajectoryDataset(Dataset):
             planning_visualizer = Visualizer(
                 env=self.env,
                 robot=self.robot,
+                use_extra_objects=False
             )
 
             planning_visualizer.render_scene(
@@ -308,13 +391,13 @@ class TrajectoryDataset(Dataset):
                 free_path = os.path.join(item_path, "trajectories-free.pt")
 
                 if os.path.exists(collision_path) and os.path.exists(free_path):
-                    trajectories_coll = torch.load(collision_path)
-                    trajectories_free = torch.load(free_path)
-                    n_coll = len(trajectories_coll)
+                    trajectories_collision = torch.load(collision_path, map_location="cpu")
+                    trajectories_free = torch.load(free_path, map_location="cpu")
+                    n_collision = len(trajectories_collision)
                     n_free = len(trajectories_free)
-                    del trajectories_coll, trajectories_free
+                    del trajectories_collision, trajectories_free
 
-                    existing_tasks[task_id] = (n_coll, n_free)
+                    existing_tasks[task_id] = (n_collision, n_free)
 
         return existing_tasks
 
@@ -326,11 +409,9 @@ class TrajectoryDataset(Dataset):
         sample_steps: int,
         opt_steps: int,
         val_portion: float,
-        use_parallel: bool,
-        max_processes: int,
         seed: int,
-        rrt_connect_step_size: float,
-        rrt_connect_n_radius: float,
+        rrt_connect_max_step_size: float,
+        rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
         gpmp2_n_interpolate: int,
         gpmp2_num_samples: int,
@@ -342,6 +423,7 @@ class TrajectoryDataset(Dataset):
         gpmp2_delta: float,
         gpmp2_method: str,
         debug: bool,
+        max_processes: int,
     ) -> None:
         os.makedirs(self.dataset_dir, exist_ok=True)
 
@@ -362,6 +444,7 @@ class TrajectoryDataset(Dataset):
             "opt_steps": opt_steps,
             "val_portion": val_portion,
             "debug": debug,
+            "max_processes": max_processes,
         }
 
         save_config_to_yaml(config, os.path.join(self.dataset_dir, "config.yaml"))
@@ -371,100 +454,111 @@ class TrajectoryDataset(Dataset):
             print(f"Found {len(existing_tasks)} existing tasks, will resume from there")
             print(f"Existing task IDs: {sorted(existing_tasks.keys())}")
 
-        planner = self._create_planner(
-            n_trajectories=n_trajectories,
-            n_support_points=self.n_support_points,
-            use_parallel=use_parallel,
-            max_processes=max_processes,
-            rrt_connect_step_size=rrt_connect_step_size,
-            rrt_connect_n_radius=rrt_connect_n_radius,
-            rrt_connect_n_samples=rrt_connect_n_samples,
-            gpmp2_n_interpolate=gpmp2_n_interpolate,
-            gpmp2_num_samples=gpmp2_num_samples,
-            gpmp2_sigma_start=gpmp2_sigma_start,
-            gpmp2_sigma_goal_prior=gpmp2_sigma_goal_prior,
-            gpmp2_sigma_gp=gpmp2_sigma_gp,
-            gpmp2_sigma_collision=gpmp2_sigma_collision,
-            gpmp2_step_size=gpmp2_step_size,
-            gpmp2_delta=gpmp2_delta,
-            gpmp2_method=gpmp2_method,
-            seed=seed + len(existing_tasks),
-        )
-
         task_start_idxs = []
         n_free_trajectories: int = 0
-        n_coll_trajectories: int = 0
+        n_collision_trajectories: int = 0
         n_failed_tasks: int = 0
         n_skipped_tasks: int = 0
 
+        grid_map_sdf_fixed = self.env.grid_map_sdf_fixed
+        grid_map_sdf_extra = self.env.grid_map_sdf_extra
+
+        tasks_to_run = []
+        for i in range(n_tasks):
+            if i in existing_tasks:
+                n_collision, n_free = existing_tasks[i]
+                n_skipped_tasks += 1
+                continue
+            
+            task_args = (
+                i,
+                self.dataset_dir,
+                self.env_name,
+                self.robot_margin,
+                self.generating_robot_margin,
+                self.n_support_points,
+                self.duration,
+                self.tensor_args,
+                n_trajectories,
+                threshold_start_goal_pos,
+                sample_steps,
+                opt_steps,
+                seed,
+                rrt_connect_max_step_size,
+                rrt_connect_max_radius,
+                rrt_connect_n_samples,
+                gpmp2_n_interpolate,
+                gpmp2_num_samples,
+                gpmp2_sigma_start,
+                gpmp2_sigma_goal_prior,
+                gpmp2_sigma_gp,
+                gpmp2_sigma_collision,
+                gpmp2_step_size,
+                gpmp2_delta,
+                gpmp2_method,
+                debug,
+                grid_map_sdf_fixed,
+                grid_map_sdf_extra,
+            )
+            tasks_to_run.append(task_args)
+
         print(f"{'=' * 80}")
-        print(f"Starting trajectory generation for {n_tasks} tasks")
+        print(f"Starting trajectory generation for {n_tasks} tasks ({len(tasks_to_run)} new, {n_skipped_tasks} existing)")
+        print(f"Using {max_processes} processes")
         print(f"{'=' * 80}\n")
-
-        with tqdm(
-            total=n_tasks,
-            mininterval=1 if debug else 10,
-            desc="Generating data",
-        ) as pbar:
-            for i in range(n_tasks):
-                id = str(i)
-                pbar.set_description(f"Task {i + 1}/{n_tasks}")
-
-                try:
-                    if i in existing_tasks:
-                        n_coll, n_free = existing_tasks[i]
-                        n_skipped_tasks += 1
+        
+        ctx = mp.get_context('spawn')
+        
+        new_results = {}
+        
+        with tqdm(total=n_tasks, mininterval=1, desc="Generating data") as pbar:
+            pbar.update(n_skipped_tasks)
+            
+            if max_processes > 1:
+                with ctx.Pool(processes=max_processes) as pool:
+                    for res in pool.imap_unordered(_worker_process_task, tasks_to_run):
+                        task_id, n_collision, n_free, status = res
+                        new_results[task_id] = (n_collision, n_free, status)
+                        
+                        if status != "success":
+                            n_failed_tasks += 1
+                        else:
+                            n_free_trajectories += n_free
+                        
                         pbar.set_postfix(
                             {
-                                "status": "skipped",
+                                "status": status,
                                 "free": n_free,
-                                "coll": n_coll,
-                                "total_free": n_free_trajectories,
-                                "skipped": n_skipped_tasks,
+                                "coll": n_collision,
+                                "failed": n_failed_tasks,
                             }
                         )
-                        torch.manual_seed(seed + i)
-                    else:
-                        n_coll, n_free = self.generate_trajectories_for_task(
-                            id=id,
-                            planner=planner,
-                            threshold_start_goal_pos=threshold_start_goal_pos,
-                            sample_steps=sample_steps,
-                            opt_steps=opt_steps,
-                            debug=debug,
-                        )
+                        pbar.update(1)
+            else:
+                for args in tasks_to_run:
+                    res = _worker_process_task(args)
+                    task_id, n_collision, n_free, status = res
+                    new_results[task_id] = (n_collision, n_free, status)
+                    if status != "success":
+                        n_failed_tasks += 1
+                    pbar.update(1)
 
-                        if n_free == 0:
-                            print(f"Found no collision-free trajectories for task {id}")
-                            return
-
-                        pbar.set_postfix(
-                            {
-                                "status": "generated",
-                                "free": n_free,
-                                "coll": n_coll,
-                                "total_free": n_free_trajectories,
-                                "skipped": n_skipped_tasks,
-                            }
-                        )
-
-                    task_start_idxs.append(n_free_trajectories)
-                    n_free_trajectories += n_free
-                    n_coll_trajectories += n_coll
-
-                except Exception as e:
-                    n_failed_tasks += 1
-                    error_msg = f"{type(e).__name__}: {str(e)}"
-                    print(f"Task {id} failed with error: {error_msg}")
-                    traceback.print_exc()
-
-                    print("Failed tasks:", n_failed_tasks)
-                    raise
-
-                pbar.update(1)
-
+        n_free_trajectories = 0
+        n_collision_trajectories = 0
+        
+        for i in range(n_tasks):
+            if i in existing_tasks:
+                n_collision, n_free = existing_tasks[i]
+            elif i in new_results:
+                n_collision, n_free, status = new_results[i]
+                if status != "success":
+                    n_collision, n_free = 0, 0
+                 
             task_start_idxs.append(n_free_trajectories)
-            planner.shutdown()
+            n_free_trajectories += n_free
+            n_collision_trajectories += n_collision
+
+        task_start_idxs.append(n_free_trajectories)
 
         task_start_idxs = torch.tensor(task_start_idxs, dtype=torch.long)
         train_tasks, val_tasks = random_split(

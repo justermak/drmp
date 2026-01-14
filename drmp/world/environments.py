@@ -54,6 +54,8 @@ class EnvBase(ABC):
         obj_field_extra: ObjectField,
         sdf_cell_size: float,
         tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
     ):
         self.tensor_args = tensor_args
         self.limits = limits
@@ -62,40 +64,28 @@ class EnvBase(ABC):
         self.obj_field_fixed = obj_field_fixed
         self.obj_field_extra = obj_field_extra
 
-        with TimerCUDA() as t:
-            self.grid_map_sdf_fixed = GridMapSDF(
-                self.limits,
-                sdf_cell_size,
-                self.obj_field_fixed,
-                tensor_args=self.tensor_args,
-            )
-            self.grid_map_sdf_extra = GridMapSDF(
-                self.limits,
-                sdf_cell_size,
-                self.obj_field_extra,
-                tensor_args=self.tensor_args,
-            )
-            print(f"Precomputing the SDF grid and gradients took: {t.elapsed:.3f} sec")
+        if grid_map_sdf_fixed is not None and grid_map_sdf_extra is not None:
+             self.grid_map_sdf_fixed = grid_map_sdf_fixed.to(**tensor_args)
+             self.grid_map_sdf_extra = grid_map_sdf_extra.to(**tensor_args)
+        else:
+            with TimerCUDA() as t:
+                self.grid_map_sdf_fixed = GridMapSDF(
+                    self.limits,
+                    sdf_cell_size,
+                    self.obj_field_fixed,
+                    tensor_args=self.tensor_args,
+                )
+                self.grid_map_sdf_extra = GridMapSDF(
+                    self.limits,
+                    sdf_cell_size,
+                    self.obj_field_extra,
+                    tensor_args=self.tensor_args,
+                )
+                print(f"Precomputing the SDF grid and gradients took: {t.elapsed:.3f} sec")
 
         self.q_distribution = torch.distributions.uniform.Uniform(
             self.limits[0], self.limits[1]
         )
-
-    def to(self, device: torch.device = None, dtype: torch.dtype = None) -> "EnvBase":
-        if device is not None:
-            self.tensor_args["device"] = device
-        if dtype is not None:
-            self.tensor_args["dtype"] = dtype
-        self.limits = self.limits.to(device=device, dtype=dtype)
-        self.obj_field_fixed.to(device=device, dtype=dtype)
-        self.obj_field_extra.to(device=device, dtype=dtype)
-        self.grid_map_sdf_fixed.to(device=device, dtype=dtype)
-        self.grid_map_sdf_extra.to(device=device, dtype=dtype)
-        # Recreate distribution on new device
-        self.q_distribution = torch.distributions.uniform.Uniform(
-            self.limits[0], self.limits[1]
-        )
-        return self
 
     def random_q(self, shape) -> torch.Tensor:
         return self.q_distribution.sample(shape)
@@ -352,6 +342,8 @@ class EnvDense2D(EnvBase):
     def __init__(
         self,
         tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
     ):
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
         boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
@@ -494,4 +486,6 @@ class EnvDense2D(EnvBase):
             obj_field_extra=obj_field_extra,
             sdf_cell_size=0.005,
             tensor_args=tensor_args,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
         )

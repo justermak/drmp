@@ -2,12 +2,9 @@ from typing import Any, Dict
 
 import torch
 
-from drmp.config import DEFAULT_TENSOR_ARGS
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
-from drmp.planning.planners.parallel_sample_based_planner import (
-    ParallelSampleBasedPlanner,
-)
+from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.trajectory_utils import (
     create_straight_line_trajectory,
@@ -18,9 +15,9 @@ from drmp.utils.trajectory_utils import (
 class HybridPlanner(ClassicalPlanner):
     def __init__(
         self,
-        sample_based_planner: ParallelSampleBasedPlanner,
+        sample_based_planner: RRTConnect,
         opt_based_planner: GPMP2,
-        tensor_args: Dict[str, Any] = DEFAULT_TENSOR_ARGS,
+        tensor_args: Dict[str, Any],
     ):
         super().__init__(
             env=sample_based_planner.env,
@@ -97,6 +94,3 @@ class HybridPlanner(ClassicalPlanner):
         self.goal_pos = goal_pos
         self.sample_based_planner.reset(start_pos, goal_pos)
         self.opt_based_planner.reset(start_pos, goal_pos)
-
-    def shutdown(self) -> None:
-        self.sample_based_planner.shutdown()
