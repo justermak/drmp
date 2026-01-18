@@ -22,7 +22,8 @@ def run(args):
     print("-------- TRAINING STARTED --------")
     print(f"dataset: {args.dataset_name}")
     print(f"batch size: {args.batch_size}")
-    print(f"use filtered trajectories: {args.use_filtered_trajectories}")
+    print(f"apply filtering: {args.apply_filtering}")
+    print(f"apply augmentations: {args.apply_augmentations}")
     print(f"learning rate: {args.lr}")
     print(f"number of training steps: {args.num_train_steps}")
 
@@ -39,6 +40,7 @@ def run(args):
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
+        "apply_augmentations": args.apply_augmentations,
         "env_name": dataset_config["env_name"],
         "normalizer_name": dataset_config["normalizer_name"],
         "robot_margin": dataset_config["robot_margin"],
@@ -53,7 +55,7 @@ def run(args):
     
     # Create filtering config if using filtered trajectories
     filtering_config = None
-    if args.use_filtered_trajectories:
+    if args.apply_filtering:
         filtering_config = {
             "filter_longest_trajectories": {"portion": args.filter_longest_portion},
             "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion},
@@ -65,7 +67,7 @@ def run(args):
     train_subset, train_dataloader, val_subset, val_dataloader = (
         dataset.load_train_val_split(
             batch_size=args.batch_size,
-            use_filtered_trajectories=args.use_filtered_trajectories,
+            apply_filtering=args.apply_filtering,
             filtering_config=filtering_config,
         )
     )
@@ -88,7 +90,7 @@ def run(args):
 
     # you can load a checkpoint here
     
-    if args.use_filtered_trajectories and filtering_config:
+    if args.apply_filtering and filtering_config:
         checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
         os.makedirs(checkpoint_dir, exist_ok=True)
         filtering_config_path = os.path.join(checkpoint_dir, "filtering_config.yaml")

@@ -16,14 +16,14 @@ DEFAULT_TRAIN_ARGS = {
     "checkpoint_name": None,
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
-    "use_filtered_trajectories": True,
+    "dataset_name": "EnvDense2D_2000_50",
     "apply_augmentations": True,
+    "apply_filtering": True,
     "filter_longest_portion": 0.25,
     "filter_sharpest_portion": 0.25,
     # Diffusion Model
     "diffusion_model_name": "GaussianDiffusion",
-    "n_diffusion_steps": 50,
+    "n_diffusion_steps": 25,
     "predict_epsilon": True,
     # Unet
     "hidden_dim": 32,
@@ -36,7 +36,7 @@ DEFAULT_TRAIN_ARGS = {
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 200000,
+    "num_train_steps": 300000,
     "lr": 1e-4,
     "batch_size": 1024,
     "clip_grad": True,
@@ -58,7 +58,7 @@ DEFAULT_TRAIN_ARGS = {
     "guide_max_grad_norm": 1.0,
     "guide_n_interpolate": 5,
     # Other
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }
@@ -157,9 +157,9 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Other
-    "max_processes": 10,
+    "max_processes": 4,
     "val_portion": 0.05,
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }

@@ -45,3 +45,4 @@ venv.bak/
 /generations
 
 test.ipynb
+nohup.out

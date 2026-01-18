@@ -14,9 +14,6 @@ from drmp.planning.costs.cost_functions import (
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
-from drmp.planning.planners.parallel_sample_based_planner import (
-    ParallelSampleBasedPlanner,
-)
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.trajectory_utils import create_straight_line_trajectory
 
@@ -491,13 +488,10 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         return {
             "algorithm": "rrt_connect",
             "sample_steps": self.sample_steps,
-            "use_parallel": self.use_parallel,
-            "max_processes": self.max_processes,
             "use_extra_objects": self.use_extra_objects,
             "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
             "rrt_connect_max_radius": self.rrt_connect_max_radius,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,
-            "seed": self.seed,
         }
 
 
@@ -587,8 +581,6 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         self,
         sample_steps: int,
         opt_steps: int,
-        use_parallel: bool,
-        max_processes: int,
         use_extra_objects: bool,
         n_dof: int,
         rrt_connect_max_step_size: float,
@@ -603,13 +595,10 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         gpmp2_step_size: float,
         gpmp2_delta: float,
         gpmp2_method: str,
-        seed: int,
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
-        self.use_parallel = use_parallel
-        self.max_processes = max_processes
         self.n_dof = n_dof
         self.rrt_connect_max_step_size = rrt_connect_max_step_size
         self.rrt_connect_max_radius = rrt_connect_max_radius
@@ -623,7 +612,6 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         self.gpmp2_step_size = gpmp2_step_size
         self.gpmp2_delta = gpmp2_delta
         self.gpmp2_method = gpmp2_method
-        self.seed = seed
 
     def prepare(
         self,
@@ -631,7 +619,7 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> ClassicalPlannerWrapper:
-        rrt_planner = RRTConnect(
+        sample_based_planner = RRTConnect(
             env=dataset.env,
             robot=dataset.generating_robot,
             tensor_args=tensor_args,
@@ -640,15 +628,8 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             n_samples=self.rrt_connect_n_samples,
             use_extra_objects=self.use_extra_objects,
         )
-        sample_based_planner = ParallelSampleBasedPlanner(
-            planner=rrt_planner,
-            n_trajectories=n_samples,
-            use_parallel=self.use_parallel,
-            max_processes=self.max_processes,
-            seed=self.seed,
-        )
 
-        gpmp2_planner = GPMP2(
+        optimization_based_planner = GPMP2(
             robot=dataset.generating_robot,
             n_dof=self.n_dof,
             n_trajectories=n_samples,
@@ -670,7 +651,7 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
 
         planner = HybridPlanner(
             sample_based_planner=sample_based_planner,
-            opt_based_planner=gpmp2_planner,
+            optimization_based_planner=optimization_based_planner,
             tensor_args=tensor_args,
         )
 
@@ -687,8 +668,6 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             "algorithm": "gpmp2_rrt_prior",
             "sample_steps": self.sample_steps,
             "opt_steps": self.opt_steps,
-            "use_parallel": self.use_parallel,
-            "max_processes": self.max_processes,
             "use_extra_objects": self.use_extra_objects,
             "n_dof": self.n_dof,
             "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
@@ -703,5 +682,4 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
             "gpmp2_step_size": self.gpmp2_step_size,
             "gpmp2_delta": self.gpmp2_delta,
             "gpmp2_method": self.gpmp2_method,
-            "seed": self.seed,
         }

@@ -16,7 +16,7 @@ class HybridPlanner(ClassicalPlanner):
     def __init__(
         self,
         sample_based_planner: RRTConnect,
-        opt_based_planner: GPMP2,
+        optimization_based_planner: GPMP2,
         tensor_args: Dict[str, Any],
     ):
         super().__init__(
@@ -26,7 +26,7 @@ class HybridPlanner(ClassicalPlanner):
             tensor_args=tensor_args,
         )
         self.sample_based_planner = sample_based_planner
-        self.opt_based_planner = opt_based_planner
+        self.optimization_based_planner = optimization_based_planner
 
     def optimize(
         self,
@@ -52,16 +52,16 @@ class HybridPlanner(ClassicalPlanner):
             trajectories_smooth = [
                 smoothen_trajectory(
                     traj,
-                    n_support_points=self.opt_based_planner.n_support_points,
-                    dt=self.opt_based_planner.dt,
+                    n_support_points=self.optimization_based_planner.n_support_points,
+                    dt=self.optimization_based_planner.dt,
                     tensor_args=self.tensor_args,
                 )
                 if traj is not None
                 else create_straight_line_trajectory(
                     start_pos=self.start_pos,
                     goal_pos=self.goal_pos,
-                    n_support_points=self.opt_based_planner.n_support_points,
-                    dt=self.opt_based_planner.dt,
+                    n_support_points=self.optimization_based_planner.n_support_points,
+                    dt=self.optimization_based_planner.dt,
                     tensor_args=self.tensor_args,
                 )
                 for traj in trajectories
@@ -71,10 +71,10 @@ class HybridPlanner(ClassicalPlanner):
             torch.cuda.empty_cache()
 
             with TimerCUDA() as t_opt_based:
-                self.opt_based_planner.reset_trajectories(
+                self.optimization_based_planner.reset_trajectories(
                     initial_particle_means=init_trajectories
                 )
-                trajectories = self.opt_based_planner.optimize(
+                trajectories = self.optimization_based_planner.optimize(
                     opt_steps=opt_steps, print_freq=print_freq // 2, debug=debug
                 )
             if debug:
@@ -93,4 +93,4 @@ class HybridPlanner(ClassicalPlanner):
         self.start_pos = start_pos
         self.goal_pos = goal_pos
         self.sample_based_planner.reset(start_pos, goal_pos)
-        self.opt_based_planner.reset(start_pos, goal_pos)
+        self.optimization_based_planner.reset(start_pos, goal_pos)

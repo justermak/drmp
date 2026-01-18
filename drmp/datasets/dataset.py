@@ -588,16 +588,16 @@ class TrajectoryDataset(Dataset):
     def load_train_val_split(
         self,
         batch_size: int = 1,
-        use_filtered_trajectories: bool = False,
+        apply_filtering: bool = False,
         filtering_config: Dict[str, Any] = None,
     ) -> Tuple[Subset, DataLoader, Subset, DataLoader]:
         train_idx = torch.load(os.path.join(self.dataset_dir, "train_idx.pt"))
         val_idx = torch.load(os.path.join(self.dataset_dir, "val_idx.pt"))
         
-        if use_filtered_trajectories:
+        if apply_filtering:
             if filtering_config is None:
                 raise ValueError(
-                    "filtering_config must be provided when use_filtered_trajectories=True"
+                    "filtering_config must be provided when apply_filtering=True"
                 )
             
             task_start_idxs = torch.load(

@@ -133,7 +133,8 @@ def log(
         context = model.build_context(data_normalized)
         hard_conds = model.build_hard_conditions(data_normalized)
         
-        planning_visualizer = Visualizer(dataset.env, dataset.robot)
+        planning_visualizer = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=False)
+        planning_visualizer_extra = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=False)
 
         if tensorboard_writer is not None:
             _log_trajectories_metrics(
@@ -171,7 +172,7 @@ def log(
                 context=context,
                 hard_conds=hard_conds,
                 dataset=dataset,
-                planning_visualizer=planning_visualizer,
+                planning_visualizer=planning_visualizer_extra,
                 tensorboard_writer=tensorboard_writer,
                 prefix=prefix,
                 suffix="_guide_extra",
