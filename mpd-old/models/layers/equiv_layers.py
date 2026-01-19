@@ -7,14 +7,14 @@ EPS = 1e-6
 
 def knn(x, k):
     inner = -2 * torch.matmul(x.transpose(2, 1), x)
-    xx = torch.sum(x**2, dim=1, keepdim=True)
+    xx = torch.sum(x ** 2, dim=1, keepdim=True)
     pairwise_distance = -xx - inner - xx.transpose(2, 1)
 
     idx = pairwise_distance.topk(k=k, dim=-1)[1]  # (batch_size, num_points, k)
     return idx
 
 
-def get_graph_feature(x, k=20, idx=None, x_coord=None, device="cpu"):
+def get_graph_feature(x, k=20, idx=None, x_coord=None, device='cpu'):
     batch_size = x.size(0)
     num_points = x.size(3)
     x = x.view(batch_size, -1, num_points)
@@ -33,9 +33,8 @@ def get_graph_feature(x, k=20, idx=None, x_coord=None, device="cpu"):
     _, num_dims, _ = x.size()
     num_dims = num_dims // 3
 
-    x = x.transpose(
-        2, 1
-    ).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
+    x = x.transpose(2,
+                    1).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
     feature = x.view(batch_size * num_points, -1)[idx, :]
     feature = feature.view(batch_size, num_points, k, num_dims, 3)
     x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
@@ -45,40 +44,41 @@ def get_graph_feature(x, k=20, idx=None, x_coord=None, device="cpu"):
     return feature
 
 
-def get_graph_feature_cross(x, k=20, idx=None, device="cpu"):
+def get_graph_feature_cross(x, k=20, idx=None, device='cpu'):
 
-    x = einops.rearrange(x, "b 1 d n -> b d n")
+    x = einops.rearrange(x, 'b 1 d n -> b d n')
     batch_size = x.size(0)
     num_dims = x.size(1)
     num_points = x.size(2)
 
+
     if idx is None:
         idx = knn(x, k=k)  # (batch_size, num_points, k)
 
-    idx_base = einops.rearrange(torch.arange(0, batch_size, device=device), "b -> b 1 1") * num_points
+    idx_base = einops.rearrange(torch.arange(0, batch_size, device=device), 'b -> b 1 1') * num_points
 
     idx = idx + idx_base
 
-    idx = einops.rearrange(idx, "b n k -> (b n k)")
+    idx = einops.rearrange(idx, 'b n k -> (b n k)')
 
     c = num_dims // 3
 
-    x = einops.rearrange(x, "b d n -> b n d").contiguous()
-    # x = x.transpose(2,1).contiguous()
+    x = einops.rearrange(x, 'b d n -> b n d').contiguous()
+    #x = x.transpose(2,1).contiguous()
 
-    feature = einops.rearrange(x, "b n d -> (b n) d")[idx, :]
-    # feature = x.view(batch_size * num_points, -1)[idx, :]
+    feature = einops.rearrange(x, 'b n d -> (b n) d')[idx, :]
+    #feature = x.view(batch_size * num_points, -1)[idx, :]
 
     feature = feature.view(batch_size, num_points, k, c, 3)
 
-    # x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
-    x = einops.repeat(x, "b n d -> b n k c d", k=k, c=c)
+    #x = x.view(batch_size, num_points, 1, num_dims, 3).repeat(1, 1, k, 1, 1)
+    x = einops.repeat(x, 'b n d -> b n k c d', k=k, c=c)
     cross = torch.cross(feature, x, dim=-1)
 
     feature = torch.cat((feature - x, x, cross), dim=3)
 
-    # feature = feature.permute(0, 3, 4, 1, 2).contiguous()
-    feature = einops.rearrange(feature, "b n k c d -> b c d n k").contiguous()
+    #feature = feature.permute(0, 3, 4, 1, 2).contiguous()
+    feature = einops.rearrange(feature, 'b n k c d -> b c d n k').contiguous()
 
     return feature
 
@@ -89,7 +89,7 @@ def get_graph_mean(x, k=20, idx=None):
     x = x.reshape(batch_size, -1, num_points).contiguous()
     if idx is None:
         idx = knn(x, k=k)  # (batch_size, num_points, k)
-    device = torch.device("cuda")
+    device = torch.device('cuda')
 
     idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1) * num_points
 
@@ -100,9 +100,8 @@ def get_graph_mean(x, k=20, idx=None):
     _, num_dims, _ = x.size()
     num_dims = num_dims // 3
 
-    x = x.transpose(
-        2, 1
-    ).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
+    x = x.transpose(2,
+                    1).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
     feature = x.view(batch_size * num_points, -1)[idx, :]
     feature = feature.view(batch_size, num_points, k, num_dims, 3).mean(2, keepdim=False)
     x = x.view(batch_size, num_points, num_dims, 3)
@@ -118,22 +117,21 @@ def get_shell_mean_cross(x, k=10, nk=4, idx_all=None):
     x = x.reshape(batch_size, -1, num_points).contiguous()
     if idx_all is None:
         idx_all = knn(x, k=nk * k)  # (batch_size, num_points, k)
-    device = torch.device("cuda")
+    device = torch.device('cuda')
 
     idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1) * num_points
 
     idx = []
     for i in range(nk):
-        idx.append(idx_all[:, :, i * k : (i + 1) * k])
+        idx.append(idx_all[:, :, i * k:(i + 1) * k])
         idx[i] = idx[i] + idx_base
         idx[i] = idx[i].view(-1)
 
     _, num_dims, _ = x.size()
     num_dims = num_dims // 3
 
-    x = x.transpose(
-        2, 1
-    ).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
+    x = x.transpose(2,
+                    1).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
     x = x.view(batch_size, num_points, num_dims, 3)
     feature = []
     for i in range(nk):
@@ -154,9 +152,9 @@ class VNLinear(nn.Module):
         self.map_to_feat = nn.Linear(in_channels, out_channels, bias=False)
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         x_out = self.map_to_feat(x.transpose(1, -1)).transpose(1, -1)
         return x_out
 
@@ -171,23 +169,21 @@ class VNLeakyReLU(nn.Module):
         self.negative_slope = negative_slope
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         d = self.map_to_dir(x.transpose(1, -1)).transpose(1, -1)
         dotprod = (x * d).sum(2, keepdim=True)
         mask = (dotprod >= 0).float()
         d_norm_sq = (d * d).sum(2, keepdim=True)
         x_out = self.negative_slope * x + (1 - self.negative_slope) * (
-            mask * x + (1 - mask) * (x - (dotprod / (d_norm_sq + EPS)) * d)
-        )
+                mask * x + (1 - mask) * (x - (dotprod / (d_norm_sq + EPS)) * d))
         return x_out
 
 
 class VNLinearLeakyReLU(nn.Module):
-    def __init__(
-        self, in_channels, out_channels, dim=5, share_nonlinearity=False, use_batchnorm=True, negative_slope=0.2
-    ):
+    def __init__(self, in_channels, out_channels, dim=5, share_nonlinearity=False, use_batchnorm=True,
+                 negative_slope=0.2):
         super(VNLinearLeakyReLU, self).__init__()
         self.dim = dim
         self.share_nonlinearity = share_nonlinearity
@@ -210,9 +206,9 @@ class VNLinearLeakyReLU(nn.Module):
         self.negative_slope = negative_slope
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         # Conv
         p = self.map_to_feat(x.transpose(1, -1)).transpose(1, -1)
         # InstanceNorm
@@ -224,8 +220,7 @@ class VNLinearLeakyReLU(nn.Module):
         mask = (dotprod >= 0).float()
         d_norm_sq = (d * d).sum(2, keepdim=True)
         x_out = self.negative_slope * p + (1 - self.negative_slope) * (
-            mask * p + (1 - mask) * (p - (dotprod / (d_norm_sq + EPS)) * d)
-        )
+                mask * p + (1 - mask) * (p - (dotprod / (d_norm_sq + EPS)) * d))
         return x_out
 
 
@@ -239,9 +234,9 @@ class VNBatchNorm(nn.Module):
             self.bn = nn.BatchNorm2d(num_features)
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         norm = torch.sqrt((x * x).sum(2))
         norm_bn = self.bn(norm)
         norm = norm.unsqueeze(2)
@@ -260,9 +255,9 @@ class VNMaxPool(nn.Module):
             self.map_to_dir = nn.Linear(in_channels, in_channels, bias=False)
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         d = self.map_to_dir(x.transpose(1, -1)).transpose(1, -1)
         dotprod = (x * d).sum(2, keepdim=True)
         idx = dotprod.max(dim=-1, keepdim=False)[1]
@@ -279,25 +274,19 @@ class VNStdFeature(nn.Module):
         self.share_nonlinearity = share_nonlinearity
         self.use_batchnorm = use_batchnorm
 
-        self.vn1 = VNLinearLeakyReLU(
-            in_channels, in_channels // 2, dim=dim, share_nonlinearity=share_nonlinearity, use_batchnorm=use_batchnorm
-        )
-        self.vn2 = VNLinearLeakyReLU(
-            in_channels // 2,
-            in_channels // 4,
-            dim=dim,
-            share_nonlinearity=share_nonlinearity,
-            use_batchnorm=use_batchnorm,
-        )
+        self.vn1 = VNLinearLeakyReLU(in_channels, in_channels // 2, dim=dim, share_nonlinearity=share_nonlinearity,
+                                     use_batchnorm=use_batchnorm)
+        self.vn2 = VNLinearLeakyReLU(in_channels // 2, in_channels // 4, dim=dim, share_nonlinearity=share_nonlinearity,
+                                     use_batchnorm=use_batchnorm)
         if normalize_frame:
             self.vn_lin = nn.Linear(in_channels // 4, 2, bias=False)
         else:
             self.vn_lin = nn.Linear(in_channels // 4, 3, bias=False)
 
     def forward(self, x):
-        """
+        '''
         x: point features of shape [B, N_feat, 3, N_samples, ...]
-        """
+        '''
         z0 = self.vn1(x)
         z0 = self.vn2(z0)
         z0 = self.vn_lin(z0.transpose(1, -1)).transpose(1, -1)
@@ -321,24 +310,24 @@ class VNStdFeature(nn.Module):
             z0 = z0.transpose(1, 2)
 
         if self.dim == 4:
-            x_std = torch.einsum("bijm,bjkm->bikm", x, z0)
+            x_std = torch.einsum('bijm,bjkm->bikm', x, z0)
         elif self.dim == 3:
-            x_std = torch.einsum("bij,bjk->bik", x, z0)
+            x_std = torch.einsum('bij,bjk->bik', x, z0)
         elif self.dim == 5:
-            x_std = torch.einsum("bijmn,bjkmn->bikmn", x, z0)
+            x_std = torch.einsum('bijmn,bjkmn->bikmn', x, z0)
 
         return x_std, z0
 
 
 # Resnet Blocks
 class VNResnetBlockFC(nn.Module):
-    """Fully connected ResNet Block class.
+    ''' Fully connected ResNet Block class.
 
     Args:
         size_in (int): input dimension
         size_out (int): output dimension
         size_h (int): hidden dimension
-    """
+    '''
 
     def __init__(self, size_in, size_out=None, size_h=None):
         super().__init__()

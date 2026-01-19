@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetDense, TrajectoryDatasetBSpline
 from drmp.inference.guides import GuideTrajectories
 from drmp.models.diffusion import PlanningModel
 from drmp.planning.costs.cost_functions import (
@@ -15,7 +15,7 @@ from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory_utils import create_straight_line_trajectory
+from drmp.utils.trajectory_utils import create_straight_line_trajectory, get_trajectories_from_bsplines
 
 
 class BaseRunnerModelWrapper(ABC):
@@ -25,7 +25,7 @@ class BaseRunnerModelWrapper(ABC):
     @abstractmethod
     def sample(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
@@ -55,7 +55,7 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
 
     def sample(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
@@ -86,12 +86,11 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
             "ddim": self.ddim,
         }
 
-
-class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
+class MPDModelWrapper(BaseRunnerModelWrapper):
     def __init__(
         self,
         model: Any,
-        guide: Optional[GuideTrajectories],
+        guide: GuideTrajectories,
         start_guide_steps_fraction: float,
         n_guide_steps: int,
         ddim: bool,
@@ -106,7 +105,7 @@ class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
 
     def sample(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
@@ -142,6 +141,86 @@ class LegacyDiffusionModelWrapper(BaseRunnerModelWrapper):
         }
 
 
+class MPDSplinesModelWrapper(BaseRunnerModelWrapper):
+    def __init__(
+        self,
+        model: Any,
+        start_guide_steps_fraction: float,
+        guide: GuideTrajectories,
+        n_guide_steps: int,
+        ddim: bool,
+        use_extra_objects: bool,
+        guide_lr: float,
+        scale_grad_prior: float,
+        ddim_sampling_timesteps: int,
+    ):
+        super().__init__(use_extra_objects)
+        self.model = model
+        self.guide = guide
+        self.start_guide_steps_fraction = start_guide_steps_fraction
+        self.n_guide_steps = n_guide_steps
+        self.ddim = ddim
+        self.guide_lr = guide_lr
+        self.scale_grad_prior = scale_grad_prior
+        self.ddim_sampling_timesteps = ddim_sampling_timesteps
+
+    def sample(
+        self,
+        dataset: TrajectoryDatasetBSpline,
+        data_normalized: Dict[str, Any],
+        n_samples: int,
+    ):
+        start = dataset.robot.get_position(data_normalized["start_states_normalized"])
+        goal = dataset.robot.get_position(data_normalized["goal_states_normalized"])
+        
+        horizon = dataset.n_control_points
+        
+        context = {
+            "qs_normalized": torch.cat((start, goal), dim=-1),
+        }
+        
+        hard_conds = {
+            0: start,
+            1: start,
+            horizon - 2: goal,
+            horizon - 1: goal,
+        }
+        
+        t_start_guide = int(self.start_guide_steps_fraction * self.ddim_sampling_timesteps)
+        
+        control_points_iters = self.model.run_inference(
+                    guide=self.guide,
+                    context_d=context,
+                    hard_conds=hard_conds,
+                    n_samples=n_samples,
+                    horizon=horizon,
+                    return_chain=True,
+                    return_chain_x_recon=False,
+                    results_ns=None,
+                    ddim_scale_grad_prior=self.scale_grad_prior,
+                    ddim_sampling_timesteps=self.ddim_sampling_timesteps,
+                    guide_lr=self.guide_lr,
+                    n_guide_steps=self.n_guide_steps,
+                    t_start_guide=t_start_guide,
+                    debug=False,
+                )
+        
+        trajectories_iters = get_trajectories_from_bsplines(control_points=control_points_iters, n_support_points=dataset.n_support_points, degree=dataset.spline_degree)
+        
+        return trajectories_iters, trajectories_iters[-1]
+        
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "start_guide_steps_fraction": self.start_guide_steps_fraction,
+            "n_guide_steps": self.n_guide_steps,
+            "ddim": self.ddim,
+            "guide_lr": self.guide_lr,
+            "scale_grad_prior": self.scale_grad_prior,
+            "ddim_sampling_timesteps": self.ddim_sampling_timesteps,
+        }
+
+
 class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
     def __init__(
         self,
@@ -158,7 +237,7 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
 
     def sample(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
@@ -247,7 +326,7 @@ class BaseRunnerConfig(ABC):
     @abstractmethod
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         n_samples: int,
         tensor_args: Dict[str, Any],
     ) -> BaseRunnerModelWrapper:
@@ -285,7 +364,7 @@ class DiffusionRunnerConfig(BaseRunnerConfig):
 
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> DiffusionModelWrapper:
@@ -350,7 +429,7 @@ class DiffusionRunnerConfig(BaseRunnerConfig):
         }
 
 
-class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
+class MPDRunnerConfig(BaseRunnerConfig):
     def __init__(
         self,
         model: Any,
@@ -377,10 +456,10 @@ class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
 
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         tensor_args: Dict[str, Any],
         n_samples: int,
-    ) -> LegacyDiffusionModelWrapper:
+    ) -> MPDModelWrapper:
         guide = None
         if self.n_guide_steps > 0:
             collision_costs = [
@@ -420,7 +499,7 @@ class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
                 n_interpolate=self.n_interpolate,
             )
 
-        return LegacyDiffusionModelWrapper(
+        return MPDModelWrapper(
             model=self.model,
             guide=guide,
             start_guide_steps_fraction=self.start_guide_steps_fraction,
@@ -444,6 +523,58 @@ class LegacyDiffusionRunnerConfig(BaseRunnerConfig):
         }
 
 
+class MPDSplinesRunnerConfig(BaseRunnerConfig):
+    def __init__(
+        self,
+        model: Any,
+        start_guide_steps_fraction: float,
+        n_guide_steps: int,
+        ddim: bool,
+        guide_lr: float,
+        scale_grad_prior: float,
+        ddim_sampling_timesteps: int,
+        use_extra_objects: bool,
+    ):
+        super().__init__(use_extra_objects=use_extra_objects)
+        self.model = model
+        self.start_guide_steps_fraction = start_guide_steps_fraction
+        self.n_guide_steps = n_guide_steps
+        self.ddim = ddim
+        self.guide_lr = guide_lr
+        self.scale_grad_prior = scale_grad_prior
+        self.ddim_sampling_timesteps = ddim_sampling_timesteps
+
+    def prepare(
+        self,
+        dataset: TrajectoryDatasetDense,
+        tensor_args: Dict[str, Any],
+        n_samples: int,
+    ) -> MPDSplinesModelWrapper:
+        
+        guide = None
+        
+        return MPDSplinesModelWrapper(
+            model=self.model,
+            start_guide_steps_fraction=self.start_guide_steps_fraction,
+            guide=guide,
+            n_guide_steps=self.n_guide_steps,
+            ddim=self.ddim,
+            use_extra_objects=self.use_extra_objects,
+            guide_lr=self.guide_lr,
+            scale_grad_prior=self.scale_grad_prior,
+            ddim_sampling_timesteps=self.ddim_sampling_timesteps
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "algo": "mpd_splines",
+            "start_guide_steps_fraction": self.start_guide_steps_fraction,
+            "n_guide_steps": self.n_guide_steps,
+            "ddim": self.ddim,
+        }
+
+
+
 class RRTConnectRunnerConfig(BaseRunnerConfig):
     def __init__(
         self,
@@ -461,7 +592,7 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
 
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> ClassicalPlannerWrapper:
@@ -526,7 +657,7 @@ class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
 
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> ClassicalPlannerWrapper:
@@ -615,7 +746,7 @@ class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
 
     def prepare(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetDense,
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> ClassicalPlannerWrapper:

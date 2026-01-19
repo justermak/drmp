@@ -66,11 +66,11 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 1000,
+    "n_tasks": 100,
     "n_samples": 100,
     "splits": '("test",)', # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "legacy-diffusion",  # Options: "diffusion", "legacy-diffusion", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "mpd-splines",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
@@ -87,19 +87,32 @@ DEFAULT_INFERENCE_ARGS = {
     "do_clip_grad": True,
     "max_grad_norm": 1.0,
     "n_interpolate": 5,
-    # Legacy diffusion model
-    "legacy_checkpoints_dir": os.path.join(
-        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "checkpoints"
+    # MPD
+    "mpd_checkpoints_dir": os.path.join(
+        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "mpd", "checkpoints"
     ),
-    "legacy_checkpoint_name": "ema_model_current.pth",
-    "legacy_ddim": False,
-    "legacy_start_guide_steps_fraction": 0.25,
-    "legacy_n_guide_steps": 5,
-    "legacy_sigma_collision": 1e1,
-    "legacy_sigma_gp": 2e3,
-    "legacy_do_clip_grad": True,
-    "legacy_max_grad_norm": 1.0,
-    "legacy_n_interpolate": 5,
+    "mpd_checkpoint_name": "ema_model_current.pth",
+    "mpd_ddim": False,
+    "mpd_start_guide_steps_fraction": 0.25,
+    "mpd_n_guide_steps": 5,
+    "mpd_sigma_collision": 1e1,
+    "mpd_sigma_gp": 2e3,
+    "mpd_do_clip_grad": True,
+    "mpd_max_grad_norm": 1.0,
+    "mpd_n_interpolate": 5,
+    # MPD-Splines
+    "mpd_splines_checkpoints_dir": os.path.join(
+        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "mpd-splines", "checkpoints"
+    ),
+    "mpd_splines_checkpoint_name": "ema_model_current.pth",
+    "mpd_splines_n_control_points": 24,
+    "mpd_splines_spline_degree": 3,
+    "mpd_splines_n_guide_steps": 4,
+    "mpd_splines_start_guide_steps_fraction": 0.3,
+    "mpd_splines_ddim_sampling_timesteps": 15,
+    "mpd_splines_guide_lr": 1.0,
+    "mpd_splines_scale_grad_prior": 0.25,
+    "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
     "classical_sample_steps": 10000,

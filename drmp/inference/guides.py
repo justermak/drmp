@@ -1,14 +1,14 @@
 import torch
 from torch import nn
 
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetBase
 from drmp.planning.costs.cost_functions import CostComposite
 
 
 class GuideTrajectories(nn.Module):
     def __init__(
         self,
-        dataset: TrajectoryDataset,
+        dataset: TrajectoryDatasetBase,
         cost: CostComposite,
         do_clip_grad: bool,
         max_grad_norm: float,

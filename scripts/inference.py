@@ -5,13 +5,14 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetDense, TrajectoryDatasetBSpline
 from drmp.inference.runner import create_test_subset, run_inference
 from drmp.inference.runner_config import (
     DiffusionRunnerConfig,
     GPMP2RRTPriorRunnerConfig,
     GPMP2UninformativeRunnerConfig,
-    LegacyDiffusionRunnerConfig,
+    MPDRunnerConfig,
+    MPDSplinesRunnerConfig,
     RRTConnectRunnerConfig,
 )
 from drmp.models.diffusion import get_models
@@ -39,7 +40,7 @@ def run(args):
     dataset_config = load_config_from_yaml(dataset_config_path)
     normalizer_name = (
         "TrivialNormalizer"
-        if args.algorithm == "legacy-diffusion"
+        if args.algorithm == "mpd"
         else dataset_config["normalizer_name"]
     )
 
@@ -55,7 +56,15 @@ def run(args):
         "apply_augmentations": False,
         "tensor_args": tensor_args,
     }
-    dataset = TrajectoryDataset(**dataset_init_config)
+
+    if args.algorithm == "mpd-splines":
+         dataset = TrajectoryDatasetBSpline(
+             n_control_points=args.mpd_splines_n_control_points,
+             spline_degree=args.mpd_splines_spline_degree,
+             **dataset_init_config
+         )
+    else:
+        dataset = TrajectoryDatasetDense(**dataset_init_config)
     dataset.load_data()
     train_subset, _, val_subset, _ = dataset.load_train_val_split()
 
@@ -77,8 +86,8 @@ def run(args):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if args.algorithm == "diffusion":
             experiment_name = f"{args.checkpoint_name if args.checkpoint_name else 'diffusion'}_{timestamp}"
-        elif args.algorithm == "legacy-diffusion":
-            experiment_name = f"legacy_{args.legacy_checkpoint_name if args.legacy_checkpoint_name else 'model'}_{timestamp}"
+        elif args.algorithm == "mpd":
+            experiment_name = f"mpd_{args.mpd_checkpoint_name if args.mpd_checkpoint_name else 'model'}_{timestamp}"
         else:
             experiment_name = f"{args.algorithm}_{timestamp}"
     else:
@@ -141,34 +150,62 @@ def run(args):
             ddim=args.ddim,
         )
 
-    elif args.algorithm == "legacy-diffusion":
+    elif args.algorithm == "mpd-splines":
         checkpoint_path = os.path.join(
-            args.legacy_checkpoints_dir, args.legacy_checkpoint_name
+            args.mpd_splines_checkpoints_dir, args.mpd_splines_checkpoint_name
         )
 
-        print(f"Loading legacy model from: {checkpoint_path}")
-
+        print(f"Loading MPD-Splines model from: {checkpoint_path}")
+                 
         if os.path.exists(checkpoint_path):
             model = torch.load(checkpoint_path, map_location=device, weights_only=False)
         else:
             raise FileNotFoundError(
-                f"Legacy model checkpoint not found: {checkpoint_path}"
+                f"MPD-Splines model checkpoint not found: {checkpoint_path}"
             )
 
         model.eval()
         model = torch.compile(model)
 
-        runner_config = LegacyDiffusionRunnerConfig(
+        runner_config = MPDSplinesRunnerConfig(
+            model=model,
+            start_guide_steps_fraction=args.mpd_splines_start_guide_steps_fraction,
+            n_guide_steps=args.mpd_splines_n_guide_steps,
+            ddim=args.mpd_splines_ddim,
+            ddim_sampling_timesteps=args.mpd_splines_ddim_sampling_timesteps,
+            guide_lr=args.mpd_splines_guide_lr,
+            scale_grad_prior=args.mpd_splines_scale_grad_prior,
+            use_extra_objects=args.use_extra_objects,
+        )
+
+    elif args.algorithm == "mpd":
+        checkpoint_path = os.path.join(
+            args.mpd_checkpoints_dir, args.mpd_checkpoint_name
+        )
+
+        print(f"Loading MPD model from: {checkpoint_path}")
+
+        if os.path.exists(checkpoint_path):
+            model = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        else:
+            raise FileNotFoundError(
+                f"MPD model checkpoint not found: {checkpoint_path}"
+            )
+
+        model.eval()
+        model = torch.compile(model)
+
+        runner_config = MPDRunnerConfig(
             model=model,
             use_extra_objects=args.use_extra_objects,
-            sigma_collision=args.legacy_sigma_collision,
-            sigma_gp=args.legacy_sigma_gp,
-            do_clip_grad=args.legacy_do_clip_grad,
-            max_grad_norm=args.legacy_max_grad_norm,
-            n_interpolate=args.legacy_n_interpolate,
-            start_guide_steps_fraction=args.legacy_start_guide_steps_fraction,
-            n_guide_steps=args.legacy_n_guide_steps,
-            ddim=args.legacy_ddim,
+            sigma_collision=args.mpd_sigma_collision,
+            sigma_gp=args.mpd_sigma_gp,
+            do_clip_grad=args.mpd_do_clip_grad,
+            max_grad_norm=args.mpd_max_grad_norm,
+            n_interpolate=args.mpd_n_interpolate,
+            start_guide_steps_fraction=args.mpd_start_guide_steps_fraction,
+            n_guide_steps=args.mpd_n_guide_steps,
+            ddim=args.mpd_ddim,
         )
 
     elif args.algorithm == "rrt-connect":
@@ -220,7 +257,7 @@ def run(args):
 
     else:
         raise ValueError(
-            f"Unknown algorithm: {args.algorithm}. Valid options: diffusion, legacy-diffusion, rrt-connect, gpmp2-uninformative, gpmp2-rrt-prior"
+            f"Unknown algorithm: {args.algorithm}. Valid options: diffusion, mpd, rrt-connect, gpmp2-uninformative, gpmp2-rrt-prior"
         )
 
     run_inference(

@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Subset
 from tqdm import tqdm
 
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetBase
 from drmp.inference.runner_config import BaseRunnerConfig, BaseRunnerModelWrapper
 from drmp.planning.metrics import (
     bootstrap_confidence_interval,
@@ -26,7 +26,7 @@ from drmp.utils.yaml import save_config_to_yaml
 
 def run_inference_for_task(
     task_id: int,
-    dataset: TrajectoryDataset,
+    dataset: TrajectoryDatasetBase,
     data_normalized: dict,
     n_samples: int,
     model_wrapper: BaseRunnerModelWrapper,
@@ -124,7 +124,7 @@ def run_inference_on_dataset(
 ) -> Dict[str, Any]:
     statistics = []
     full_data_sample = None
-    dataset: TrajectoryDataset = subset.dataset
+    dataset: TrajectoryDatasetBase = subset.dataset
 
     for i in tqdm(range(n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
@@ -276,7 +276,7 @@ def print_stats(results):
 
 def visualize_results(
     results: Dict[str, Any],
-    dataset: TrajectoryDataset,
+    dataset: TrajectoryDatasetBase,
     use_extra_objects: bool,
     generation_dir: str,
     generate_animation: bool = True,
@@ -321,7 +321,7 @@ def visualize_results(
 
 
 def create_test_subset(
-    dataset: TrajectoryDataset,
+    dataset: TrajectoryDatasetBase,
     n_tasks: int,
     threshold_start_goal_pos: float,
     tensor_args: Dict[str, Any],
@@ -358,7 +358,7 @@ def create_test_subset(
 
 def run_inference(
     runner_config: BaseRunnerConfig,
-    dataset: TrajectoryDataset,
+    dataset: TrajectoryDatasetBase,
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
     test_subset: Optional[Subset],
