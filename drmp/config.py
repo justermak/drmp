@@ -16,9 +16,13 @@ DEFAULT_TRAIN_ARGS = {
     "checkpoint_name": None,
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_2000_50",
+    "dataset_name": "EnvDense2D_1000_100",
+    "normalizer_name": "TrivialNormalizer",
+    "use_splines": True,
+    "n_control_points": 20,
+    "spline_degree": 3,
     "apply_augmentations": True,
-    "apply_filtering": True,
+    "filter_collision": True,
     "filter_longest_portion": 0.25,
     "filter_sharpest_portion": 0.25,
     # Diffusion Model
@@ -58,7 +62,7 @@ DEFAULT_TRAIN_ARGS = {
     "guide_max_grad_norm": 1.0,
     "guide_n_interpolate": 5,
     # Other
-    "device": "cuda:6",
+    "device": "cuda",
     "debug": False,
     "seed": 42,
 }
@@ -68,9 +72,9 @@ DEFAULT_INFERENCE_ARGS = {
     "experiment_name": None,
     "n_tasks": 100,
     "n_samples": 100,
-    "splits": '("test",)', # '("train", "val", "test")',
+    "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "mpd-splines",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "mpd",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_1000_100",
@@ -89,7 +93,11 @@ DEFAULT_INFERENCE_ARGS = {
     "n_interpolate": 5,
     # MPD
     "mpd_checkpoints_dir": os.path.join(
-        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "mpd", "checkpoints"
+        dir_path,
+        "data_trained_models",
+        "EnvDense2D-RobotPointMass",
+        "mpd",
+        "checkpoints",
     ),
     "mpd_checkpoint_name": "ema_model_current.pth",
     "mpd_ddim": False,
@@ -102,16 +110,25 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_n_interpolate": 5,
     # MPD-Splines
     "mpd_splines_checkpoints_dir": os.path.join(
-        dir_path, "data_trained_models", "EnvDense2D-RobotPointMass", "mpd-splines", "checkpoints"
+        dir_path,
+        "data_trained_models",
+        "EnvDense2D-RobotPointMass",
+        "mpd-splines",
+        "checkpoints",
     ),
     "mpd_splines_checkpoint_name": "ema_model_current.pth",
-    "mpd_splines_n_control_points": 24,
+    "mpd_splines_n_control_points": 20,
     "mpd_splines_spline_degree": 3,
     "mpd_splines_n_guide_steps": 4,
     "mpd_splines_start_guide_steps_fraction": 0.3,
     "mpd_splines_ddim_sampling_timesteps": 15,
     "mpd_splines_guide_lr": 1.0,
     "mpd_splines_scale_grad_prior": 0.25,
+    "mpd_splines_sigma_collision": 1e1,
+    "mpd_splines_sigma_gp": 2e3,
+    "mpd_splines_do_clip_grad": True,
+    "mpd_splines_max_grad_norm": 1.0,
+    "mpd_splines_n_interpolate": 5,
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
@@ -143,7 +160,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
     "env_name": "EnvDense2D",
-    "normalizer_name": "TrivialNormalizer",
+    "robot_name": "Sphere2D",
     "robot_margin": 0.01,
     "generating_robot_margin": 0.02,
     "n_support_points": 64,
@@ -170,9 +187,9 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Other
-    "max_processes": 4,
+    "max_processes": 1,
     "val_portion": 0.05,
-    "device": "cuda:6",
-    "debug": False,
+    "device": "cuda",
+    "debug": True,
     "seed": 42,
 }

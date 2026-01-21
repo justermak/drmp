@@ -4,14 +4,14 @@ from typing import Any, Dict, List
 import torch
 
 from drmp.world.environments import EnvBase
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 class ClassicalPlanner(ABC):
     def __init__(
         self,
         env: EnvBase,
-        robot: Robot,
+        robot: RobotBase,
         use_extra_objects: bool,
         tensor_args: Dict[str, Any],
     ):

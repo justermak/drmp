@@ -4,7 +4,7 @@ import torch
 
 from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.environments import EnvBase
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 class UnaryFactor:
@@ -55,7 +55,7 @@ class FieldFactor:
         self,
         q_trajectories: torch.Tensor,
         env: EnvBase,
-        robot: Robot,
+        robot: RobotBase,
         n_interpolate: int,
         calc_jacobian: bool = True,
     ):

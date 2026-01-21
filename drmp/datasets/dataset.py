@@ -1,34 +1,28 @@
 import os
 import traceback
-from typing import Any, Dict, List, Tuple
 from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Tuple
 
 import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm.autonotebook import tqdm
 
-from drmp.config import N_DIM
 from drmp.datasets.filtering import get_filter_functions
-from drmp.datasets.normalization import Normalizer, get_normalizers
-from drmp.planning.metrics import (
-    compute_collision_intensity,
-    compute_free_fraction,
-    compute_success,
-)
+from drmp.datasets.normalization import NormalizerBase, get_normalizers
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
+from drmp.utils.trajectory_utils import fit_bsplines_to_trajectories
 from drmp.utils.visualizer import Visualizer
 from drmp.utils.yaml import save_config_to_yaml
 from drmp.world.environments import EnvBase, get_envs
-from drmp.world.robot import Robot
-from drmp.utils.trajectory_utils import fit_bsplines_to_trajectories
-
+from drmp.world.robot import RobotBase, get_robots
 
 NORMALIZERS = get_normalizers()
 
 ENVS = get_envs()
+ROBOTS = get_robots()
 
 
 def _worker_process_task(args):
@@ -36,6 +30,7 @@ def _worker_process_task(args):
         task_id,
         dataset_dir,
         env_name,
+        robot_name,
         robot_margin,
         generating_robot_margin,
         n_support_points,
@@ -69,12 +64,12 @@ def _worker_process_task(args):
             grid_map_sdf_fixed=grid_map_sdf_fixed,
             grid_map_sdf_extra=grid_map_sdf_extra,
         )
-        generating_robot = Robot(
+        generating_robot = ROBOTS[robot_name](
             margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
             tensor_args=tensor_args,
         )
-        robot = Robot(
+        robot = ROBOTS[robot_name](
             margin=robot_margin,
             dt=duration / (n_support_points - 1),
             tensor_args=tensor_args,
@@ -92,7 +87,7 @@ def _worker_process_task(args):
 
         optimization_based_planner = GPMP2(
             robot=generating_robot,
-            n_dof=N_DIM,
+            n_dof=robot.n_dim,
             n_trajectories=n_trajectories,
             env=env,
             tensor_args=tensor_args,
@@ -111,7 +106,7 @@ def _worker_process_task(args):
 
         planner = HybridPlanner(
             sample_based_planner=sample_based_planner,
-            opt_based_planner=optimization_based_planner,
+            optimization_based_planner=optimization_based_planner,
             tensor_args=tensor_args,
         )
 
@@ -137,35 +132,34 @@ def _worker_process_task(args):
             debug=debug,
         )
 
-        trajectories_collision, trajectories_free, _ = (
-            env.get_trajectories_collision_and_free(
-                robot=robot, trajectories=trajectories
-            )
+        _, trajectories_free, _ = env.get_trajectories_collision_and_free(
+            robot=robot, trajectories=trajectories
         )
+        n_free = len(trajectories_free)
+        n_collision = len(trajectories) - n_free
 
-        results_dir = os.path.join(dataset_dir, str(task_id))
-        os.makedirs(results_dir, exist_ok=True)
         torch.save(
-            trajectories_collision.cpu(),
-            os.path.join(results_dir, "trajectories-collision.pt"),
-        )
-        torch.save(
-            trajectories_free.cpu(), os.path.join(results_dir, "trajectories-free.pt")
+            trajectories.cpu(),
+            os.path.join(dataset_dir, f"trajectories_{task_id}.pt"),
         )
 
         if debug:
-            planning_visualizer = Visualizer(env=env, robot=robot, use_extra_objects=False)
+            planning_visualizer = Visualizer(
+                env=env, robot=robot, use_extra_objects=False
+            )
             try:
                 planning_visualizer.render_scene(
-                    trajectories=trajectories.cpu(),
-                    start_state=start_pos.cpu(),
-                    goal_state=goal_pos.cpu(),
-                    save_path=os.path.join(results_dir, "trajectories_figure.png"),
+                    trajectories=trajectories,
+                    start_pos=start_pos,
+                    goal_pos=goal_pos,
+                    save_path=os.path.join(
+                        dataset_dir, f"trajectories_figure_{task_id}.png"
+                    ),
                 )
             except Exception as e:
                 print(f"Visualization failed for task {task_id}: {e}")
 
-        return task_id, len(trajectories_collision), len(trajectories_free), "success"
+        return task_id, n_collision, n_free, "success"
 
     except Exception as e:
         print(f"Task {task_id} failed with error: {e}")
@@ -179,7 +173,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
         datasets_dir: str,
         dataset_name: str,
         env_name: str,
-        normalizer_name: str,
+        robot_name: str,
         robot_margin: float,
         generating_robot_margin: float,
         n_support_points: int,
@@ -189,55 +183,77 @@ class TrajectoryDatasetBase(Dataset, ABC):
     ):
         self.tensor_args = tensor_args
         self.env_name = env_name
+        self.robot_name = robot_name
         self.n_support_points = n_support_points
-        self.duration: float = duration
+        self.duration = duration
         self.robot_margin = robot_margin
         self.generating_robot_margin = generating_robot_margin
         self.apply_augmentations = apply_augmentations
         self.env: EnvBase = ENVS[env_name](tensor_args=tensor_args)
-        self.robot: Robot = Robot(
+        self.robot: RobotBase = ROBOTS[robot_name](
             margin=robot_margin,
             dt=duration / (n_support_points - 1),
             tensor_args=tensor_args,
         )
-        self.generating_robot: Robot = Robot(
+        self.generating_robot: RobotBase = ROBOTS[robot_name](
             margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
             tensor_args=tensor_args,
         )
-        self.normalizer_name = normalizer_name
-        self.normalizer: Normalizer = NORMALIZERS[self.normalizer_name]()
         self.datasets_dir = datasets_dir
         self.dataset_name = dataset_name
         self.dataset_dir: str = os.path.join(datasets_dir, dataset_name)
-        self.trajectories: torch.Tensor = torch.empty(0)
-        self.start_states: torch.Tensor = torch.empty(0)
-        self.goal_states: torch.Tensor = torch.empty(0)
+        self.trajectories: torch.Tensor = None
+        self.start_pos: torch.Tensor = None
+        self.goal_pos: torch.Tensor = None
+        self.normalizer: NormalizerBase = None
         self.n_trajectories: int = 0
-        self.state_dim: int = 0
 
     @abstractmethod
     def load_data(self) -> None:
-        pass
-
-    def _load_raw_trajectories(self) -> torch.Tensor:
         print(self.dataset_dir)
-        trajectories_free: List[torch.Tensor] = []
-        n_trajectories: int = 0
-        for current_dir, _, files in os.walk(self.dataset_dir, topdown=True):
-            if "trajectories-free.pt" in files:
-                trajectories_free_part = torch.load(
-                    os.path.join(current_dir, "trajectories-free.pt"),
-                    map_location=self.tensor_args["device"],
-                )
-                n_trajectories += len(trajectories_free_part)
-                trajectories_free.append(trajectories_free_part)
 
-        if not trajectories_free:
+        files = [
+            f
+            for f in os.listdir(self.dataset_dir)
+            if f.startswith("trajectories_") and f.endswith(".pt")
+        ]
+
+        files_with_ids = []
+        for f in files:
+            try:
+                id_ = int(f.split("_")[1].split(".")[0])
+                files_with_ids.append((id_, f))
+            except Exception:
+                pass
+
+        files_with_ids.sort(key=lambda x: x[0])
+
+        trajectories_list = []
+        for _, f in files_with_ids:
+            t = torch.load(
+                os.path.join(self.dataset_dir, f),
+                map_location=self.tensor_args["device"],
+            )
+            trajectories_list.append(t)
+
+        if not trajectories_list:
             print("No trajectories found!")
             return torch.empty(0)
 
-        return torch.cat(trajectories_free, dim=0)
+        trajectories = torch.cat(trajectories_list, dim=0)
+
+        if trajectories.numel() == 0:
+            return
+
+        self.n_trajectories, n_support_points, n_dim = (
+            trajectories.shape
+        )
+        assert n_support_points == self.n_support_points and n_dim in (self.robot.n_dim, 2 * self.robot.n_dim)
+        
+        self.trajectories = trajectories[..., : self.robot.n_dim]
+        self.start_pos = self.trajectories[..., 0, :self.robot.n_dim]
+        self.goal_pos = self.trajectories[..., -1, :self.robot.n_dim]
 
     def __len__(self) -> int:
         return self.n_trajectories
@@ -246,80 +262,6 @@ class TrajectoryDatasetBase(Dataset, ABC):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         pass
 
-    def generate_trajectories_for_task(
-        self,
-        id: str,
-        planner: HybridPlanner,
-        threshold_start_goal_pos: float,
-        sample_steps: int,
-        opt_steps: int,
-        debug: bool,
-    ) -> Tuple[int, int]:
-        start_pos, goal_pos, success = self.env.random_collision_free_start_goal(
-            robot=self.generating_robot,
-            n_samples=1,
-            threshold_start_goal_pos=threshold_start_goal_pos,
-        )
-        if not success:
-            print(
-                "Could not find sufficient collision-free start/goal pairs for test tasks"
-            )
-            return
-
-        start_pos = start_pos.squeeze(0)
-        goal_pos = goal_pos.squeeze(0)
-
-        planner.reset(start_pos, goal_pos)
-
-        trajectories = planner.optimize(
-            sample_steps=sample_steps,
-            opt_steps=opt_steps,
-            debug=debug,
-        )
-
-        trajectories_collision, trajectories_free, points_collision_mask = (
-            self.env.get_trajectories_collision_and_free(
-                robot=self.robot, trajectories=trajectories
-            )
-        )
-
-        print("--------- STATISTICS ---------")
-        print(f"total trajectories: {len(trajectories)}")
-        print(
-            f"free fraction: {compute_free_fraction(trajectories_free, trajectories_collision) * 100:.2f}"
-        )
-        print(
-            f"collision intensity: {compute_collision_intensity(points_collision_mask) * 100:.2f}"
-        )
-        print(f"success {compute_success(trajectories_free)}")
-
-        results_dir = os.path.join(self.dataset_dir, id)
-        os.makedirs(results_dir, exist_ok=True)
-        torch.save(
-            trajectories_collision,
-            os.path.join(results_dir, "trajectories-collision.pt"),
-        )
-        torch.save(trajectories_free, os.path.join(results_dir, "trajectories-free.pt"))
-
-        if debug:
-            planning_visualizer = Visualizer(
-                env=self.env, robot=self.robot, use_extra_objects=False
-            )
-
-            planning_visualizer.render_scene(
-                trajectories=trajectories,
-                start_state=start_pos,
-                goal_state=goal_pos,
-                save_path=os.path.join(results_dir, "trajectories_figure.png"),
-            )
-
-        n_trajectories_collision, n_trajectories_free = (
-            len(trajectories_collision),
-            len(trajectories_free),
-        )
-
-        return n_trajectories_collision, n_trajectories_free
-
     def filter_data(
         self,
         train_idxs: List[int],
@@ -327,25 +269,18 @@ class TrajectoryDatasetBase(Dataset, ABC):
         task_start_idxs: torch.Tensor,
         filtering_config: Dict[str, Any],
     ) -> Tuple[List[int], List[int]]:
-        assert (
-            len(self.trajectories) > 0
-        ), "Trajectories must be loaded before filtering"
-
-        if not filtering_config:
-            return train_idxs, val_idxs
-
+        assert len(self.trajectories) > 0, (
+            "Trajectories must be loaded before filtering"
+        )
+        print(filtering_config)
         filter_functions = get_filter_functions()
         indices_to_exclude = set()
-
         for filter_name, filter_params in filtering_config.items():
-            if filter_name not in filter_functions:
-                print(f"Warning: Unknown filter function '{filter_name}', skipping")
-                continue
-
             filter_fn = filter_functions[filter_name]
             excluded = filter_fn(
                 trajectories=self.trajectories,
                 robot=self.robot,
+                env=self.env,
                 task_start_idxs=task_start_idxs,
                 **filter_params,
             )
@@ -356,28 +291,26 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
         return train_filtered, val_filtered
 
-    def _scan_existing_tasks(self) -> Dict[int, Tuple[int, int]]:
+    def _scan_existing_tasks(self) -> Dict[int, int]:
         existing_tasks = {}
         if not os.path.exists(self.dataset_dir):
             return existing_tasks
 
-        for item in os.listdir(self.dataset_dir):
-            item_path = os.path.join(self.dataset_dir, item)
-            if os.path.isdir(item_path) and item.isdigit():
-                task_id = int(item)
-                collision_path = os.path.join(item_path, "trajectories-collision.pt")
-                free_path = os.path.join(item_path, "trajectories-free.pt")
+        files = [
+            f
+            for f in os.listdir(self.dataset_dir)
+            if f.startswith("trajectories_") and f.endswith(".pt")
+        ]
 
-                if os.path.exists(collision_path) and os.path.exists(free_path):
-                    trajectories_collision = torch.load(
-                        collision_path, map_location="cpu"
-                    )
-                    trajectories_free = torch.load(free_path, map_location="cpu")
-                    n_collision = len(trajectories_collision)
-                    n_free = len(trajectories_free)
-                    del trajectories_collision, trajectories_free
-
-                    existing_tasks[task_id] = (n_collision, n_free)
+        for f in files:
+            try:
+                task_id = int(f.split("_")[1].split(".")[0])
+                trajectories = torch.load(
+                    os.path.join(self.dataset_dir, f), map_location="cpu"
+                )
+                existing_tasks[task_id] = len(trajectories)
+            except Exception:
+                pass
 
         return existing_tasks
 
@@ -412,7 +345,6 @@ class TrajectoryDatasetBase(Dataset, ABC):
             "datasets_dir": self.datasets_dir,
             "dataset_name": self.dataset_name,
             "dataset_dir": self.dataset_dir,
-            "normalizer_name": self.normalizer_name,
             "n_support_points": self.n_support_points,
             "duration": self.duration,
             "robot_margin": self.robot_margin,
@@ -435,18 +367,14 @@ class TrajectoryDatasetBase(Dataset, ABC):
             print(f"Existing task IDs: {sorted(existing_tasks.keys())}")
 
         task_start_idxs = []
-        n_free_trajectories: int = 0
-        n_collision_trajectories: int = 0
-        n_failed_tasks: int = 0
-        n_skipped_tasks: int = 0
 
         grid_map_sdf_fixed = self.env.grid_map_sdf_fixed
         grid_map_sdf_extra = self.env.grid_map_sdf_extra
 
         tasks_to_run = []
+        n_skipped_tasks = 0
         for i in range(n_tasks):
             if i in existing_tasks:
-                n_collision, n_free = existing_tasks[i]
                 n_skipped_tasks += 1
                 continue
 
@@ -454,6 +382,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
                 i,
                 self.dataset_dir,
                 self.env_name,
+                self.robot_name,
                 self.robot_margin,
                 self.generating_robot_margin,
                 self.n_support_points,
@@ -491,27 +420,35 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
         ctx = mp.get_context("spawn")
 
-        new_results = {}
-
+        new_tasks = {}
+        n_completed_tasks = 0
+        n_failed_tasks = 0
         with tqdm(total=n_tasks, mininterval=1, desc="Generating data") as pbar:
             pbar.update(n_skipped_tasks)
 
             if max_processes > 1:
                 with ctx.Pool(processes=max_processes) as pool:
                     for res in pool.imap_unordered(_worker_process_task, tasks_to_run):
+                        n_completed_tasks += 1
                         task_id, n_collision, n_free, status = res
-                        new_results[task_id] = (n_collision, n_free, status)
+                        new_tasks[task_id] = (n_collision + n_free, status)
 
-                        if status != "success":
+                        if status != "success" or n_free == 0:
                             n_failed_tasks += 1
-                        else:
-                            n_free_trajectories += n_free
+
+                        if (
+                            n_failed_tasks > 10
+                            and n_failed_tasks > n_completed_tasks * 0.1
+                        ):
+                            raise RuntimeError(
+                                f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
+                            )
 
                         pbar.set_postfix(
                             {
                                 "status": status,
+                                "collision": n_collision,
                                 "free": n_free,
-                                "coll": n_collision,
                                 "failed": n_failed_tasks,
                             }
                         )
@@ -519,28 +456,36 @@ class TrajectoryDatasetBase(Dataset, ABC):
             else:
                 for args in tasks_to_run:
                     res = _worker_process_task(args)
+                    n_completed_tasks += 1
                     task_id, n_collision, n_free, status = res
-                    new_results[task_id] = (n_collision, n_free, status)
-                    if status != "success":
+                    new_tasks[task_id] = (n_collision + n_free, status)
+
+                    if status != "success" or n_free == 0:
                         n_failed_tasks += 1
+
+                    if (
+                            n_failed_tasks > 10
+                            and n_failed_tasks > n_completed_tasks * 0.1
+                        ):
+                            raise RuntimeError(
+                                f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
+                            )
+
                     pbar.update(1)
 
-        n_free_trajectories = 0
-        n_collision_trajectories = 0
-
         for i in range(n_tasks):
+            n_trajectories_i = 0
             if i in existing_tasks:
-                n_collision, n_free = existing_tasks[i]
-            elif i in new_results:
-                n_collision, n_free, status = new_results[i]
+                n_trajectories_i = existing_tasks[i]
+            elif i in new_tasks:
+                n_trajectories_i, status = new_tasks[i]
                 if status != "success":
-                    n_collision, n_free = 0, 0
+                    n_trajectories_i = 0
 
-            task_start_idxs.append(n_free_trajectories)
-            n_free_trajectories += n_free
-            n_collision_trajectories += n_collision
+            task_start_idxs.append(n_trajectories)
+            n_trajectories += n_trajectories_i
 
-        task_start_idxs.append(n_free_trajectories)
+        task_start_idxs.append(n_trajectories)
 
         task_start_idxs = torch.tensor(task_start_idxs, dtype=torch.long)
         train_tasks, val_tasks = random_split(
@@ -572,31 +517,24 @@ class TrajectoryDatasetBase(Dataset, ABC):
     def load_train_val_split(
         self,
         batch_size: int = 1,
-        apply_filtering: bool = False,
-        filtering_config: Dict[str, Any] = None,
+        filtering_config: Dict[str, Any] = {},
     ) -> Tuple[Subset, DataLoader, Subset, DataLoader]:
         train_idx = torch.load(os.path.join(self.dataset_dir, "train_idx.pt"))
         val_idx = torch.load(os.path.join(self.dataset_dir, "val_idx.pt"))
 
-        if apply_filtering:
-            if filtering_config is None:
-                raise ValueError(
-                    "filtering_config must be provided when apply_filtering=True"
-                )
+        task_start_idxs = torch.load(
+            os.path.join(self.dataset_dir, "task_start_idxs.pt")
+        )
 
-            task_start_idxs = torch.load(
-                os.path.join(self.dataset_dir, "task_start_idxs.pt")
-            )
-
-            print("\nApplying trajectory filters...")
-            train_idx, val_idx = self.filter_data(
-                train_idxs=train_idx,
-                val_idxs=val_idx,
-                task_start_idxs=task_start_idxs,
-                filtering_config=filtering_config,
-            )
-            print(f"Train dataset size after filtering: {len(train_idx)}")
-            print(f"Val dataset size after filtering: {len(val_idx)}")
+        print("\nApplying trajectory filters...")
+        train_idx, val_idx = self.filter_data(
+            train_idxs=train_idx,
+            val_idxs=val_idx,
+            task_start_idxs=task_start_idxs,
+            filtering_config=filtering_config,
+        )
+        print(f"Train dataset size after filtering: {len(train_idx)}")
+        print(f"Val dataset size after filtering: {len(val_idx)}")
 
         train_subset = Subset(self, train_idx)
         val_subset = Subset(self, val_idx)
@@ -608,21 +546,24 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
 
 class TrajectoryDatasetDense(TrajectoryDatasetBase):
-    def __init__(self, datasets_dir: str,
+    def __init__(
+        self,
+        datasets_dir: str,
         dataset_name: str,
         env_name: str,
-        normalizer_name: str,
+        robot_name: str,
         robot_margin: float,
         generating_robot_margin: float,
         n_support_points: int,
         duration: float,
         apply_augmentations: bool,
-        tensor_args: Dict[str, Any]):
+        tensor_args: Dict[str, Any],
+    ):
         super().__init__(
             datasets_dir=datasets_dir,
             dataset_name=dataset_name,
             env_name=env_name,
-            normalizer_name=normalizer_name,
+            robot_name=robot_name,
             robot_margin=robot_margin,
             generating_robot_margin=generating_robot_margin,
             n_support_points=n_support_points,
@@ -631,62 +572,58 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
             tensor_args=tensor_args,
         )
         self.trajectories_normalized: torch.Tensor = torch.empty(0)
-        self.start_states_normalized: torch.Tensor = torch.empty(0)
-        self.goal_states_normalized: torch.Tensor = torch.empty(0)
+        self.start_pos_normalized: torch.Tensor = torch.empty(0)
+        self.goal_pos_normalized: torch.Tensor = torch.empty(0)
 
-    def load_data(self) -> None:
-        self.trajectories = self._load_raw_trajectories()
-
-        if self.trajectories.numel() == 0:
-            return
-
-        self.start_states = self.trajectories[..., 0, :]
-        self.goal_states = self.trajectories[..., -1, :]
-        self.n_trajectories, self.n_support_points, self.state_dim = (
-            self.trajectories.shape
-        )
-
+    def load_data(self, normalizer_name="TrivialNormalizer") -> None:
+        super().load_data()
+        self.normalizer_name = normalizer_name
+        self.normalizer: NormalizerBase = NORMALIZERS[self.normalizer_name]()
         self.normalizer.fit(self.trajectories)
 
         self.trajectories_normalized = self.normalizer.normalize(self.trajectories)
-        self.start_states_normalized = self.normalizer.normalize(self.start_states)
-        self.goal_states_normalized = self.normalizer.normalize(self.goal_states)
+        self.start_pos_normalized = self.normalizer.normalize(self.start_pos)
+        self.goal_pos_normalized = self.normalizer.normalize(self.goal_pos)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         trajectory = self.trajectories_normalized[idx]
-        start_state = self.start_states_normalized[idx]
-        goal_state = self.goal_states_normalized[idx]
+        start_pos = self.start_pos_normalized[idx]
+        goal_pos = self.goal_pos_normalized[idx]
 
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
             trajectory = torch.flip(trajectory, dims=[0])
-            start_state, goal_state = goal_state, start_state
+            start_pos, goal_pos = goal_pos, start_pos
 
         data = {
             "trajectories_normalized": trajectory,
-            "start_states_normalized": start_state,
-            "goal_states_normalized": goal_state,
+            "start_pos_normalized": start_pos,
+            "goal_pos_normalized": goal_pos,
         }
 
         return data
 
 
 class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
-    def __init__(self, n_control_points: int, spline_degree: int, datasets_dir: str,
+    def __init__(
+        self,
+        datasets_dir: str,
         dataset_name: str,
         env_name: str,
-        normalizer_name: str,
+        robot_name: str,
         robot_margin: float,
         generating_robot_margin: float,
         n_support_points: int,
         duration: float,
+        n_control_points: int,
+        spline_degree: int,
         apply_augmentations: bool,
-        tensor_args: Dict[str, Any]
+        tensor_args: Dict[str, Any],
     ):
         super().__init__(
             datasets_dir=datasets_dir,
             dataset_name=dataset_name,
             env_name=env_name,
-            normalizer_name=normalizer_name,
+            robot_name=robot_name,
             robot_margin=robot_margin,
             generating_robot_margin=generating_robot_margin,
             n_support_points=n_support_points,
@@ -695,50 +632,49 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
             tensor_args=tensor_args,
         )
         self.n_control_points = n_control_points
+        self.real_n_control_points = n_control_points + 2 * (spline_degree - 1)
         self.spline_degree = spline_degree
         self.control_points: torch.Tensor = torch.empty(0)
         self.control_points_normalized: torch.Tensor = torch.empty(0)
-        self.start_states_normalized: torch.Tensor = torch.empty(0)
-        self.goal_states_normalized: torch.Tensor = torch.empty(0)
-        
-    def load_data(self) -> None:
-        self.trajectories = self._load_raw_trajectories()
+        self.start_pos_normalized: torch.Tensor = torch.empty(0)
+        self.goal_pos_normalized: torch.Tensor = torch.empty(0)
 
-        if self.trajectories.numel() == 0:
-            return
-            
-        self.n_trajectories, self.n_support_points, self.state_dim = (
-            self.trajectories.shape
-        )
-        self.start_states = self.trajectories[..., 0, :]
-        self.goal_states = self.trajectories[..., -1, :]
+    def load_data(self, normalizer_name="TrivialNormalizer") -> None:
+        super().load_data()
 
         print("Fitting B-Splines to trajectories...")
         self.control_points = fit_bsplines_to_trajectories(
             trajectories=self.trajectories,
             n_control_points=self.n_control_points,
-            degree=self.spline_degree
+            degree=self.spline_degree,
         )
-        
+
+        self.normalizer_name = normalizer_name
+        self.normalizer: NormalizerBase = NORMALIZERS[self.normalizer_name]()
         self.normalizer.fit(self.control_points)
 
         self.control_points_normalized = self.normalizer.normalize(self.control_points)
-        self.start_states_normalized = self.normalizer.normalize(self.start_states)
-        self.goal_states_normalized = self.normalizer.normalize(self.goal_states)
+        self.start_pos_normalized = self.normalizer.normalize(self.start_pos)
+        self.goal_pos_normalized = self.normalizer.normalize(self.goal_pos)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         control_points = self.control_points_normalized[idx]
-        start_state = self.start_states_normalized[idx]
-        goal_state = self.goal_states_normalized[idx]
-
+        start_pos = self.start_pos_normalized[idx]
+        goal_pos = self.goal_pos_normalized[idx]
+        control_points_augmented = torch.cat([
+            start_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
+            control_points,
+            goal_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),   
+        ], dim=-2)
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
-            control_points = torch.flip(control_points, dims=[0])
-            start_state, goal_state = goal_state, start_state
+            control_points_augmented = torch.flip(control_points_augmented, dims=[0])
+            start_pos, goal_pos = goal_pos, start_pos
 
         data = {
-            "trajectories_normalized": control_points, 
-            "start_states_normalized": start_state,
-            "goal_states_normalized": goal_state,
+            "trajectories_normalized": control_points_augmented,
+            "start_pos_normalized": start_pos,
+            "goal_pos_normalized": goal_pos,
+            "spline_degree": torch.tensor(self.spline_degree, dtype=torch.long),
         }
 
         return data

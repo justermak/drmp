@@ -2,10 +2,10 @@ import numpy as np
 import torch
 from scipy import stats
 
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
-def compute_path_length(trajectories: torch.Tensor, robot: Robot):
+def compute_path_length(trajectories: torch.Tensor, robot: RobotBase):
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
@@ -16,17 +16,16 @@ def compute_path_length(trajectories: torch.Tensor, robot: Robot):
     return path_length
 
 
-def compute_sharpness(trajectories: torch.Tensor, robot: Robot):
+def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase):
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
-    trajectories_pos = robot.get_position(trajectories)
-    trajectories_vel = torch.diff(trajectories_pos, dim=-2)
+    trajectories_vel = robot.get_velocity(trajectories, compute=True)
     sharpness = torch.linalg.norm(torch.diff(trajectories_vel, dim=-2), dim=-1).sum(-1)
     return sharpness
 
 
-def compute_waypoints_variance(trajectories: torch.Tensor, robot: Robot):
+def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase):
     assert trajectories.ndim == 3
     if trajectories.shape[0] < 3:
         return torch.tensor(0.0)

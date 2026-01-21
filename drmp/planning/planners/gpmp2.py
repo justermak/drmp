@@ -2,7 +2,6 @@ from typing import Any, Dict
 
 import torch
 
-from drmp.config import DEFAULT_TENSOR_ARGS
 from drmp.planning.costs.cost_functions import (
     Cost,
     CostCollision,
@@ -13,11 +12,11 @@ from drmp.planning.costs.cost_functions import (
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.world.environments import EnvBase
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 def build_gpmp2_cost_composite(
-    robot: Robot,
+    robot: RobotBase,
     env: EnvBase,
     n_support_points: int,
     start_pos: torch.Tensor,
@@ -80,7 +79,7 @@ def build_gpmp2_cost_composite(
 class GPMP2(ClassicalPlanner):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         env: EnvBase,
         n_dof: int,
         n_support_points: int,
@@ -159,6 +158,7 @@ class GPMP2(ClassicalPlanner):
 
     def optimize(self, opt_steps: int = 1, print_freq: int = 100, debug: bool = True):
         self.opt_steps = opt_steps
+        b, K = None, None
         with TimerCUDA() as t_opt:
             for opt_step in range(opt_steps):
                 b, K = self._step()
@@ -239,6 +239,8 @@ class GPMP2(ClassicalPlanner):
         return res
 
     def get_costs(self, errors: torch.Tensor, w_mat: torch.Tensor):
+        if errors is None or w_mat is None:
+            return None
         costs = errors.transpose(1, 2) @ w_mat.unsqueeze(0) @ errors
         return costs.reshape(
             self.n_trajectories,
@@ -246,9 +248,9 @@ class GPMP2(ClassicalPlanner):
 
     def print_info(self, step: int, t: float, costs: torch.Tensor):
         pad = len(str(self.opt_steps))
-        mean_cost = costs.mean().item()
-        min_cost = costs.min().item()
-        max_cost = costs.max().item()
+        mean_cost = costs.mean().item() if costs is not None else float('nan')
+        min_cost = costs.min().item() if costs is not None else float('nan')
+        max_cost = costs.max().item() if costs is not None else float('nan')
         print(
             f"Step: {step:>{pad}}/{self.opt_steps:>{pad}} "
             f"| Time: {t:.3f}s "

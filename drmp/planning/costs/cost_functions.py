@@ -8,13 +8,13 @@ from drmp.config import N_DIM
 from drmp.planning.costs.factors import FieldFactor, GPFactor, UnaryFactor
 from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.environments import EnvBase
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 class Cost(ABC):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_support_points: int,
         tensor_args: Dict[str, Any],
     ):
@@ -40,7 +40,7 @@ class Cost(ABC):
 class CostComposite(Cost):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_support_points: int,
         costs: List[Cost],
         tensor_args: Dict[str, Any],
@@ -97,7 +97,7 @@ class CostComposite(Cost):
 class CostCollision(Cost):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         env: EnvBase,
         n_support_points: int,
         sigma_collision: float,
@@ -183,7 +183,7 @@ class CostCollision(Cost):
 class CostGPTrajectory(Cost):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_support_points: int,
         sigma_gp: float,
         tensor_args: Dict[str, Any],
@@ -216,7 +216,7 @@ class CostGPTrajectory(Cost):
 class CostGP(Cost):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_support_points: int,
         start_state: torch.Tensor,
         sigma_start: float,
@@ -282,7 +282,7 @@ class CostGP(Cost):
 class CostGoalPrior(Cost):
     def __init__(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_support_points: int,
         goal_state: torch.Tensor,
         n_trajectories: int,
@@ -320,3 +320,21 @@ class CostGoalPrior(Cost):
         K = self.goal_prior.K
 
         return A, b, K
+    
+    
+class CostJointVelocity(Cost):
+    def __init__(
+        self,
+        robot: RobotBase,
+        n_support_points: int,
+        tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+
+    def eval(self, trajectories: torch.Tensor, **kwargs):
+        trajectories_vel = self.robot.get_velocity(trajectories, compute=True)
+        cost = 0.5 * torch.linalg.norm(trajectories_vel, dim=-1)
+        return cost.sum(dim=1)
+
+    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
+        return None, None, None

@@ -7,61 +7,17 @@ import torch
 import torch.nn as nn
 
 from drmp.models.temporal_unet import TemporalUNet
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 def get_models():
-    return {"GaussianDiffusion": GaussianDiffusion}
+    return {
+        "GaussianDiffusion": GaussianDiffusion,
+        "GaussianDiffusionSplines": GaussianDiffusionSplines,
+    }
 
 
-class PlanningModel(nn.Module, ABC):
-    def __init__(self):
-        super().__init__()
-
-    @abstractmethod
-    def build_context(
-        self, robot: Robot, input_dict: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
-        pass
-
-    @abstractmethod
-    def build_hard_conditions(
-        self, input_dict: Dict[str, torch.Tensor]
-    ) -> Dict[str, torch.Tensor]:
-        pass
-
-    @abstractmethod
-    def compute_loss(
-        self,
-        x: torch.Tensor,
-        context: torch.Tensor,
-        hard_conds: Dict[str, torch.Tensor],
-    ):
-        pass
-
-    @abstractmethod
-    def run_inference(
-        self,
-        context: torch.Tensor,
-        hard_conds: Dict[str, torch.Tensor],
-        n_samples: int = 1,
-        **kwargs,
-    ):
-        pass
-
-
-def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):
-    x = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
-    alphas_cumprod = (
-        torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
-    )
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    betas_clipped = torch.clamp(betas, min=a_min, max=a_max)
-    return betas_clipped
-
-
-class GaussianDiffusion(PlanningModel):
+class DiffusionModelBase(nn.Module, ABC):
     def __init__(
         self,
         n_support_points: int,
@@ -146,7 +102,29 @@ class GaussianDiffusion(PlanningModel):
         )
 
         self.loss_fn = nn.MSELoss()
-
+    
+    @abstractmethod
+    def build_hard_conditions(
+        self, input_dict: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        pass
+    
+    @abstractmethod
+    def apply_hard_conditioning(
+        self, x: torch.Tensor, hard_conds: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        pass
+    
+    def build_context(self, input_dict: Dict[str, torch.Tensor]):
+        context = torch.cat(
+            [
+                input_dict["start_pos_normalized"].view(-1, self.state_dim),
+                input_dict["goal_pos_normalized"].view(-1, self.state_dim),
+            ],
+            dim=-1,
+        )
+        return context
+    
     def extract(self, a, t, x_shape):
         out = a.gather(-1, t)
         return out.view(-1, *((1,) * (len(x_shape) - 1)))
@@ -195,11 +173,6 @@ class GaussianDiffusion(PlanningModel):
             x_start=x_recon, x_t=x, t=t
         )
         return model_mean, posterior_variance, posterior_log_variance
-
-    def apply_hard_conditioning(self, x, conditions):
-        x[:, 0, :] = conditions["start_states_normalized"].clone()
-        x[:, -1, :] = conditions["goal_states_normalized"].clone()
-        return x
 
     def guide_gradient_steps(
         self,
@@ -466,30 +439,7 @@ class GaussianDiffusion(PlanningModel):
         ).long()
         return self.p_losses(x, context=context, t=t, hard_conds=hard_conds)
 
-    def build_context(self, input_dict: Dict[str, torch.Tensor]):
-        context = torch.cat(
-            [
-                input_dict["start_states_normalized"].view(-1, self.state_dim)[
-                    :, : self.state_dim // 2
-                ],
-                input_dict["goal_states_normalized"].view(-1, self.state_dim)[
-                    :, : self.state_dim // 2
-                ],
-            ],
-            dim=-1,
-        )
-        return context
-
-    def build_hard_conditions(self, input_dict):
-        hard_conds = {
-            "start_states_normalized": input_dict["start_states_normalized"].view(
-                -1, self.state_dim
-            ),
-            "goal_states_normalized": input_dict["goal_states_normalized"].view(
-                -1, self.state_dim
-            ),
-        }
-        return hard_conds
+    
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         traj_normalized = input_dict["trajectories_normalized"]
@@ -499,3 +449,116 @@ class GaussianDiffusion(PlanningModel):
         loss_dict = {"diffusion_loss": loss}
 
         return loss_dict
+
+
+def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):
+    x = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
+    alphas_cumprod = (
+        torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    )
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    betas_clipped = torch.clamp(betas, min=a_min, max=a_max)
+    return betas_clipped
+
+
+class GaussianDiffusion(DiffusionModelBase):
+    def __init__(
+        self,
+        n_support_points: int,
+        state_dim: int,
+        unet_hidden_dim: int,
+        unet_dim_mults: tuple,
+        unet_kernel_size: int,
+        unet_resnet_block_groups: int,
+        unet_positional_encoding: str,
+        unet_positional_encoding_dim: int,
+        unet_attn_heads: int,
+        unet_attn_head_dim: int,
+        unet_context_dim: int,
+        n_diffusion_steps: int,
+        predict_epsilon: bool,
+    ):
+        super().__init__(
+            n_support_points,
+            state_dim,
+            unet_hidden_dim,
+            unet_dim_mults,
+            unet_kernel_size,
+            unet_resnet_block_groups,
+            unet_positional_encoding,
+            unet_positional_encoding_dim,
+            unet_attn_heads,
+            unet_attn_head_dim,
+            unet_context_dim,
+            n_diffusion_steps,
+            predict_epsilon,
+        )
+        
+    def build_hard_conditions(self, input_dict):
+        hard_conds = {
+            "start_pos_normalized": input_dict["start_pos_normalized"].view(
+                -1, self.state_dim
+            ),
+            "goal_pos_normalized": input_dict["goal_pos_normalized"].view(
+                -1, self.state_dim
+            ),
+        }
+        return hard_conds
+    
+    def apply_hard_conditioning(self, x, conditions):
+        x[:, 0, :] = conditions["start_pos_normalized"].clone()
+        x[:, -1, :] = conditions["goal_pos_normalized"].clone()
+        return x
+
+
+class GaussianDiffusionSplines(DiffusionModelBase):
+    def __init__(
+        self,
+        n_support_points: int,
+        state_dim: int,
+        unet_hidden_dim: int,
+        unet_dim_mults: tuple,
+        unet_kernel_size: int,
+        unet_resnet_block_groups: int,
+        unet_positional_encoding: str,
+        unet_positional_encoding_dim: int,
+        unet_attn_heads: int,
+        unet_attn_head_dim: int,
+        unet_context_dim: int,
+        n_diffusion_steps: int,
+        predict_epsilon: bool,
+    ):
+        super().__init__(
+            n_support_points,
+            state_dim,
+            unet_hidden_dim,
+            unet_dim_mults,
+            unet_kernel_size,
+            unet_resnet_block_groups,
+            unet_positional_encoding,
+            unet_positional_encoding_dim,
+            unet_attn_heads,
+            unet_attn_head_dim,
+            unet_context_dim,
+            n_diffusion_steps,
+            predict_epsilon,
+        )
+        
+    def build_hard_conditions(self, input_dict):
+        hard_conds = {
+            "start_pos_normalized": input_dict["start_pos_normalized"].view(
+                -1, self.state_dim
+            ),
+            "goal_pos_normalized": input_dict["goal_pos_normalized"].view(
+                -1, self.state_dim
+            ),
+            "spline_degree": input_dict["spline_degree"].item(),
+        }
+        return hard_conds
+    
+    def apply_hard_conditioning(self, x, conditions):
+        spline_degree = conditions["spline_degree"]
+        x[:, :spline_degree-1, :] = conditions["start_pos_normalized"].clone()
+        x[:, -spline_degree+1:, :] = conditions["goal_pos_normalized"].clone()
+        return x

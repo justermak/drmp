@@ -5,7 +5,7 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_TRAIN_ARGS
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
 from drmp.models.diffusion import get_models
 from drmp.train import train
 from drmp.utils.torch_utils import fix_random_seed
@@ -22,7 +22,6 @@ def run(args):
     print("-------- TRAINING STARTED --------")
     print(f"dataset: {args.dataset_name}")
     print(f"batch size: {args.batch_size}")
-    print(f"apply filtering: {args.apply_filtering}")
     print(f"apply augmentations: {args.apply_augmentations}")
     print(f"learning rate: {args.lr}")
     print(f"number of training steps: {args.num_train_steps}")
@@ -42,39 +41,46 @@ def run(args):
         "dataset_name": args.dataset_name,
         "apply_augmentations": args.apply_augmentations,
         "env_name": dataset_config["env_name"],
-        "normalizer_name": dataset_config["normalizer_name"],
+        "robot_name": dataset_config["robot_name"],
         "robot_margin": dataset_config["robot_margin"],
         "generating_robot_margin": dataset_config["generating_robot_margin"],
         "n_support_points": dataset_config["n_support_points"],
         "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
     }
+    
+    dataset = None
+    if args.use_splines:
+        dataset_init_config["n_control_points"] = args.n_control_points
+        dataset_init_config["spline_degree"] = args.spline_degree
+        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
+    else:
+        dataset = TrajectoryDatasetDense(**dataset_init_config)
+    dataset.load_data(normalizer_name=args.normalizer_name)
 
-    dataset = TrajectoryDataset(**dataset_init_config)
-    dataset.load_data()
-    
-    # Create filtering config if using filtered trajectories
-    filtering_config = None
-    if args.apply_filtering:
-        filtering_config = {
-            "filter_longest_trajectories": {"portion": args.filter_longest_portion},
-            "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion},
-        }
-        print("\nFiltering configuration:")
-        for filter_name, params in filtering_config.items():
-            print(f"  {filter_name}: {params}")
-    
+    filtering_config = {
+        "filter_collision": {} if args.filter_collision else None,
+        "filter_longest_trajectories": {"portion": args.filter_longest_portion}
+        if args.filter_longest_portion is not None
+        else None,
+        "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion}
+        if args.filter_sharpest_portion is not None
+        else None,
+    }
+    print("\nFiltering configuration:")
+    for filter_name, params in filtering_config.items():
+        print(f"{filter_name}: {params}")
+
     train_subset, train_dataloader, val_subset, val_dataloader = (
         dataset.load_train_val_split(
             batch_size=args.batch_size,
-            apply_filtering=args.apply_filtering,
             filtering_config=filtering_config,
         )
     )
 
     model = MODELS[args.diffusion_model_name](
-        state_dim=train_subset.dataset.state_dim,
-        n_support_points=train_subset.dataset.n_support_points,
+        state_dim=dataset.robot.n_dim,
+        n_support_points=dataset.n_support_points if not args.use_splines else dataset.real_n_control_points,
         unet_hidden_dim=args.hidden_dim,
         unet_dim_mults=eval(args.dim_mults),
         unet_kernel_size=args.kernel_size,
@@ -89,13 +95,12 @@ def run(args):
     ).to(device)
 
     # you can load a checkpoint here
-    
-    if args.apply_filtering and filtering_config:
-        checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        filtering_config_path = os.path.join(checkpoint_dir, "filtering_config.yaml")
-        save_config_to_yaml(filtering_config, filtering_config_path)
-        print(f"\nSaved filtering config to {filtering_config_path}")
+
+    checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    filtering_config_path = os.path.join(checkpoint_dir, "filtering_config.yaml")
+    save_config_to_yaml(filtering_config, filtering_config_path)
+    print(f"\nSaved filtering config to {filtering_config_path}")
 
     train(
         checkpoint_name=checkpoint_name,

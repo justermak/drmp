@@ -95,12 +95,10 @@ def run_inference_for_task(
     if not return_full_data:
         return stats
 
-    start_pos = robot.get_position(
-        dataset.normalizer.unnormalize(data_normalized["start_states_normalized"])
-    )
-    goal_pos = robot.get_position(
-        dataset.normalizer.unnormalize(data_normalized["goal_states_normalized"])
-    )
+    start_pos = dataset.normalizer.unnormalize(data_normalized["start_pos_normalized"])
+    
+    goal_pos = dataset.normalizer.unnormalize(data_normalized["goal_pos_normalized"])
+    
 
     full_data = {
         "start_pos": start_pos,
@@ -130,7 +128,7 @@ def run_inference_on_dataset(
         idx = np.random.choice(subset.indices)
         data_normalized = dataset[idx]
 
-        return_full_data = (i == 0)
+        return_full_data = i == 0
         task_results = run_inference_for_task(
             task_id=i,
             dataset=dataset,
@@ -139,7 +137,7 @@ def run_inference_on_dataset(
             model_wrapper=model_wrapper,
             return_full_data=return_full_data,
         )
-        
+
         if task_results is not None:
             if return_full_data:
                 statistics.append(task_results["stats"])
@@ -148,14 +146,18 @@ def run_inference_on_dataset(
                 statistics.append(task_results)
 
     result = {"statistics": statistics}
-    
+
     if full_data_sample is not None:
         result["start_pos_sample"] = full_data_sample["start_pos"]
         result["goal_pos_sample"] = full_data_sample["goal_pos"]
         result["trajectories_iters_sample"] = full_data_sample["trajectories_iters"]
         result["trajectories_final_sample"] = full_data_sample["trajectories_final"]
-        result["trajectories_final_collision_sample"] = full_data_sample["trajectories_final_collision"]
-        result["trajectories_final_free_sample"] = full_data_sample["trajectories_final_free"]
+        result["trajectories_final_collision_sample"] = full_data_sample[
+            "trajectories_final_collision"
+        ]
+        result["trajectories_final_free_sample"] = full_data_sample[
+            "trajectories_final_free"
+        ]
         result["best_traj_idx_sample"] = full_data_sample["best_traj_idx"]
         result["traj_final_best_sample"] = full_data_sample["traj_final_best"]
 
@@ -180,10 +182,14 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         r["sharpness"].mean().item() for r in statistics if r["sharpness"] is not None
     ]
     path_length = [
-        r["path_length"].mean().item() for r in statistics if r["path_length"] is not None
+        r["path_length"].mean().item()
+        for r in statistics
+        if r["path_length"] is not None
     ]
     waypoints_variance = [
-        r["waypoints_variance"] for r in statistics if r["waypoints_variance"] is not None
+        r["waypoints_variance"]
+        for r in statistics
+        if r["waypoints_variance"] is not None
     ]
 
     time_center, time_hw = bootstrap_confidence_interval(t)
@@ -282,7 +288,9 @@ def visualize_results(
     generate_animation: bool = True,
     name_prefix: str = "task0",
 ):
-    planner_visualizer = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=use_extra_objects)
+    planner_visualizer = Visualizer(
+        env=dataset.env, robot=dataset.robot, use_extra_objects=use_extra_objects
+    )
     start_pos = results["start_pos_sample"]
     goal_pos = results["goal_pos_sample"]
     trajectories_iters = results["trajectories_iters_sample"]
@@ -292,8 +300,8 @@ def visualize_results(
     planner_visualizer.render_scene(
         trajectories=trajectories_final,
         best_traj_idx=best_traj_idx,
-        start_state=start_pos,
-        goal_state=goal_pos,
+        start_pos=start_pos,
+        goal_pos=goal_pos,
         save_path=os.path.join(generation_dir, f"{name_prefix}-trajectories.png"),
     )
 
@@ -303,8 +311,8 @@ def visualize_results(
     planner_visualizer.animate_robot_motion(
         trajectories=trajectories_final,
         best_traj_idx=best_traj_idx,
-        start_state=start_pos,
-        goal_state=goal_pos,
+        start_pos=start_pos,
+        goal_pos=goal_pos,
         save_path=os.path.join(generation_dir, f"{name_prefix}-robot-motion.mp4"),
         n_frames=min(60, trajectories_final.shape[1]),
     )
@@ -313,8 +321,8 @@ def visualize_results(
         planner_visualizer.animate_optimization_iterations(
             trajectories=trajectories_iters,
             best_traj_idx=best_traj_idx,
-            start_state=start_pos,
-            goal_state=goal_pos,
+            start_pos=start_pos,
+            goal_pos=goal_pos,
             save_path=os.path.join(generation_dir, f"{name_prefix}-opt-iters.mp4"),
             n_frames=min(60, len(trajectories_iters)),
         )
@@ -343,15 +351,11 @@ def create_test_subset(
     test_dataset = copy(dataset)
     test_dataset.n_trajs = n_tasks
     test_dataset.trajs_normalized = torch.empty((n_tasks,), **tensor_args)
-    test_dataset.start_states = torch.cat(
-        [start_pos, torch.zeros_like(start_pos)], dim=-1
+    test_dataset.start_pos_normalized = test_dataset.normalizer.normalize(
+        start_pos
     )
-    test_dataset.goal_states = torch.cat([goal_pos, torch.zeros_like(goal_pos)], dim=-1)
-    test_dataset.start_states_normalized = test_dataset.normalizer.normalize(
-        test_dataset.start_states
-    )
-    test_dataset.goal_states_normalized = test_dataset.normalizer.normalize(
-        test_dataset.goal_states
+    test_dataset.goal_pos_normalized = test_dataset.normalizer.normalize(
+        goal_pos
     )
     return Subset(test_dataset, list(range(n_tasks)))
 
@@ -428,9 +432,11 @@ def run_inference(
             vis_results = results["test"]
         elif "val" in results and results["val"].get("start_pos_sample") is not None:
             vis_results = results["val"]
-        elif "train" in results and results["train"].get("start_pos_sample") is not None:
+        elif (
+            "train" in results and results["train"].get("start_pos_sample") is not None
+        ):
             vis_results = results["train"]
-        
+
         if vis_results is not None:
             visualize_results(
                 results=vis_results,

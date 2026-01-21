@@ -4,12 +4,11 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 
-from drmp.config import N_DIM
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.world.grid_map_sdf import GridMapSDF
 from drmp.world.primitives import MultiBoxField, MultiSphereField, ObjectField
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 def get_envs():
@@ -65,8 +64,8 @@ class EnvBase(ABC):
         self.obj_field_extra = obj_field_extra
 
         if grid_map_sdf_fixed is not None and grid_map_sdf_extra is not None:
-             self.grid_map_sdf_fixed = grid_map_sdf_fixed.to(**tensor_args)
-             self.grid_map_sdf_extra = grid_map_sdf_extra.to(**tensor_args)
+            self.grid_map_sdf_fixed = grid_map_sdf_fixed
+            self.grid_map_sdf_extra = grid_map_sdf_extra
         else:
             with TimerCUDA() as t:
                 self.grid_map_sdf_fixed = GridMapSDF(
@@ -81,7 +80,9 @@ class EnvBase(ABC):
                     self.obj_field_extra,
                     tensor_args=self.tensor_args,
                 )
-                print(f"Precomputing the SDF grid and gradients took: {t.elapsed:.3f} sec")
+                print(
+                    f"Precomputing the SDF grid and gradients took: {t.elapsed:.3f} sec"
+                )
 
         self.q_distribution = torch.distributions.uniform.Uniform(
             self.limits[0], self.limits[1]
@@ -92,7 +93,7 @@ class EnvBase(ABC):
 
     def get_collision_mask(
         self,
-        robot: Robot,
+        robot: RobotBase,
         qs: torch.Tensor,
         on_fixed: bool = True,
         on_extra: bool = False,
@@ -117,7 +118,7 @@ class EnvBase(ABC):
     def compute_cost(
         self,
         qs: torch.Tensor,
-        robot: Robot,
+        robot: RobotBase,
         on_fixed: bool = True,
         on_extra: bool = False,
     ) -> torch.Tensor:
@@ -136,13 +137,13 @@ class EnvBase(ABC):
 
     def random_collision_free_q(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_samples: int,
         use_extra_objects: bool = False,
         batch_size=100000,
         max_tries=1000,
     ) -> torch.Tensor:
-        samples = torch.zeros((n_samples, N_DIM), **self.tensor_args)
+        samples = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
         cur = 0
         for i in range(max_tries):
             qs = self.random_q((batch_size,))
@@ -160,15 +161,15 @@ class EnvBase(ABC):
 
     def random_collision_free_start_goal(
         self,
-        robot: Robot,
+        robot: RobotBase,
         n_samples: int,
         threshold_start_goal_pos: float,
         use_extra_objects: bool = False,
         batch_size: int = 100000,
         max_tries: int = 1000,
     ) -> Tuple[torch.Tensor, torch.Tensor, bool]:
-        samples_start = torch.zeros((n_samples, N_DIM), **self.tensor_args)
-        samples_goal = torch.zeros((n_samples, N_DIM), **self.tensor_args)
+        samples_start = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
+        samples_goal = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
         cur = 0
         for _ in range(max_tries):
             qs, success = self.random_collision_free_q(
@@ -198,7 +199,7 @@ class EnvBase(ABC):
     def get_trajectories_collision_and_free(
         self,
         trajectories: torch.Tensor,
-        robot: Robot,
+        robot: RobotBase,
         n_interpolate: int = 5,
         on_fixed: bool = True,
         on_extra: bool = False,

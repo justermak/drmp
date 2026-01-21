@@ -2,7 +2,7 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_DATA_GENERATION_ARGS
-from drmp.datasets.dataset import TrajectoryDataset
+from drmp.datasets.dataset import TrajectoryDatasetDense
 from drmp.utils.torch_utils import fix_random_seed
 
 
@@ -16,11 +16,11 @@ def run(args):
     print(f"n_tasks: {args.n_tasks}")
     print(f"n_trajectories per task: {args.n_trajectories}")
 
-    dataset = TrajectoryDataset(
+    dataset = TrajectoryDatasetDense(
         datasets_dir=args.datasets_dir,
         dataset_name=args.dataset_name,
         env_name=args.env_name,
-        normalizer_name=args.normalizer_name,
+        robot_name=args.robot_name,
         robot_margin=args.robot_margin,
         generating_robot_margin=args.generating_robot_margin,
         n_support_points=args.n_support_points,

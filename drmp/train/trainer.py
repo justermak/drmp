@@ -3,22 +3,23 @@ import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetBase
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
-from drmp.models.diffusion import PlanningModel
-from drmp.train.logs import log
-from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.yaml import save_config_to_yaml
 from drmp.inference.guides import GuideTrajectories
+from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
 )
+from drmp.train.logs import log
+from drmp.utils.torch_timer import TimerCUDA
+from drmp.utils.yaml import save_config_to_yaml
 
 
 class EMA:
@@ -37,7 +38,7 @@ class EMA:
 
 
 def train_step(
-    model: PlanningModel,
+    model: DiffusionModelBase,
     train_batch_dict: Dict[str, Any],
     optimizer: torch.optim.Optimizer,
     scaler: torch.amp.GradScaler,
@@ -68,7 +69,7 @@ def train_step(
 
 
 def val_step(
-    model: PlanningModel,
+    model: DiffusionModelBase,
     val_dataloader: DataLoader,
 ) -> Tuple[float, Dict[str, float]]:
     val_losses = defaultdict(list)
@@ -91,7 +92,7 @@ def val_step(
 
 
 def save_model_to_disk(
-    model: Optional[PlanningModel],
+    model: DiffusionModelBase,
     epoch: int,
     step: int,
     checkpoint_dir: Optional[str] = None,
@@ -133,9 +134,9 @@ def save_losses_to_disk(
 
 
 def end_training(
-    model: PlanningModel,
-    ema_model: Optional[PlanningModel],
-    ema: Optional[EMA],
+    model: DiffusionModelBase,
+    ema_model: DiffusionModelBase,
+    ema: EMA,
     epoch: int,
     step: int,
     ema_warmup: int,
@@ -172,7 +173,7 @@ def end_training(
 
 
 def train(
-    model: PlanningModel,
+    model: DiffusionModelBase,
     train_dataloader: DataLoader,
     train_subset: Subset,
     val_dataloader: DataLoader,
@@ -224,7 +225,8 @@ def train(
         ema = EMA(beta=ema_decay)
         ema_model = copy.deepcopy(model)
 
-    dataset = train_subset.dataset
+    dataset: TrajectoryDatasetBase = train_subset.dataset
+    
     collision_costs = [
         CostCollision(
             robot=dataset.robot,
@@ -235,7 +237,7 @@ def train(
             tensor_args=tensor_args,
         )
     ]
-    
+
     collision_costs_extra = [
         CostCollision(
             robot=dataset.robot,
@@ -246,7 +248,7 @@ def train(
             tensor_args=tensor_args,
         )
     ]
-    
+
     sharpness_costs = [
         CostGPTrajectory(
             robot=dataset.robot,
@@ -255,25 +257,25 @@ def train(
             tensor_args=tensor_args,
         )
     ]
-    
+
     costs = collision_costs + sharpness_costs
-    
+
     costs_extra = collision_costs_extra + sharpness_costs
-    
+
     cost = CostComposite(
         robot=dataset.robot,
         n_support_points=dataset.n_support_points,
         costs=costs,
         tensor_args=tensor_args,
     )
-    
+
     cost_extra = CostComposite(
         robot=dataset.robot,
         n_support_points=dataset.n_support_points,
         costs=costs_extra,
         tensor_args=tensor_args,
     )
-    
+
     guide = GuideTrajectories(
         dataset=dataset,
         cost=cost,
@@ -281,7 +283,7 @@ def train(
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
-    
+
     guide_extra = GuideTrajectories(
         dataset=dataset,
         cost=cost_extra,
@@ -289,7 +291,7 @@ def train(
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
-    
+
     config = {
         "checkpoints_dir": checkpoints_dir,
         "checkpoint_name": checkpoint_name,
@@ -297,8 +299,9 @@ def train(
         "lr": lr,
         "batch_size": train_dataloader.batch_size,
         "model_name": model.__class__.__name__,
-        "state_dim": train_subset.dataset.state_dim,
-        "n_support_points": train_subset.dataset.n_support_points,
+        "state_dim": dataset.robot.n_dim,
+        "n_support_points": dataset.n_support_points,
+        "use_splines": isinstance(dataset, TrajectoryDatasetBSpline),
         "unet_hidden_dim": model.unet_hidden_dim,
         "unet_dim_mults": str(model.unet_dim_mults),
         "unet_kernel_size": model.unet_kernel_size,
@@ -328,6 +331,12 @@ def train(
         "guide_start_guide_steps_fraction": guide_start_guide_steps_fraction,
         "guide_n_guide_steps": guide_n_guide_steps,
     }
+    
+    if isinstance(dataset, TrajectoryDatasetBSpline):
+        config["n_control_points"] = dataset.n_control_points
+        config["spline_degree"] = dataset.spline_degree
+        config["real_n_control_points"] = dataset.real_n_control_points
+    
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"

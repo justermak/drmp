@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import torch
 
 
-class Normalizer(ABC):
+class NormalizerBase(ABC):
     def __init__(self, eps: float = 1e-8):
         self.eps = eps
 
@@ -20,7 +20,7 @@ class Normalizer(ABC):
         pass
 
 
-class LimitsNormalizer(Normalizer):
+class LimitsNormalizer(NormalizerBase):
     def fit(self, X: torch.Tensor) -> None:
         self.X = X
         if X.ndim > 2:
@@ -49,7 +49,7 @@ class LimitsNormalizer(Normalizer):
         return x
 
 
-class TrivialNormalizer(Normalizer):
+class TrivialNormalizer(NormalizerBase):
     def fit(self, X: torch.Tensor) -> None:
         pass
 
@@ -60,7 +60,7 @@ class TrivialNormalizer(Normalizer):
         return x
 
 
-class GaussianNormalizer(Normalizer):
+class GaussianNormalizer(NormalizerBase):
     def fit(self, X: torch.Tensor) -> None:
         self.X = X
         if X.ndim > 2:

@@ -9,7 +9,7 @@ from matplotlib.patches import BoxStyle, FancyBboxPatch
 
 from drmp.world.environments import EnvBase
 from drmp.world.primitives import MultiBoxField, MultiSphereField
-from drmp.world.robot import Robot
+from drmp.world.robot import RobotBase
 
 
 class Visualizer:
@@ -31,15 +31,13 @@ class Visualizer:
     TRAJECTORY_POINT_SIZE = 4
 
     def __init__(
-        self, env: EnvBase, robot: Robot, use_extra_objects: bool = True
+        self, env: EnvBase, robot: RobotBase, use_extra_objects: bool = True
     ) -> None:
-        self.env: EnvBase = env
-        self.robot: Robot = robot
+        self.env = env
+        self.robot = robot
         self.use_extra_objects = use_extra_objects
 
-    def _render_environment(
-        self, ax: plt.Axes, use_extra_objects: bool = True
-    ) -> None:
+    def _render_environment(self, ax: plt.Axes, use_extra_objects: bool = True) -> None:
         for field in self.env.obj_field_fixed.fields:
             self._render_primitive_field(ax, field, color=self.COLORS["fixed_obstacle"])
 
@@ -89,12 +87,12 @@ class Visualizer:
                 )
                 ax.add_patch(box)
 
-    def _render_start_goal_states(
+    def _render_start_goal_pos(
         self, ax: plt.Axes, start_pos: torch.Tensor, goal_pos: torch.Tensor
     ) -> None:
         start_pos_np = start_pos.cpu().numpy()
         goal_pos_np = goal_pos.cpu().numpy()
-        
+
         circle = plt.Circle(
             start_pos_np, self.START_GOAL_RADIUS, color=self.COLORS["start"], zorder=100
         )
@@ -105,7 +103,7 @@ class Visualizer:
         )
         ax.add_patch(circle)
 
-    def _compute_robot_state_colors(
+    def _compute_robot_pos_colors(
         self,
         collision_mask: torch.Tensor,
         best_traj_idx: int = None,
@@ -139,7 +137,7 @@ class Visualizer:
         ]
         return colors
 
-    def _render_robot_states(
+    def _render_robot_pos(
         self,
         ax: plt.Axes,
         states: torch.Tensor,
@@ -175,8 +173,8 @@ class Visualizer:
         fig: Optional[plt.Figure] = None,
         ax: Optional[plt.Axes] = None,
         best_traj_idx: Optional[int] = None,
-        start_state: Optional[torch.Tensor] = None,
-        goal_state: Optional[torch.Tensor] = None,
+        start_pos: Optional[torch.Tensor] = None,
+        goal_pos: Optional[torch.Tensor] = None,
         points_collision_mask: Optional[torch.Tensor] = None,
         save_path: Optional[str] = "trajectories_figure.png",
     ):
@@ -198,16 +196,16 @@ class Visualizer:
         traj_colors = self._compute_trajectory_colors(
             trajectories_collision_mask, best_traj_idx
         )
-        robot_state_colors = self._compute_robot_state_colors(
+        robot_pos_colors = self._compute_robot_pos_colors(
             points_collision_mask, best_traj_idx
         )
 
         self._render_environment(ax, use_extra_objects=self.use_extra_objects)
         self._render_trajectories(ax, trajectories, traj_colors)
-        self._render_robot_states(ax, trajectories, robot_state_colors)
+        self._render_robot_pos(ax, trajectories, robot_pos_colors)
 
-        if start_state is not None and goal_state is not None:
-            self._render_start_goal_states(ax, start_state, goal_state)
+        if start_pos is not None and goal_pos is not None:
+            self._render_start_goal_pos(ax, start_pos, goal_pos)
 
         if save_path is not None:
             print("Saving figure...")
@@ -221,8 +219,8 @@ class Visualizer:
         self,
         trajectories: torch.Tensor,
         best_traj_idx: Optional[int] = None,
-        start_state: Optional[torch.Tensor] = None,
-        goal_state: Optional[torch.Tensor] = None,
+        start_pos: Optional[torch.Tensor] = None,
+        goal_pos: Optional[torch.Tensor] = None,
         n_frames: int = 60,
         anim_time: int = 5,
         save_path: str = "robot_motion_animation.mp4",
@@ -245,16 +243,16 @@ class Visualizer:
                 ax=ax,
                 trajectories=trajectories,
                 best_traj_idx=best_traj_idx,
-                start_state=start_state,
-                goal_state=goal_state,
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 points_collision_mask=points_collision_mask,
                 save_path=None,
             )
 
-            moving_colors = self._compute_robot_state_colors(
+            moving_colors = self._compute_robot_pos_colors(
                 points_collision_mask[:, [idx]], moving=True
             )
-            self._render_robot_states(
+            self._render_robot_pos(
                 ax, trajectories[:, [idx], :], moving_colors, moving=True, zorder=20
             )
 
@@ -264,8 +262,8 @@ class Visualizer:
         self,
         trajectories: torch.Tensor,
         best_traj_idx: Optional[int] = None,
-        start_state: Optional[torch.Tensor] = None,
-        goal_state: Optional[torch.Tensor] = None,
+        start_pos: Optional[torch.Tensor] = None,
+        goal_pos: Optional[torch.Tensor] = None,
         n_frames: int = 60,
         anim_time: int = 5,
         save_path: str = "trajectories_optimization_animation.mp4",
@@ -292,13 +290,13 @@ class Visualizer:
                 ax=ax,
                 trajectories=trajectories[idx],
                 best_traj_idx=best_traj_idx if frame_idx == n_frames - 1 else None,
-                start_state=start_state,
-                goal_state=goal_state,
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 points_collision_mask=points_collision_mask[idx],
                 save_path=None,
             )
 
-            self._render_start_goal_states(ax, start_state, goal_state)
+            self._render_start_goal_pos(ax, start_pos, goal_pos)
 
         self._save_animation(fig, update_frame, n_frames, anim_time, save_path)
 

@@ -5,7 +5,7 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
-from drmp.datasets.dataset import TrajectoryDatasetDense, TrajectoryDatasetBSpline
+from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
 from drmp.inference.runner import create_test_subset, run_inference
 from drmp.inference.runner_config import (
     DiffusionRunnerConfig,
@@ -38,17 +38,12 @@ def run(args):
     dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
     dataset_config_path = os.path.join(dataset_dir, "config.yaml")
     dataset_config = load_config_from_yaml(dataset_config_path)
-    normalizer_name = (
-        "TrivialNormalizer"
-        if args.algorithm == "mpd"
-        else dataset_config["normalizer_name"]
-    )
 
     dataset_init_config = {
         "datasets_dir": args.datasets_dir,
         "dataset_name": args.dataset_name,
         "env_name": dataset_config["env_name"],
-        "normalizer_name": normalizer_name,
+        "robot_name": dataset_config["robot_name"],
         "robot_margin": dataset_config["robot_margin"],
         "generating_robot_margin": dataset_config["generating_robot_margin"],
         "n_support_points": dataset_config["n_support_points"],
@@ -58,13 +53,12 @@ def run(args):
     }
 
     if args.algorithm == "mpd-splines":
-         dataset = TrajectoryDatasetBSpline(
-             n_control_points=args.mpd_splines_n_control_points,
-             spline_degree=args.mpd_splines_spline_degree,
-             **dataset_init_config
-         )
+        dataset_init_config["n_control_points"] = args.mpd_splines_n_control_points
+        dataset_init_config["spline_degree"] = args.mpd_splines_spline_degree
+        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
     else:
         dataset = TrajectoryDatasetDense(**dataset_init_config)
+
     dataset.load_data()
     train_subset, _, val_subset, _ = dataset.load_train_val_split()
 
@@ -104,6 +98,16 @@ def run(args):
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
         model_config_path = os.path.join(checkpoint_dir, "config.yaml")
         model_config = load_config_from_yaml(model_config_path)
+
+        normalizer_name = model_config.get("normalizer_name", "TrivialNormalizer")
+        use_splines = model_config.get("use_splines", False)
+        if use_splines:
+            dataset_init_config["n_control_points"] = model_config["n_control_points"]
+            dataset_init_config["spline_degree"] = model_config["spline_degree"]
+            dataset = TrajectoryDatasetBSpline(**dataset_init_config)
+        else:
+            dataset = TrajectoryDatasetDense(**dataset_init_config)
+        dataset.load_data(normalizer_name=normalizer_name)
 
         model = MODELS[model_config["model_name"]](
             state_dim=model_config["state_dim"],
@@ -156,7 +160,7 @@ def run(args):
         )
 
         print(f"Loading MPD-Splines model from: {checkpoint_path}")
-                 
+
         if os.path.exists(checkpoint_path):
             model = torch.load(checkpoint_path, map_location=device, weights_only=False)
         else:
@@ -175,6 +179,11 @@ def run(args):
             ddim_sampling_timesteps=args.mpd_splines_ddim_sampling_timesteps,
             guide_lr=args.mpd_splines_guide_lr,
             scale_grad_prior=args.mpd_splines_scale_grad_prior,
+            sigma_collision=args.mpd_splines_sigma_collision,
+            sigma_gp=args.mpd_splines_sigma_gp,
+            do_clip_grad=args.mpd_splines_do_clip_grad,
+            max_grad_norm=args.mpd_splines_max_grad_norm,
+            n_interpolate=args.mpd_splines_n_interpolate,
             use_extra_objects=args.use_extra_objects,
         )
 

@@ -3,9 +3,9 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from drmp.datasets.dataset import TrajectoryDatasetDense, TrajectoryDatasetBSpline
+from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
 from drmp.inference.guides import GuideTrajectories
-from drmp.models.diffusion import PlanningModel
+from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
     CostCollision,
     CostComposite,
@@ -15,7 +15,10 @@ from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory_utils import create_straight_line_trajectory, get_trajectories_from_bsplines
+from drmp.utils.trajectory_utils import (
+    create_straight_line_trajectory,
+    get_trajectories_from_bsplines,
+)
 
 
 class BaseRunnerModelWrapper(ABC):
@@ -39,7 +42,7 @@ class BaseRunnerModelWrapper(ABC):
 class DiffusionModelWrapper(BaseRunnerModelWrapper):
     def __init__(
         self,
-        model: PlanningModel,
+        model: DiffusionModelBase,
         guide: GuideTrajectories,
         start_guide_steps_fraction: float,
         n_guide_steps: int,
@@ -86,6 +89,7 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
             "ddim": self.ddim,
         }
 
+
 class MPDModelWrapper(BaseRunnerModelWrapper):
     def __init__(
         self,
@@ -110,8 +114,8 @@ class MPDModelWrapper(BaseRunnerModelWrapper):
         n_samples: int,
     ):
         hard_conds = {
-            0: data_normalized["start_states_normalized"],
-            dataset.n_support_points - 1: data_normalized["goal_states_normalized"],
+            0: torch.cat([data_normalized["start_pos_normalized"], torch.zeros_like(data_normalized["start_pos_normalized"])], dim=-1),
+            dataset.n_support_points - 1: torch.cat([data_normalized["goal_pos_normalized"], torch.zeros_like(data_normalized["goal_pos_normalized"])], dim=-1),
         }
 
         trajectories_iters_normalized = self.model.run_inference(
@@ -170,45 +174,50 @@ class MPDSplinesModelWrapper(BaseRunnerModelWrapper):
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
-        start = dataset.robot.get_position(data_normalized["start_states_normalized"])
-        goal = dataset.robot.get_position(data_normalized["goal_states_normalized"])
-        
+        start = data_normalized["start_pos_normalized"]
+        goal = data_normalized["goal_pos_normalized"]
+
         horizon = dataset.n_control_points
-        
+
         context = {
             "qs_normalized": torch.cat((start, goal), dim=-1),
         }
-        
+
         hard_conds = {
             0: start,
             1: start,
             horizon - 2: goal,
             horizon - 1: goal,
         }
-        
-        t_start_guide = int(self.start_guide_steps_fraction * self.ddim_sampling_timesteps)
-        
+
+        t_start_guide = int(
+            self.start_guide_steps_fraction * self.ddim_sampling_timesteps
+        )
+
         control_points_iters = self.model.run_inference(
-                    guide=self.guide,
-                    context_d=context,
-                    hard_conds=hard_conds,
-                    n_samples=n_samples,
-                    horizon=horizon,
-                    return_chain=True,
-                    return_chain_x_recon=False,
-                    results_ns=None,
-                    ddim_scale_grad_prior=self.scale_grad_prior,
-                    ddim_sampling_timesteps=self.ddim_sampling_timesteps,
-                    guide_lr=self.guide_lr,
-                    n_guide_steps=self.n_guide_steps,
-                    t_start_guide=t_start_guide,
-                    debug=False,
-                )
-        
-        trajectories_iters = get_trajectories_from_bsplines(control_points=control_points_iters, n_support_points=dataset.n_support_points, degree=dataset.spline_degree)
-        
+            guide=self.guide,
+            context_d=context,
+            hard_conds=hard_conds,
+            n_samples=n_samples,
+            horizon=horizon,
+            return_chain=True,
+            return_chain_x_recon=False,
+            results_ns=None,
+            ddim_scale_grad_prior=self.scale_grad_prior,
+            ddim_sampling_timesteps=self.ddim_sampling_timesteps,
+            guide_lr=self.guide_lr,
+            n_guide_steps=self.n_guide_steps,
+            t_start_guide=t_start_guide,
+            debug=False,
+        )
+
+        trajectories_iters = get_trajectories_from_bsplines(
+            control_points=control_points_iters,
+            n_support_points=dataset.n_support_points,
+            degree=dataset.spline_degree,
+        )
+
         return trajectories_iters, trajectories_iters[-1]
-        
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -241,16 +250,13 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
-        start_states_normalized = data_normalized["start_states_normalized"]
-        goal_states_normalized = data_normalized["goal_states_normalized"]
+        start_pos_normalized = data_normalized["start_pos_normalized"]
+        goal_pos_normalized = data_normalized["goal_pos_normalized"]
 
-        start_states = dataset.normalizer.unnormalize(start_states_normalized)
-        goal_states = dataset.normalizer.unnormalize(goal_states_normalized)
+        start_pos = dataset.normalizer.unnormalize(start_pos_normalized)
+        goal_pos = dataset.normalizer.unnormalize(goal_pos_normalized)
 
-        start_pos = dataset.robot.get_position(start_states)
-        goal_pos = dataset.robot.get_position(goal_states)
-
-        qs = torch.cat((start_states.unsqueeze(0), goal_states.unsqueeze(0)), dim=0)
+        qs = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
         collision_mask = dataset.env.get_collision_mask(
             robot=self.planner.robot, qs=qs, on_extra=self.use_extra_objects
         )
@@ -322,7 +328,7 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
 class BaseRunnerConfig(ABC):
     def __init__(self, use_extra_objects: bool):
         self.use_extra_objects = use_extra_objects
-    
+
     @abstractmethod
     def prepare(
         self,
@@ -340,7 +346,7 @@ class BaseRunnerConfig(ABC):
 class DiffusionRunnerConfig(BaseRunnerConfig):
     def __init__(
         self,
-        model: PlanningModel,
+        model: DiffusionModelBase,
         use_extra_objects: bool,
         sigma_collision: float,
         sigma_gp: float,
@@ -532,6 +538,11 @@ class MPDSplinesRunnerConfig(BaseRunnerConfig):
         ddim: bool,
         guide_lr: float,
         scale_grad_prior: float,
+        sigma_collision: float,
+        sigma_gp: float,
+        do_clip_grad: bool,
+        max_grad_norm: float,
+        n_interpolate: int,
         ddim_sampling_timesteps: int,
         use_extra_objects: bool,
     ):
@@ -542,6 +553,11 @@ class MPDSplinesRunnerConfig(BaseRunnerConfig):
         self.ddim = ddim
         self.guide_lr = guide_lr
         self.scale_grad_prior = scale_grad_prior
+        self.sigma_collision = sigma_collision
+        self.sigma_gp = sigma_gp
+        self.do_clip_grad = do_clip_grad
+        self.max_grad_norm = max_grad_norm
+        self.n_interpolate = n_interpolate
         self.ddim_sampling_timesteps = ddim_sampling_timesteps
 
     def prepare(
@@ -550,9 +566,45 @@ class MPDSplinesRunnerConfig(BaseRunnerConfig):
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> MPDSplinesModelWrapper:
-        
         guide = None
-        
+        if self.n_guide_steps > 0:
+            collision_costs = [
+                CostCollision(
+                    robot=dataset.robot,
+                    env=dataset.env,
+                    n_support_points=dataset.n_support_points,
+                    sigma_collision=self.sigma_collision,
+                    use_extra_objects=self.use_extra_objects,
+                    tensor_args=tensor_args,
+                )
+            ]
+
+            sharpness_costs = [
+                CostGPTrajectory(
+                    robot=dataset.robot,
+                    n_support_points=dataset.n_support_points,
+                    sigma_gp=self.sigma_gp,
+                    tensor_args=tensor_args,
+                )
+            ]
+
+            costs = collision_costs + sharpness_costs
+
+            cost = CostComposite(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                costs=costs,
+                tensor_args=tensor_args,
+            )
+
+            guide = GuideTrajectories(
+                dataset=dataset,
+                cost=cost,
+                do_clip_grad=self.do_clip_grad,
+                max_grad_norm=self.max_grad_norm,
+                n_interpolate=self.n_interpolate,
+            )
+
         return MPDSplinesModelWrapper(
             model=self.model,
             start_guide_steps_fraction=self.start_guide_steps_fraction,
@@ -562,17 +614,23 @@ class MPDSplinesRunnerConfig(BaseRunnerConfig):
             use_extra_objects=self.use_extra_objects,
             guide_lr=self.guide_lr,
             scale_grad_prior=self.scale_grad_prior,
-            ddim_sampling_timesteps=self.ddim_sampling_timesteps
+            ddim_sampling_timesteps=self.ddim_sampling_timesteps,
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algo": "mpd_splines",
             "start_guide_steps_fraction": self.start_guide_steps_fraction,
             "n_guide_steps": self.n_guide_steps,
             "ddim": self.ddim,
+            "guide_lr": self.guide_lr,
+            "scale_grad_prior": self.scale_grad_prior,
+            "sigma_collision": self.sigma_collision,
+            "sigma_gp": self.sigma_gp,
+            "do_clip_grad": self.do_clip_grad,
+            "max_grad_norm": self.max_grad_norm,
+            "n_interpolate": self.n_interpolate,
+            "ddim_sampling_timesteps": self.ddim_sampling_timesteps,
         }
-
 
 
 class RRTConnectRunnerConfig(BaseRunnerConfig):

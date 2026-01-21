@@ -4,29 +4,28 @@ Adapted from https://github.com/jannerm/diffuser
 
 import abc
 import time
+from abc import ABC
 from collections import namedtuple
 from copy import copy
-from functools import partial
 
 import einops
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from abc import ABC
-
 from torch.nn import DataParallel
 
-from mpd.models.diffusion_models.helpers import cosine_beta_schedule, Losses, exponential_beta_schedule
+from mpd.models.diffusion_models.helpers import (
+    Losses,
+    cosine_beta_schedule,
+    exponential_beta_schedule,
+)
 from mpd.models.diffusion_models.sample_functions import (
+    apply_hard_conditioning,
+    ddpm_sample_fn,
     extract,
     guide_gradient_steps,
-    ddpm_sample_fn,
-    apply_hard_conditioning,
-    ddim_create_time_pairs,
 )
-from torch_robotics.torch_utils.torch_timer import TimerCUDA
-from torch_robotics.torch_utils.torch_utils import to_numpy, to_torch, clip_grad_by_norm, clip_grad_by_value
 
 
 def make_timesteps(batch_size, i, device):
@@ -34,20 +33,27 @@ def make_timesteps(batch_size, i, device):
     return t
 
 
-class MyDataParallel(nn.DataParallel):
-    def __getattr__(self, name):
-        try:
-            return super().__getattr__(name)
-        except AttributeError:
-            return getattr(self.module, name)
+def build_context(model, dataset, input_dict):
+    # input_dict is already normalized
+    context = None
+    if model.context_model is not None:
+        context = dict()
+        # (normalized) features of variable environments
+        if dataset.variable_environment:
+            env_normalized = input_dict[f"{dataset.field_key_env}_normalized"]
+            context["env"] = env_normalized
+
+        # tasks
+        task_normalized = input_dict[f"{dataset.field_key_task}_normalized"]
+        context["tasks"] = task_normalized
+    return context
 
 
 class GaussianDiffusionModel(nn.Module, ABC):
-
     def __init__(
         self,
-        denoise_fn=None,
-        variance_schedule="cosine",
+        model=None,
+        variance_schedule="exponential",
         n_diffusion_steps=100,
         clip_denoised=True,
         predict_epsilon=False,
@@ -57,7 +63,7 @@ class GaussianDiffusionModel(nn.Module, ABC):
     ):
         super().__init__()
 
-        self.model = MyDataParallel(denoise_fn)
+        self.model = model
 
         self.context_model = context_model
 
@@ -66,9 +72,13 @@ class GaussianDiffusionModel(nn.Module, ABC):
         self.state_dim = self.model.state_dim
 
         if variance_schedule == "cosine":
-            betas = cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999)
+            betas = cosine_beta_schedule(
+                n_diffusion_steps, s=0.008, a_min=0, a_max=0.999
+            )
         elif variance_schedule == "exponential":
-            betas = exponential_beta_schedule(n_diffusion_steps, beta_start=1e-4, beta_end=1.0)
+            betas = exponential_beta_schedule(
+                n_diffusion_steps, beta_start=1e-4, beta_end=1.0
+            )
         else:
             raise NotImplementedError
 
@@ -85,21 +95,38 @@ class GaussianDiffusionModel(nn.Module, ABC):
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
-        self.register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod))
-        self.register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
-        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
-        self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
+        self.register_buffer(
+            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod)
+        )
+        self.register_buffer(
+            "log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod)
+        )
+        self.register_buffer(
+            "sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod)
+        )
+        self.register_buffer(
+            "sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1)
+        )
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
-        posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
         self.register_buffer("posterior_variance", posterior_variance)
 
         ## log calculation clipped because the posterior variance
         ## is 0 at the beginning of the diffusion chain
-        self.register_buffer("posterior_log_variance_clipped", torch.log(torch.clamp(posterior_variance, min=1e-20)))
-        self.register_buffer("posterior_mean_coef1", betas * np.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod))
         self.register_buffer(
-            "posterior_mean_coef2", (1.0 - alphas_cumprod_prev) * np.sqrt(alphas) / (1.0 - alphas_cumprod)
+            "posterior_log_variance_clipped",
+            torch.log(torch.clamp(posterior_variance, min=1e-20)),
+        )
+        self.register_buffer(
+            "posterior_mean_coef1",
+            betas * np.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod),
+        )
+        self.register_buffer(
+            "posterior_mean_coef2",
+            (1.0 - alphas_cumprod_prev) * np.sqrt(alphas) / (1.0 - alphas_cumprod),
         )
 
         ## get loss coefficients and initialize objective
@@ -114,9 +141,9 @@ class GaussianDiffusionModel(nn.Module, ABC):
         if self.predict_epsilon:
             return x0
         else:
-            return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0) / extract(
-                self.sqrt_recipm1_alphas_cumprod, t, x_t.shape
-            )
+            return (
+                extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
+            ) / extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
 
     def predict_start_from_noise(self, x_t, t, noise):
         """
@@ -131,303 +158,216 @@ class GaussianDiffusionModel(nn.Module, ABC):
         else:
             return noise
 
-    def predict_x_recon(self, x_t, t, context_d):
-        context_emb = None
-        if self.context_model is not None:
-            context_emb = self.context_model(**context_d)
-
-        x_recon = self.predict_start_from_noise(x_t, t=t, noise=self.model(x_t, t, context_emb))
-
-        if self.clip_denoised:
-            x_recon.clamp_(-1.0, 1.0)
-        else:
-            assert RuntimeError()
-        return x_recon
-
     def q_posterior(self, x_start, x_t, t):
         posterior_mean = (
             extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
             + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
-        posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
+        posterior_log_variance_clipped = extract(
+            self.posterior_log_variance_clipped, t, x_t.shape
+        )
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, hard_conds, context_d, t, prior_weight_with_guide=1.0, **kwargs):
-        context_emb = None
-        if self.context_model is not None:
-            context_emb = self.context_model(**context_d)
+    def p_mean_variance(self, x, hard_conds, context, t):
+        if context is not None:
+            context = self.context_model(context)
 
-        noise_pred = self.model(x, t, context_emb)
-        noise_pred = prior_weight_with_guide * noise_pred  # weight the prior noise
-        x_recon = self.predict_start_from_noise(x, t=t, noise=noise_pred)
+        x_recon = self.predict_start_from_noise(x, t=t, noise=self.model(x, t, context))
 
         if self.clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
         else:
             assert RuntimeError()
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
-        return model_mean, posterior_variance, posterior_log_variance, x_recon
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
+            x_start=x_recon, x_t=x, t=t
+        )
+        return model_mean, posterior_variance, posterior_log_variance
 
     @torch.no_grad()
     def p_sample_loop(
         self,
-        shape_x,
+        shape,
         hard_conds,
-        context_d=None,
+        context=None,
         return_chain=False,
-        return_chain_x_recon=False,
         sample_fn=ddpm_sample_fn,
         n_diffusion_steps_without_noise=0,
-        t_start_guide=torch.inf,
         **sample_kwargs,
     ):
         device = self.betas.device
 
-        batch_size = shape_x[0]
-        x = torch.randn(shape_x, device=device)
+        batch_size = shape[0]
+        x = torch.randn(shape, device=device)
         x = apply_hard_conditioning(x, hard_conds)
 
         chain = [x] if return_chain else None
-        chain_x_recon = [] if return_chain_x_recon else None
 
-        for i in reversed(range(-n_diffusion_steps_without_noise, self.n_diffusion_steps)):
+        for i in reversed(
+            range(-n_diffusion_steps_without_noise, self.n_diffusion_steps)
+        ):
             t = make_timesteps(batch_size, i, device)
-            x, x_recon = sample_fn(
-                self, x, hard_conds, context_d, t, activate_guide=True if i <= t_start_guide else False, **sample_kwargs
-            )
+            x, values = sample_fn(self, x, hard_conds, context, t, **sample_kwargs)
             x = apply_hard_conditioning(x, hard_conds)
 
             if return_chain:
                 chain.append(x)
-            if return_chain_x_recon:
-                chain_x_recon.append(x_recon)
 
-        chains = []
         if return_chain:
             chain = torch.stack(chain, dim=1)
-            chains.append(chain)
+            return x, chain
 
-        if return_chain_x_recon:
-            chain_x_recon = torch.stack(chain_x_recon, dim=1)
-            chains.append(chain_x_recon)
-
-        return x, *chains
+        return x
 
     @torch.no_grad()
-    def ddim_sample_loop(
+    def ddim_sample(
         self,
-        shape_x,
+        shape,
         hard_conds,
-        context_d=None,
+        context=None,
         return_chain=False,
-        return_chain_x_recon=False,
-        ddim_eta=0.0,
-        ddim_skip_type="uniform",
-        ddim_sampling_timesteps=None,
         t_start_guide=torch.inf,
-        scale_grad_by_one_minus_alpha=False,
         guide=None,
-        guide_lr=0.05,
         n_guide_steps=1,
-        max_perturb_x=0.1,
-        clip_grad=False,
-        clip_grad_rule="value",  # 'norm', 'value'
-        max_grad_norm=1.0,  # clip the norm of the control point gradients
-        max_grad_value=1.0,  # clip the control point gradients
-        n_diffusion_steps_without_noise=0,
-        ddim_scale_grad_prior=1.0,
-        compute_costs_with_xrecon=False,
-        results_ns=None,
         **sample_kwargs,
     ):
         # Adapted from https://github.com/ezhang7423/language-control-diffusion/blob/63cdafb63d166221549968c662562753f6ac5394/src/lcd/models/diffusion.py#L226
-        context_emb = None
-        if context_d is not None:
-            context_emb = self.context_model(**context_d)
-
         device = self.betas.device
-        batch_size = shape_x[0]
+        batch_size = shape[0]
         total_timesteps = self.n_diffusion_steps
-        sampling_timesteps = ddim_sampling_timesteps if ddim_sampling_timesteps is not None else total_timesteps
-        assert (
-            sampling_timesteps <= total_timesteps
-        ), f"sampling_timesteps={sampling_timesteps} > total_timesteps={total_timesteps}"
+        sampling_timesteps = self.n_diffusion_steps // 5
+        eta = 0.0
 
         # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
-        time_pairs = ddim_create_time_pairs(
-            total_timesteps, sampling_timesteps, ddim_skip_type, n_diffusion_steps_without_noise
+        times = torch.linspace(
+            0, total_timesteps - 1, steps=sampling_timesteps + 1, device=device
         )
+        times = torch.cat((torch.tensor([-1], device=device), times))
+        times = list(reversed(times.int().tolist()))
+        time_pairs = list(
+            zip(times[:-1], times[1:])
+        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        clip_grad_fn = lambda x: x
-        if clip_grad and clip_grad_rule == "norm":
-            clip_grad_fn = partial(clip_grad_by_norm, max_grad_norm=max_grad_norm)
-        elif clip_grad and clip_grad_rule == "value":
-            clip_grad_fn = partial(clip_grad_by_value, max_grad_value=max_grad_value)
-
-        x = torch.randn(shape_x, device=device)
+        x = torch.randn(shape, device=device)
         x = apply_hard_conditioning(x, hard_conds)
 
         chain = [x] if return_chain else None
-        chain_x_recon = [x] if return_chain_x_recon else None
 
-        for k_step, (_time, _time_next) in enumerate(time_pairs):
-            if _time == _time_next:
-                continue
-            if _time_next < 0:
-                _time = 1
-                _time_next = 0
+        for time, time_next in time_pairs:
+            t = make_timesteps(batch_size, time, device)
+            t_next = make_timesteps(batch_size, time_next, device)
 
-            t = make_timesteps(batch_size, _time, device)
-            t_next = make_timesteps(batch_size, _time_next, device)
+            model_out = self.model(x, t, context)
+
+            x_start = self.predict_start_from_noise(x, t=t, noise=model_out)
+            pred_noise = self.predict_noise_from_start(x, t=t, x0=model_out)
+
+            if time_next < 0:
+                x = x_start
+                x = apply_hard_conditioning(x, hard_conds)
+                if return_chain:
+                    chain.append(x)
+                break
 
             alpha = extract(self.alphas_cumprod, t, x.shape)
             alpha_next = extract(self.alphas_cumprod, t_next, x.shape)
-            sigma = ddim_eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+
+            sigma = (
+                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            )
             c = (1 - alpha_next - sigma**2).sqrt()
 
-            # denoising noise
-            with TimerCUDA() as t_generator:
-                model_out = self.model(x, t, context_emb)
+            x = x_start * alpha_next.sqrt() + c * pred_noise
 
-            if results_ns is not None:
-                results_ns.t_generator += t_generator.elapsed
+            # guide gradient steps before adding noise
+            if guide is not None:
+                if torch.all(t_next < t_start_guide):
+                    x = guide_gradient_steps(
+                        x, hard_conds=hard_conds, guide=guide, **sample_kwargs
+                    )
 
-            grad_prior = model_out
-
-            def update_x(_x, _grad_prior):
-                _x_recon = self.predict_start_from_noise(_x, t=t, noise=_grad_prior)
-                if self.clip_denoised:
-                    _x_recon.clamp_(-1.0, 1.0)
-                else:
-                    assert RuntimeError()
-                _pred_noise = self.predict_noise_from_start(_x, t=t, x0=_grad_prior)
-                _x = _x_recon * alpha_next.sqrt() + c * _pred_noise
-                _x = apply_hard_conditioning(_x, hard_conds)
-                return _x, _x_recon
-
-            # Modify the noise if guidance is active
-            # https://arxiv.org/pdf/2105.05233.pdf - Algorithm 2
-            if guide is not None and (ddim_sampling_timesteps - k_step) <= t_start_guide:
-                with TimerCUDA() as t_guide:
-                    x_start = x.clone()
-                    for k_gd in range(n_guide_steps):
-                        grad_prior_weighted = grad_prior * ddim_scale_grad_prior
-                        if compute_costs_with_xrecon:
-                            raise NotImplementedError("compute_costs_with_xrecon is not implemented")
-                        else:
-                            grad_guide = guide(x, context_d=context_d)
-
-                        grad_guide_clipped = clip_grad_fn(grad_guide)
-                        grad_guide_clipped_weighted = guide_lr * grad_guide_clipped
-
-                        # grad_prior_weighted_norm = torch.linalg.norm(grad_prior_weighted, dim=-1)
-                        # grad_guide_clipped_weighted_norm = torch.linalg.norm(grad_guide_clipped_weighted, dim=-1)
-                        # print(f'denoising epsilon (norm): {grad_prior_weighted_norm.mean():.4f} +- {grad_prior_weighted_norm.std():.4f}')
-                        # print(f'guide grad (norm): {grad_guide_clipped_weighted_norm.mean():.4f} +- {grad_guide_clipped_weighted_norm.std():.4f}')
-
-                        if scale_grad_by_one_minus_alpha:
-                            # by default we skip it, because (1-alpha) -> 0 when t -> 0
-                            grad_total = grad_prior_weighted - (1 - alpha).sqrt() * grad_guide_clipped_weighted
-                        else:
-                            grad_total = grad_prior_weighted - grad_guide_clipped_weighted
-
-                        x_tmp, x_recon = update_x(x, grad_total)
-                        # Clip the perturbation to avoid large changes from x_start_opt
-                        x_delta = x_tmp - x_start
-                        x_delta_clipped = torch.clip(x_delta, -max_perturb_x, max_perturb_x)
-                        x = x_start + x_delta_clipped
-
-                    if results_ns is not None:
-                        results_ns.t_guide += t_guide.elapsed
-            else:
-                x, x_recon = update_x(x, grad_prior)
-
-            if _time_next >= 1:
-                # add noise
-                noise = torch.randn_like(x) if ddim_eta != 0.0 else 0.0
-                x = x + sigma * noise
-                x = apply_hard_conditioning(x, hard_conds)
+            # add noise
+            noise = torch.randn_like(x)
+            x = x + sigma * noise
+            x = apply_hard_conditioning(x, hard_conds)
 
             if return_chain:
-                chain.append(x.clone())
-            if return_chain_x_recon:
-                chain_x_recon.append(x_recon.clone())
+                chain.append(x)
 
-        chains = []
         if return_chain:
             chain = torch.stack(chain, dim=1)
-            chains.append(chain)
+            return x, chain
 
-        if return_chain_x_recon:
-            chain_x_recon = torch.stack(chain_x_recon, dim=1)
-            chains.append(chain_x_recon)
-
-        return x, *chains
+        return x
 
     @torch.no_grad()
-    def conditional_sample(self, hard_conds, horizon=None, batch_size=1, method="ddpm", **sample_kwargs):
+    def conditional_sample(
+        self, hard_conds, horizon=None, batch_size=1, ddim=False, **sample_kwargs
+    ):
         """
         hard conditions : hard_conds : { (time, state), ... }
         """
         horizon = horizon or self.horizon
-        shape_x = (batch_size, horizon, self.state_dim)
+        shape = (batch_size, horizon, self.state_dim)
 
-        if method == "ddim":
-            assert self.predict_epsilon, "ddim only works with predict_epsilon=True, because of guidance"
-            return self.ddim_sample_loop(shape_x, hard_conds, **sample_kwargs)
-        elif method == "ddpm":
-            return self.p_sample_loop(shape_x, hard_conds, sample_fn=ddpm_sample_fn, **sample_kwargs)
-        else:
-            raise NotImplementedError
+        if ddim:
+            return self.ddim_sample(shape, hard_conds, **sample_kwargs)
+
+        return self.p_sample_loop(shape, hard_conds, **sample_kwargs)
 
     def forward(self, cond, *args, **kwargs):
         raise NotImplementedError
         return self.conditional_sample(cond, *args, **kwargs)
 
     @torch.no_grad()
+    def warmup(self, horizon=64, device="cuda"):
+        shape = (2, horizon, self.state_dim)
+        x = torch.randn(shape, device=device)
+        t = make_timesteps(2, 1, device)
+        self.model(x, t, context=None)
+
+    @torch.no_grad()
     def run_inference(
         self,
-        context_d=None,
+        context=None,
         hard_conds=None,
         n_samples=1,
         return_chain=False,
-        return_chain_x_recon=False,
         **diffusion_kwargs,
     ):
+        # context and hard_conds must be normalized
+        hard_conds = copy(hard_conds)
+        context = copy(context)
+
         # repeat hard conditions and contexts for n_samples
         for k, v in hard_conds.items():
-            new_state = einops.repeat(v, "... -> b ...", b=n_samples)
+            new_state = einops.repeat(v, "d -> b d", b=n_samples)
             hard_conds[k] = new_state
 
-        for k, v in context_d.items():
-            context_d[k] = einops.repeat(v, "... -> b ...", b=n_samples)
+        if context is not None:
+            for k, v in context.items():
+                context[k] = einops.repeat(v, "d -> b d", b=n_samples)
 
         # Sample from diffusion model
-        samples, chain, chain_x_recon = self.conditional_sample(
+        samples, chain = self.conditional_sample(
             hard_conds,
-            context_d=context_d,
+            context=context,
             batch_size=n_samples,
             return_chain=True,
-            return_chain_x_recon=True,
             **diffusion_kwargs,
         )
 
         # chain: [ n_samples x (n_diffusion_steps + 1) x horizon x (state_dim)]
         # extract normalized trajectories
         trajs_chain_normalized = chain
-        trajs_x_recon_chain_normalized = chain_x_recon
 
         # trajs: [ (n_diffusion_steps + 1) x n_samples x horizon x state_dim ]
-        trajs_chain_normalized = einops.rearrange(trajs_chain_normalized, "b diffsteps ... -> diffsteps b ...")
-        trajs_x_recon_chain_normalized = einops.rearrange(
-            trajs_x_recon_chain_normalized, "b diffsteps ... -> diffsteps b ..."
+        trajs_chain_normalized = einops.rearrange(
+            trajs_chain_normalized, "b diffsteps h d -> diffsteps b h d"
         )
 
-        if return_chain and return_chain_x_recon:
-            return trajs_chain_normalized, trajs_x_recon_chain_normalized
-        elif return_chain:
+        if return_chain:
             return trajs_chain_normalized
 
         # return the last denoising step
@@ -446,19 +386,18 @@ class GaussianDiffusionModel(nn.Module, ABC):
 
         return sample
 
-    def p_losses(self, x_start, context_d, t, hard_conds):
+    def p_losses(self, x_start, context, t, hard_conds):
         noise = torch.randn_like(x_start)
 
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         x_noisy = apply_hard_conditioning(x_noisy, hard_conds)
 
         # context model
-        context_emb = None
-        if self.context_model is not None:
-            context_emb = self.context_model(**context_d)
+        if context is not None:
+            context = self.context_model(context)
 
         # diffusion model
-        x_recon = self.model(x_noisy, t, context_emb)
+        x_recon = self.model(x_noisy, t, context)
         x_recon = apply_hard_conditioning(x_recon, hard_conds)
 
         assert noise.shape == x_recon.shape
@@ -470,18 +409,9 @@ class GaussianDiffusionModel(nn.Module, ABC):
 
         return loss, info
 
-    def loss(self, x, context_d, *args):
+    def loss(self, x, context, *args):
         batch_size = x.shape[0]
-        t = torch.randint(0, self.n_diffusion_steps, (batch_size,), device=x.device).long()
-        return self.p_losses(x, context_d, t, *args)
-
-    # ------------------------------------------ warmup ------------------------------------------#
-    @torch.no_grad()
-    def warmup(self, shape_x, device="cuda"):
-        batch_size, n_support_points, state_dim = shape_x
-        x = torch.randn(shape_x, device=device)
-        t = make_timesteps(batch_size, 1, device)
-        context_emb = None
-        if self.context_model is not None:
-            context_emb = torch.randn(batch_size, self.context_model.out_dim, device=device)
-        self.model(x, t, context=context_emb)
+        t = torch.randint(
+            0, self.n_diffusion_steps, (batch_size,), device=x.device
+        ).long()
+        return self.p_losses(x, context, t, *args)

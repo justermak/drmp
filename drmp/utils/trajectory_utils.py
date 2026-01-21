@@ -3,7 +3,6 @@ from typing import Any, Dict
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy import interpolate
 
 
 def create_straight_line_trajectory(
@@ -20,17 +19,15 @@ def create_straight_line_trajectory(
     velocities = torch.zeros_like(positions)
     avg_vel = (goal_pos - start_pos) / ((n_support_points - 1) * dt)
     velocities[1:-1, :] = avg_vel
-    trajectory = torch.cat((positions, velocities), dim=-1)
+    trajectories = torch.cat((positions, velocities), dim=-1)
 
-    return trajectory
+    return trajectories
 
 
 def _get_knots(n_control_points: int, degree: int) -> np.ndarray:
     n_internal = n_control_points - degree - 1
     internal_knots = np.linspace(0, 1, n_internal + 2)
-    knots = np.concatenate(
-        ([0.0] * degree, internal_knots, [1.0] * degree)
-    )
+    knots = np.concatenate(([0.0] * degree, internal_knots, [1.0] * degree))
     return knots
 
 
@@ -105,7 +102,7 @@ def get_trajectories_from_bsplines(
     device = control_points.device
     dtype = control_points.dtype
     n_control_points = control_points.shape[-2]
-    
+
     knots_np = _get_knots(n_control_points, degree)
     knots = torch.tensor(knots_np, device=device, dtype=dtype)
     t_eval = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
@@ -116,37 +113,25 @@ def get_trajectories_from_bsplines(
 
 
 def smoothen_trajectory(
-    traj_pos: torch.Tensor,
+    trajectory: torch.Tensor,
     n_support_points: int,
     dt: float,
-    tensor_args: Dict[str, Any],
 ) -> torch.Tensor:
-    assert traj_pos.ndim == 2, "traj_pos must be of shape (n_points, n_dims)"
-    traj_pos = traj_pos.cpu().numpy()
-    try:
-        pos = interpolate.make_interp_spline(
-            np.linspace(0, 1, traj_pos.shape[0]), traj_pos, k=3, bc_type="clamped"
-        )(np.linspace(0, 1, n_support_points))
-        vel = np.zeros_like(pos)
-        avg_vel = (traj_pos[-1] - traj_pos[0]) / ((n_support_points - 1) * dt)
-        vel[1:-1, :] = avg_vel
-        traj = np.concatenate((pos, vel), axis=-1)
-        return torch.tensor(traj, **tensor_args)
-    except:
-        # Trajectory is too short to interpolate, so add last position again and interpolate
-        traj_pos = np.concatenate(
-            (
-                traj_pos,
-                traj_pos[-1:] + np.random.normal(0, 0.01, size=traj_pos[-1:].shape),
-            ),
-            axis=-2,
-        )
-        return smoothen_trajectory(
-            traj_pos,
-            n_support_points=n_support_points,
-            dt=dt,
-            tensor_args=tensor_args,
-        )
+    assert trajectory.ndim == 2, "trajectory must be of shape (n_points, n_dims)"
+    trajectory_augmented = torch.cat([
+        trajectory[:1, :], trajectory, trajectory[-1:, :]
+    ], dim=0)
+    pos = get_trajectories_from_bsplines(
+        control_points=trajectory_augmented,
+        n_support_points=n_support_points,
+        degree=3,
+    )
+    vel = torch.zeros_like(pos)
+    avg_vel = (pos[-1] - pos[0]) / ((n_support_points - 2) * dt)
+    vel[1:-1, :] = avg_vel
+    trajectory_smooth = torch.cat((pos, vel), dim=-1)
+    
+    return trajectory_smooth
 
 
 def interpolate_trajectories(

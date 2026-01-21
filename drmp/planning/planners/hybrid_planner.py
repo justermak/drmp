@@ -8,7 +8,7 @@ from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.trajectory_utils import (
     create_straight_line_trajectory,
-    smoothen_trajectory,
+    smoothen_trajectory
 )
 
 
@@ -44,28 +44,31 @@ class HybridPlanner(ClassicalPlanner):
                     debug=debug,
                     **kwargs,
                 )
-            if debug:
-                print(
-                    f"Sample-based Planner -- Optimization time: {t_sample_based.elapsed:.3f} sec"
-                )
-
-            trajectories_smooth = [
-                smoothen_trajectory(
-                    traj,
-                    n_support_points=self.optimization_based_planner.n_support_points,
-                    dt=self.optimization_based_planner.dt,
-                    tensor_args=self.tensor_args,
-                )
-                if traj is not None
-                else create_straight_line_trajectory(
-                    start_pos=self.start_pos,
-                    goal_pos=self.goal_pos,
-                    n_support_points=self.optimization_based_planner.n_support_points,
-                    dt=self.optimization_based_planner.dt,
-                    tensor_args=self.tensor_args,
-                )
-                for traj in trajectories
-            ]
+                if debug:
+                    print(
+                        f"Sample-based Planner -- Optimization time: {t_sample_based.elapsed:.3f} sec"
+                    )
+            with TimerCUDA() as t_smoothen:
+                trajectories_smooth = [
+                    smoothen_trajectory(
+                        traj,
+                        n_support_points=self.optimization_based_planner.n_support_points,
+                        dt=self.optimization_based_planner.dt,
+                    )
+                    if traj is not None
+                    else create_straight_line_trajectory(
+                        start_pos=self.start_pos,
+                        goal_pos=self.goal_pos,
+                        n_support_points=self.optimization_based_planner.n_support_points,
+                        dt=self.optimization_based_planner.dt,
+                        tensor_args=self.tensor_args,
+                    )
+                    for traj in trajectories
+                ]
+                if debug:
+                    print(
+                        f"Trajectory Smoothening -- Time: {t_smoothen.elapsed:.3f} sec"
+                    )
 
             init_trajectories = torch.stack(trajectories_smooth)
             torch.cuda.empty_cache()
@@ -77,15 +80,15 @@ class HybridPlanner(ClassicalPlanner):
                 trajectories = self.optimization_based_planner.optimize(
                     opt_steps=opt_steps, print_freq=print_freq // 2, debug=debug
                 )
+                if debug:
+                    print(
+                        f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
+                    )
+
             if debug:
                 print(
-                    f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
+                    f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
                 )
-
-        if debug:
-            print(
-                f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
-            )
 
         return trajectories
 

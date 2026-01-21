@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
+from drmp.utils.trajectory_utils import get_trajectories_from_bsplines
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from drmp.datasets.dataset import TrajectoryDataset
-from drmp.models.diffusion import PlanningModel
+from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetBase
+from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
@@ -18,10 +19,10 @@ from drmp.utils.visualizer import Visualizer
 
 
 def _log_trajectories_metrics(
-    model: PlanningModel,
+    model: DiffusionModelBase,
     context: torch.Tensor,
     hard_conds: dict,
-    dataset: TrajectoryDataset,
+    dataset: TrajectoryDatasetBase,
     planning_visualizer: Visualizer,
     tensorboard_writer: SummaryWriter,
     prefix: str,
@@ -42,12 +43,20 @@ def _log_trajectories_metrics(
     )[-1]
     
     trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
+    
+    if isinstance(dataset, TrajectoryDatasetBSpline):
+        trajectories = get_trajectories_from_bsplines(
+            control_points=trajectories,
+            n_support_points=dataset.n_support_points,
+            degree=dataset.spline_degree,
+        )    
+
     trajectories_collision, trajectories_free, trajectories_collision_mask = (
         dataset.env.get_trajectories_collision_and_free(
             trajectories=trajectories, robot=dataset.robot, on_extra=use_extra_objects
         )
     )
-    
+
     tensorboard_writer.add_scalar(
         f"{prefix}free_fraction{suffix}",
         compute_free_fraction(trajectories_free, trajectories_collision),
@@ -78,34 +87,34 @@ def _log_trajectories_metrics(
         compute_waypoints_variance(trajectories_free, dataset.robot),
         step,
     )
-    
+
     fig, ax = planning_visualizer.render_scene(
         trajectories=trajectories,
-        start_state=trajectories[0, 0],
-        goal_state=trajectories[0, -1],
+        start_pos=trajectories[0, 0],
+        goal_pos=trajectories[0, -1],
         save_path=None,
     )
-    
+
     tensorboard_writer.add_figure(
         f"{prefix}trajectories_figure{suffix}",
         fig,
         step,
     )
-    
+
     plt.close(fig)
 
 
 def log(
     step: int,
-    model: PlanningModel,
+    model: DiffusionModelBase,
     subset: Subset,
     train_losses: dict = None,
     val_losses: dict = None,
     prefix: str = "",
     tensorboard_writer: SummaryWriter = None,
     debug: bool = False,
-    guide = None,
-    guide_extra = None,
+    guide=None,
+    guide_extra=None,
     start_guide_steps_fraction: float = 0.0,
     n_guide_steps: int = 5,
 ):
@@ -125,16 +134,20 @@ def log(
                         loss_value,
                         step,
                     )
-        
-        dataset: TrajectoryDataset = subset.dataset
+
+        dataset: TrajectoryDatasetBase = subset.dataset
         trajectory_id = np.random.choice(subset.indices)
         data_normalized = dataset[trajectory_id]
 
         context = model.build_context(data_normalized)
         hard_conds = model.build_hard_conditions(data_normalized)
-        
-        planning_visualizer = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=False)
-        planning_visualizer_extra = Visualizer(env=dataset.env, robot=dataset.robot, use_extra_objects=False)
+
+        planning_visualizer = Visualizer(
+            env=dataset.env, robot=dataset.robot, use_extra_objects=False
+        )
+        planning_visualizer_extra = Visualizer(
+            env=dataset.env, robot=dataset.robot, use_extra_objects=False
+        )
 
         if tensorboard_writer is not None:
             _log_trajectories_metrics(
@@ -149,7 +162,7 @@ def log(
                 step=step,
                 guide=None,
             )
-                
+
         if guide is not None and tensorboard_writer is not None:
             _log_trajectories_metrics(
                 model=model,
@@ -165,7 +178,7 @@ def log(
                 start_guide_steps_fraction=start_guide_steps_fraction,
                 n_guide_steps=n_guide_steps,
             )
-            
+
         if guide_extra is not None and tensorboard_writer is not None:
             _log_trajectories_metrics(
                 model=model,
