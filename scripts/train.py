@@ -50,7 +50,7 @@ def run(args):
     }
 
     dataset = None
-    if args.use_splines:
+    if args.diffusion_model_name == "GaussianDiffusionSplines":
         dataset_init_config["n_control_points"] = args.n_control_points
         dataset_init_config["spline_degree"] = args.spline_degree
         dataset = TrajectoryDatasetBSpline(**dataset_init_config)

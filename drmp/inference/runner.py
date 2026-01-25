@@ -1,7 +1,7 @@
 import os
 import pickle
 from copy import copy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -9,7 +9,7 @@ from torch.utils.data import Subset
 from tqdm import tqdm
 
 from drmp.datasets.dataset import TrajectoryDatasetBase
-from drmp.inference.runner_config import BaseRunnerConfig, BaseRunnerModelWrapper
+from drmp.inference.runner_config import RunnerConfigBase, RunnerModelWrapperBase
 from drmp.planning.metrics import (
     bootstrap_confidence_interval,
     compute_collision_intensity,
@@ -29,7 +29,7 @@ def run_inference_for_task(
     dataset: TrajectoryDatasetBase,
     data_normalized: dict,
     n_samples: int,
-    model_wrapper: BaseRunnerModelWrapper,
+    model_wrapper: RunnerModelWrapperBase,
     return_full_data: bool = False,
 ) -> Dict[str, Any]:
     robot = dataset.robot
@@ -121,7 +121,7 @@ def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,
     n_samples: int,
-    model_wrapper: BaseRunnerModelWrapper,
+    model_wrapper: RunnerModelWrapperBase,
 ) -> Dict[str, Any]:
     statistics = []
     full_data_sample = None
@@ -360,7 +360,7 @@ def create_test_subset(
 
 
 def run_inference(
-    runner_config: BaseRunnerConfig,
+    runner_config: RunnerConfigBase,
     dataset: TrajectoryDatasetBase,
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
