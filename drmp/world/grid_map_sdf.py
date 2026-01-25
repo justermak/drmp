@@ -36,8 +36,8 @@ class GridMapSDF:
 
         def grad_fn(x):
             return self.obj_field.compute_signed_distance(x).sum(
-                    dim=tuple(range(x.dim() - 1))
-                )
+                dim=tuple(range(x.dim() - 1))
+            )
 
         sdf_batches = []
         grad_batches = []

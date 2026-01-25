@@ -248,9 +248,9 @@ class GPMP2(ClassicalPlanner):
 
     def print_info(self, step: int, t: float, costs: torch.Tensor):
         pad = len(str(self.opt_steps))
-        mean_cost = costs.mean().item() if costs is not None else float('nan')
-        min_cost = costs.min().item() if costs is not None else float('nan')
-        max_cost = costs.max().item() if costs is not None else float('nan')
+        mean_cost = costs.mean().item() if costs is not None else float("nan")
+        min_cost = costs.min().item() if costs is not None else float("nan")
+        max_cost = costs.max().item() if costs is not None else float("nan")
         print(
             f"Step: {step:>{pad}}/{self.opt_steps:>{pad}} "
             f"| Time: {t:.3f}s "

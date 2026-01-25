@@ -1,11 +1,10 @@
 import matplotlib.pyplot as plt
-from drmp.utils.trajectory_utils import get_trajectories_from_bsplines
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetBase
+from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.metrics import (
     compute_collision_intensity,
@@ -15,6 +14,7 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
+from drmp.utils.trajectory_utils import get_trajectories_from_bsplines
 from drmp.utils.visualizer import Visualizer
 
 
@@ -41,15 +41,15 @@ def _log_trajectories_metrics(
         guide=guide,
         n_guide_steps=n_guide_steps,
     )[-1]
-    
+
     trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
-    
+
     if isinstance(dataset, TrajectoryDatasetBSpline):
         trajectories = get_trajectories_from_bsplines(
             control_points=trajectories,
             n_support_points=dataset.n_support_points,
             degree=dataset.spline_degree,
-        )    
+        )
 
     trajectories_collision, trajectories_free, trajectories_collision_mask = (
         dataset.env.get_trajectories_collision_and_free(

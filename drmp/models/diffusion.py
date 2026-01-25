@@ -102,29 +102,29 @@ class DiffusionModelBase(nn.Module, ABC):
         )
 
         self.loss_fn = nn.MSELoss()
-    
+
     @abstractmethod
     def build_hard_conditions(
         self, input_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
         pass
-    
+
     @abstractmethod
     def apply_hard_conditioning(
         self, x: torch.Tensor, hard_conds: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
         pass
-    
+
     def build_context(self, input_dict: Dict[str, torch.Tensor]):
         context = torch.cat(
             [
-                input_dict["start_pos_normalized"].view(-1, self.state_dim),
-                input_dict["goal_pos_normalized"].view(-1, self.state_dim),
+                input_dict["start_pos_normalized"].view(-1, self.unet_context_dim // 2),
+                input_dict["goal_pos_normalized"].view(-1, self.unet_context_dim // 2),
             ],
             dim=-1,
         )
         return context
-    
+
     def extract(self, a, t, x_shape):
         out = a.gather(-1, t)
         return out.view(-1, *((1,) * (len(x_shape) - 1)))
@@ -201,9 +201,7 @@ class DiffusionModelBase(nn.Module, ABC):
     ):
         device = self.betas.device
         batch_size = shape[0]
-        t_start_guide = int(
-            np.ceil(start_guide_steps_fraction * self.n_diffusion_steps)
-        )
+        t_start_guide = int(start_guide_steps_fraction * self.n_diffusion_steps)
         x = torch.randn(shape, device=device)
         x = self.apply_hard_conditioning(x, hard_conds)
 
@@ -439,8 +437,6 @@ class DiffusionModelBase(nn.Module, ABC):
         ).long()
         return self.p_losses(x, context=context, t=t, hard_conds=hard_conds)
 
-    
-
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         traj_normalized = input_dict["trajectories_normalized"]
         context = self.build_context(input_dict)
@@ -494,7 +490,7 @@ class GaussianDiffusion(DiffusionModelBase):
             n_diffusion_steps,
             predict_epsilon,
         )
-        
+
     def build_hard_conditions(self, input_dict):
         hard_conds = {
             "start_pos_normalized": input_dict["start_pos_normalized"].view(
@@ -505,7 +501,7 @@ class GaussianDiffusion(DiffusionModelBase):
             ),
         }
         return hard_conds
-    
+
     def apply_hard_conditioning(self, x, conditions):
         x[:, 0, :] = conditions["start_pos_normalized"].clone()
         x[:, -1, :] = conditions["goal_pos_normalized"].clone()
@@ -544,7 +540,7 @@ class GaussianDiffusionSplines(DiffusionModelBase):
             n_diffusion_steps,
             predict_epsilon,
         )
-        
+
     def build_hard_conditions(self, input_dict):
         hard_conds = {
             "start_pos_normalized": input_dict["start_pos_normalized"].view(
@@ -556,9 +552,9 @@ class GaussianDiffusionSplines(DiffusionModelBase):
             "spline_degree": input_dict["spline_degree"].item(),
         }
         return hard_conds
-    
+
     def apply_hard_conditioning(self, x, conditions):
         spline_degree = conditions["spline_degree"]
-        x[:, :spline_degree-1, :] = conditions["start_pos_normalized"].clone()
-        x[:, -spline_degree+1:, :] = conditions["goal_pos_normalized"].clone()
+        x[:, : spline_degree - 1, :] = conditions["start_pos_normalized"].clone()
+        x[:, -spline_degree + 1 :, :] = conditions["goal_pos_normalized"].clone()
         return x

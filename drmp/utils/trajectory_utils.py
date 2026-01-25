@@ -118,9 +118,9 @@ def smoothen_trajectory(
     dt: float,
 ) -> torch.Tensor:
     assert trajectory.ndim == 2, "trajectory must be of shape (n_points, n_dims)"
-    trajectory_augmented = torch.cat([
-        trajectory[:1, :], trajectory, trajectory[-1:, :]
-    ], dim=0)
+    trajectory_augmented = torch.cat(
+        [trajectory[:1, :], trajectory, trajectory[-1:, :]], dim=0
+    )
     pos = get_trajectories_from_bsplines(
         control_points=trajectory_augmented,
         n_support_points=n_support_points,
@@ -130,7 +130,7 @@ def smoothen_trajectory(
     avg_vel = (pos[-1] - pos[0]) / ((n_support_points - 2) * dt)
     vel[1:-1, :] = avg_vel
     trajectory_smooth = torch.cat((pos, vel), dim=-1)
-    
+
     return trajectory_smooth
 
 

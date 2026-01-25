@@ -28,7 +28,7 @@ def run(args):
 
     if args.checkpoint_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_name = f"{args.dataset_name}_bs{args.batch_size}_lr{args.lr}_steps{args.num_train_steps}_{timestamp}"
+        checkpoint_name = f"{args.dataset_name}__bs_{args.batch_size}__lr_{args.lr}__steps_{args.num_train_steps}__diffusion-steps_{args.n_diffusion_steps}__splines_{args.use_splines}__{timestamp}"
     else:
         checkpoint_name = args.checkpoint_name
 
@@ -48,7 +48,7 @@ def run(args):
         "duration": dataset_config["duration"],
         "tensor_args": tensor_args,
     }
-    
+
     dataset = None
     if args.use_splines:
         dataset_init_config["n_control_points"] = args.n_control_points
@@ -78,9 +78,13 @@ def run(args):
         )
     )
 
+    assert args.state_dim == dataset.robot.n_dim
+
     model = MODELS[args.diffusion_model_name](
-        state_dim=dataset.robot.n_dim,
-        n_support_points=dataset.n_support_points if not args.use_splines else dataset.real_n_control_points,
+        state_dim=args.state_dim,
+        n_support_points=dataset.n_support_points
+        if args.diffusion_model_name == "GaussianDiffusion"
+        else dataset.real_n_control_points,
         unet_hidden_dim=args.hidden_dim,
         unet_dim_mults=eval(args.dim_mults),
         unet_kernel_size=args.kernel_size,

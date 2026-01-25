@@ -52,30 +52,6 @@ def run(args):
         "tensor_args": tensor_args,
     }
 
-    if args.algorithm == "mpd-splines":
-        dataset_init_config["n_control_points"] = args.mpd_splines_n_control_points
-        dataset_init_config["spline_degree"] = args.mpd_splines_spline_degree
-        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
-    else:
-        dataset = TrajectoryDatasetDense(**dataset_init_config)
-
-    dataset.load_data()
-    train_subset, _, val_subset, _ = dataset.load_train_val_split()
-
-    splits = eval(args.splits)
-
-    test_subset = None
-    if "test" in splits:
-        test_subset = create_test_subset(
-            dataset=dataset,
-            n_tasks=args.n_tasks,
-            threshold_start_goal_pos=args.threshold_start_goal_pos,
-            use_extra_objects=args.use_extra_objects,
-            tensor_args=tensor_args,
-        )
-        if test_subset is None:
-            return
-
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if args.algorithm == "diffusion":
@@ -108,22 +84,47 @@ def run(args):
         else:
             dataset = TrajectoryDatasetDense(**dataset_init_config)
         dataset.load_data(normalizer_name=normalizer_name)
+    elif args.algorithm == "mpd-splines":
+        dataset_init_config["n_control_points"] = args.mpd_splines_n_control_points
+        dataset_init_config["spline_degree"] = args.mpd_splines_spline_degree
+        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
+        dataset.load_data()
+    else:
+        dataset = TrajectoryDatasetDense(**dataset_init_config)
+        dataset.load_data()
 
+    train_subset, _, val_subset, _ = dataset.load_train_val_split()
+
+    splits = eval(args.splits)
+
+    test_subset = None
+    if "test" in splits:
+        test_subset = create_test_subset(
+            dataset=dataset,
+            n_tasks=args.n_tasks,
+            threshold_start_goal_pos=args.threshold_start_goal_pos,
+            use_extra_objects=args.use_extra_objects,
+            tensor_args=tensor_args,
+        )
+        if test_subset is None:
+            return
+
+    if args.algorithm == "diffusion":
         model = MODELS[model_config["model_name"]](
             state_dim=model_config["state_dim"],
-            n_support_points=model_config["n_support_points"],
+            n_support_points=model_config["n_support_points"]
+            if model_config["model_name"] == "GaussianDiffusion"
+            else model_config["real_n_control_points"],
             unet_hidden_dim=model_config["unet_hidden_dim"],
             unet_dim_mults=eval(model_config["unet_dim_mults"]),
             unet_kernel_size=model_config["unet_kernel_size"],
             unet_resnet_block_groups=model_config["unet_resnet_block_groups"],
-            unet_random_fourier_features=model_config["unet_random_fourier_features"],
-            unet_learned_sin_dim=model_config["unet_learned_sin_dim"],
+            unet_positional_encoding=model_config["unet_positional_encoding"],
+            unet_positional_encoding_dim=model_config["unet_positional_encoding_dim"],
             unet_attn_heads=model_config["unet_attn_heads"],
             unet_attn_head_dim=model_config["unet_attn_head_dim"],
             unet_context_dim=model_config["unet_context_dim"],
-            variance_schedule=model_config["variance_schedule"],
             n_diffusion_steps=model_config["n_diffusion_steps"],
-            clip_denoised=model_config["clip_denoised"],
             predict_epsilon=model_config["predict_epsilon"],
         ).to(device)
 

@@ -3,13 +3,13 @@ import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetBase
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
+from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
 from drmp.inference.guides import GuideTrajectories
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
@@ -226,7 +226,7 @@ def train(
         ema_model = copy.deepcopy(model)
 
     dataset: TrajectoryDatasetBase = train_subset.dataset
-    
+
     collision_costs = [
         CostCollision(
             robot=dataset.robot,
@@ -331,12 +331,12 @@ def train(
         "guide_start_guide_steps_fraction": guide_start_guide_steps_fraction,
         "guide_n_guide_steps": guide_n_guide_steps,
     }
-    
+
     if isinstance(dataset, TrajectoryDatasetBSpline):
         config["n_control_points"] = dataset.n_control_points
         config["spline_degree"] = dataset.spline_degree
         config["real_n_control_points"] = dataset.real_n_control_points
-    
+
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"

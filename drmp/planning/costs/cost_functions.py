@@ -320,8 +320,8 @@ class CostGoalPrior(Cost):
         K = self.goal_prior.K
 
         return A, b, K
-    
-    
+
+
 class CostJointVelocity(Cost):
     def __init__(
         self,

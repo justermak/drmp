@@ -16,9 +16,8 @@ DEFAULT_TRAIN_ARGS = {
     "checkpoint_name": None,
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
+    "dataset_name": "EnvDense2D_2000_50",
     "normalizer_name": "TrivialNormalizer",
-    "use_splines": True,
     "n_control_points": 20,
     "spline_degree": 3,
     "apply_augmentations": True,
@@ -26,10 +25,11 @@ DEFAULT_TRAIN_ARGS = {
     "filter_longest_portion": 0.25,
     "filter_sharpest_portion": 0.25,
     # Diffusion Model
-    "diffusion_model_name": "GaussianDiffusion",
+    "diffusion_model_name": "GaussianDiffusion",  # "GaussianDiffusionSplines",
     "n_diffusion_steps": 25,
     "predict_epsilon": True,
     # Unet
+    "state_dim": N_DIM,
     "hidden_dim": 32,
     "dim_mults": "(1, 2, 4)",
     "kernel_size": 5,
@@ -52,7 +52,7 @@ DEFAULT_TRAIN_ARGS = {
     "ema_update_interval": 10,
     # Summary
     "log_interval": 2000,
-    "checkpoint_interval": 20000,
+    "checkpoint_interval": 50000,
     # Guide
     "guide_start_guide_steps_fraction": 0.25,
     "guide_n_guide_steps": 5,
@@ -74,15 +74,15 @@ DEFAULT_INFERENCE_ARGS = {
     "n_samples": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "mpd",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "diffusion",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_1000_100",
+    "dataset_name": "EnvDense2D_2000_50",
     "threshold_start_goal_pos": 1.5,
     "use_extra_objects": True,
     # Diffusion model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": None,
+    "checkpoint_name": "EnvDense2D_2000_50__bs_1024__lr_0.0001__steps_300000__diffusion-steps_25__splines_True__20260122_015245",
     "ddim": False,
     "start_guide_steps_fraction": 0.25,
     "n_guide_steps": 5,

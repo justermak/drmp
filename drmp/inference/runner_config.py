@@ -3,7 +3,11 @@ from typing import Any, Dict, Optional
 
 import torch
 
-from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
+from drmp.datasets.dataset import (
+    TrajectoryDatasetBase,
+    TrajectoryDatasetBSpline,
+    TrajectoryDatasetDense,
+)
 from drmp.inference.guides import GuideTrajectories
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
@@ -21,7 +25,7 @@ from drmp.utils.trajectory_utils import (
 )
 
 
-class BaseRunnerModelWrapper(ABC):
+class RunnerModelWrapperBase(ABC):
     def __init__(self, use_extra_objects: bool):
         self.use_extra_objects = use_extra_objects
 
@@ -34,12 +38,8 @@ class BaseRunnerModelWrapper(ABC):
     ):
         pass
 
-    @abstractmethod
-    def to_dict(self) -> Dict[str, Any]:
-        pass
 
-
-class DiffusionModelWrapper(BaseRunnerModelWrapper):
+class DiffusionModelWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         model: DiffusionModelBase,
@@ -58,7 +58,7 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
 
     def sample(
         self,
-        dataset: TrajectoryDatasetDense,
+        dataset: TrajectoryDatasetBase,
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
@@ -78,19 +78,20 @@ class DiffusionModelWrapper(BaseRunnerModelWrapper):
         trajectories_iters = dataset.normalizer.unnormalize(
             trajectories_iters_normalized
         )
+
+        if isinstance(dataset, TrajectoryDatasetBSpline):
+            trajectories_iters = get_trajectories_from_bsplines(
+                control_points=trajectories_iters,
+                n_support_points=dataset.n_support_points,
+                degree=dataset.spline_degree,
+            )
+
         trajectories_final = trajectories_iters[-1]
 
         return trajectories_iters, trajectories_final
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "start_guide_steps_fraction": self.start_guide_steps_fraction,
-            "n_guide_steps": self.n_guide_steps,
-            "ddim": self.ddim,
-        }
 
-
-class MPDModelWrapper(BaseRunnerModelWrapper):
+class MPDModelWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         model: Any,
@@ -114,8 +115,20 @@ class MPDModelWrapper(BaseRunnerModelWrapper):
         n_samples: int,
     ):
         hard_conds = {
-            0: torch.cat([data_normalized["start_pos_normalized"], torch.zeros_like(data_normalized["start_pos_normalized"])], dim=-1),
-            dataset.n_support_points - 1: torch.cat([data_normalized["goal_pos_normalized"], torch.zeros_like(data_normalized["goal_pos_normalized"])], dim=-1),
+            0: torch.cat(
+                [
+                    data_normalized["start_pos_normalized"],
+                    torch.zeros_like(data_normalized["start_pos_normalized"]),
+                ],
+                dim=-1,
+            ),
+            dataset.n_support_points - 1: torch.cat(
+                [
+                    data_normalized["goal_pos_normalized"],
+                    torch.zeros_like(data_normalized["goal_pos_normalized"]),
+                ],
+                dim=-1,
+            ),
         }
 
         trajectories_iters_normalized = self.model.run_inference(
@@ -137,15 +150,8 @@ class MPDModelWrapper(BaseRunnerModelWrapper):
 
         return trajectories_iters, trajectories_final
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "start_guide_steps_fraction": self.start_guide_steps_fraction,
-            "n_guide_steps": self.n_guide_steps,
-            "ddim": self.ddim,
-        }
 
-
-class MPDSplinesModelWrapper(BaseRunnerModelWrapper):
+class MPDSplinesModelWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         model: Any,
@@ -219,18 +225,8 @@ class MPDSplinesModelWrapper(BaseRunnerModelWrapper):
 
         return trajectories_iters, trajectories_iters[-1]
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "start_guide_steps_fraction": self.start_guide_steps_fraction,
-            "n_guide_steps": self.n_guide_steps,
-            "ddim": self.ddim,
-            "guide_lr": self.guide_lr,
-            "scale_grad_prior": self.scale_grad_prior,
-            "ddim_sampling_timesteps": self.ddim_sampling_timesteps,
-        }
 
-
-class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
+class ClassicalPlannerWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         planner: ClassicalPlanner,
@@ -310,14 +306,6 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
 
         return trajectories_iters, trajectories_final
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "method": self.method,
-            "sample_steps": self.sample_steps,
-            "opt_steps": self.opt_steps,
-            "smoothen": self.smoothen,
-        }
-
     def cleanup(self):
         if hasattr(self.planner, "shutdown"):
             self.planner.shutdown()
@@ -325,7 +313,7 @@ class ClassicalPlannerWrapper(BaseRunnerModelWrapper):
             self.planner.sample_based_planner.shutdown()
 
 
-class BaseRunnerConfig(ABC):
+class RunnerConfigBase(ABC):
     def __init__(self, use_extra_objects: bool):
         self.use_extra_objects = use_extra_objects
 
@@ -335,7 +323,7 @@ class BaseRunnerConfig(ABC):
         dataset: TrajectoryDatasetDense,
         n_samples: int,
         tensor_args: Dict[str, Any],
-    ) -> BaseRunnerModelWrapper:
+    ) -> RunnerModelWrapperBase:
         pass
 
     @abstractmethod
@@ -343,7 +331,7 @@ class BaseRunnerConfig(ABC):
         pass
 
 
-class DiffusionRunnerConfig(BaseRunnerConfig):
+class DiffusionRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         model: DiffusionModelBase,
@@ -435,7 +423,7 @@ class DiffusionRunnerConfig(BaseRunnerConfig):
         }
 
 
-class MPDRunnerConfig(BaseRunnerConfig):
+class MPDRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         model: Any,
@@ -529,7 +517,7 @@ class MPDRunnerConfig(BaseRunnerConfig):
         }
 
 
-class MPDSplinesRunnerConfig(BaseRunnerConfig):
+class MPDSplinesRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         model: Any,
@@ -633,7 +621,7 @@ class MPDSplinesRunnerConfig(BaseRunnerConfig):
         }
 
 
-class RRTConnectRunnerConfig(BaseRunnerConfig):
+class RRTConnectRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         sample_steps: int,
@@ -684,7 +672,7 @@ class RRTConnectRunnerConfig(BaseRunnerConfig):
         }
 
 
-class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
+class GPMP2UninformativeRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         opt_steps: int,
@@ -765,7 +753,7 @@ class GPMP2UninformativeRunnerConfig(BaseRunnerConfig):
         }
 
 
-class GPMP2RRTPriorRunnerConfig(BaseRunnerConfig):
+class GPMP2RRTPriorRunnerConfig(RunnerConfigBase):
     def __init__(
         self,
         sample_steps: int,

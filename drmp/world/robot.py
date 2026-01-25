@@ -1,8 +1,8 @@
+from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-from abc import ABC, abstractmethod
-
 import torch
+
 
 class RobotBase(ABC):
     def __init__(
@@ -15,20 +15,20 @@ class RobotBase(ABC):
         self.margin = margin
         self.dt = dt
         self.n_dim: int = None
-        
+
     @abstractmethod
     def get_position(self, x: torch.Tensor) -> torch.Tensor:
         pass
-    
+
     @abstractmethod
     def get_velocity(self, x: torch.Tensor) -> torch.Tensor:
-        pass    
-    
+        pass
+
     @abstractmethod
     def invert_trajectories(self, trajectories: torch.Tensor) -> torch.Tensor:
         pass
-    
-    
+
+
 class RobotSphere2D(RobotBase):
     def __init__(
         self,
@@ -40,7 +40,7 @@ class RobotSphere2D(RobotBase):
         self.n_dim = 2
 
     def get_position(self, x: torch.Tensor) -> torch.Tensor:
-        return x[..., :self.n_dim]
+        return x[..., : self.n_dim]
 
     def get_velocity(self, x: torch.Tensor, compute: bool = False) -> torch.Tensor:
         if compute:
@@ -58,7 +58,7 @@ class RobotSphere2D(RobotBase):
         if trajectories.shape[-1] == self.n_dim:
             trajectories_inverted = torch.flip(trajectories, dims=[-2])
             return trajectories_inverted
-        
+
         trajectories_reversed = torch.flip(trajectories, dims=[-2])
         pos_reversed = self.get_position(trajectories_reversed)
         vel_reversed = -self.get_velocity(trajectories_reversed)

@@ -120,7 +120,9 @@ class RRTConnect(ClassicalPlanner):
         res = sequences[torch.arange(sequences.shape[0]), idxs]
         return res
 
-    def purge_duplicates_from_trajectories(self, paths: List[torch.Tensor]) -> torch.Tensor:
+    def purge_duplicates_from_trajectories(
+        self, paths: List[torch.Tensor]
+    ) -> torch.Tensor:
         selections = []
         for path in paths:
             if path is None:
@@ -234,11 +236,11 @@ class RRTConnect(ClassicalPlanner):
                     if debug:
                         self.print_info(step, t.elapsed, n_success)
                     break
-                
+
         trajectories = self.purge_duplicates_from_trajectories(paths)
         with open("rrt_paths_debug.txt", "w") as f:
             print(trajectories, file=f)
-        
+
         return trajectories
 
     def print_info(self, step, elapsed_time, success):

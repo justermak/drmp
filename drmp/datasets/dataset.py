@@ -211,8 +211,6 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
     @abstractmethod
     def load_data(self) -> None:
-        print(self.dataset_dir)
-
         files = [
             f
             for f in os.listdir(self.dataset_dir)
@@ -246,14 +244,15 @@ class TrajectoryDatasetBase(Dataset, ABC):
         if trajectories.numel() == 0:
             return
 
-        self.n_trajectories, n_support_points, n_dim = (
-            trajectories.shape
+        self.n_trajectories, n_support_points, n_dim = trajectories.shape
+        assert n_support_points == self.n_support_points and n_dim in (
+            self.robot.n_dim,
+            2 * self.robot.n_dim,
         )
-        assert n_support_points == self.n_support_points and n_dim in (self.robot.n_dim, 2 * self.robot.n_dim)
-        
+
         self.trajectories = trajectories[..., : self.robot.n_dim]
-        self.start_pos = self.trajectories[..., 0, :self.robot.n_dim]
-        self.goal_pos = self.trajectories[..., -1, :self.robot.n_dim]
+        self.start_pos = self.trajectories[..., 0, : self.robot.n_dim]
+        self.goal_pos = self.trajectories[..., -1, : self.robot.n_dim]
 
     def __len__(self) -> int:
         return self.n_trajectories
@@ -463,13 +462,10 @@ class TrajectoryDatasetBase(Dataset, ABC):
                     if status != "success" or n_free == 0:
                         n_failed_tasks += 1
 
-                    if (
-                            n_failed_tasks > 10
-                            and n_failed_tasks > n_completed_tasks * 0.1
-                        ):
-                            raise RuntimeError(
-                                f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
-                            )
+                    if n_failed_tasks > 10 and n_failed_tasks > n_completed_tasks * 0.1:
+                        raise RuntimeError(
+                            f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
+                        )
 
                     pbar.update(1)
 
@@ -661,11 +657,14 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
         control_points = self.control_points_normalized[idx]
         start_pos = self.start_pos_normalized[idx]
         goal_pos = self.goal_pos_normalized[idx]
-        control_points_augmented = torch.cat([
-            start_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
-            control_points,
-            goal_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),   
-        ], dim=-2)
+        control_points_augmented = torch.cat(
+            [
+                start_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
+                control_points,
+                goal_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
+            ],
+            dim=-2,
+        )
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
             control_points_augmented = torch.flip(control_points_augmented, dims=[0])
             start_pos, goal_pos = goal_pos, start_pos

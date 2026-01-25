@@ -8,7 +8,7 @@ from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.trajectory_utils import (
     create_straight_line_trajectory,
-    smoothen_trajectory
+    smoothen_trajectory,
 )
 
 

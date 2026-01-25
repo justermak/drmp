@@ -53,6 +53,10 @@ def run_inference_for_task(
         on_extra=model_wrapper.use_extra_objects,
     )
 
+    trajectories_final = torch.cat(
+        [trajectories_final_free, trajectories_final_collision], dim=0
+    )
+
     success = compute_success(trajectories_final_free)
     free_fraction = compute_free_fraction(
         trajectories_final_free, trajectories_final_collision
@@ -96,9 +100,8 @@ def run_inference_for_task(
         return stats
 
     start_pos = dataset.normalizer.unnormalize(data_normalized["start_pos_normalized"])
-    
+
     goal_pos = dataset.normalizer.unnormalize(data_normalized["goal_pos_normalized"])
-    
 
     full_data = {
         "start_pos": start_pos,
@@ -351,12 +354,8 @@ def create_test_subset(
     test_dataset = copy(dataset)
     test_dataset.n_trajs = n_tasks
     test_dataset.trajs_normalized = torch.empty((n_tasks,), **tensor_args)
-    test_dataset.start_pos_normalized = test_dataset.normalizer.normalize(
-        start_pos
-    )
-    test_dataset.goal_pos_normalized = test_dataset.normalizer.normalize(
-        goal_pos
-    )
+    test_dataset.start_pos_normalized = test_dataset.normalizer.normalize(start_pos)
+    test_dataset.goal_pos_normalized = test_dataset.normalizer.normalize(goal_pos)
     return Subset(test_dataset, list(range(n_tasks)))
 
 
