@@ -28,7 +28,7 @@ def run(args):
 
     if args.checkpoint_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_name = f"{args.dataset_name}__bs_{args.batch_size}__lr_{args.lr}__steps_{args.num_train_steps}__diffusion-steps_{args.n_diffusion_steps}__splines_{args.use_splines}__{timestamp}"
+        checkpoint_name = f"{args.diffusion_model_name}__{args.dataset_name}__bs_{args.batch_size}__lr_{args.lr}__steps_{args.num_train_steps}__diffusion-steps_{args.n_diffusion_steps}__{timestamp}"
     else:
         checkpoint_name = args.checkpoint_name
 
