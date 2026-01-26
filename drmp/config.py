@@ -25,7 +25,7 @@ DEFAULT_TRAIN_ARGS = {
     "filter_longest_portion": 0.25,
     "filter_sharpest_portion": 0.25,
     # Diffusion Model
-    "diffusion_model_name": "GaussianDiffusion",  # "GaussianDiffusionSplines",
+    "diffusion_model_name": "GaussianDiffusionSplines",  # "GaussianDiffusionSplines",
     "n_diffusion_steps": 25,
     "predict_epsilon": True,
     # Unet

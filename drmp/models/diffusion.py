@@ -474,6 +474,7 @@ class GaussianDiffusion(DiffusionModelBase):
         unet_context_dim: int,
         n_diffusion_steps: int,
         predict_epsilon: bool,
+        **kwargs
     ):
         super().__init__(
             n_support_points,
@@ -524,6 +525,8 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         unet_context_dim: int,
         n_diffusion_steps: int,
         predict_epsilon: bool,
+        spline_degree: int,
+        **kwargs
     ):
         super().__init__(
             n_support_points,
@@ -540,6 +543,7 @@ class GaussianDiffusionSplines(DiffusionModelBase):
             n_diffusion_steps,
             predict_epsilon,
         )
+        self.spline_degree = spline_degree
 
     def build_hard_conditions(self, input_dict):
         hard_conds = {
@@ -549,12 +553,10 @@ class GaussianDiffusionSplines(DiffusionModelBase):
             "goal_pos_normalized": input_dict["goal_pos_normalized"].view(
                 -1, self.state_dim
             ),
-            "spline_degree": input_dict["spline_degree"].item(),
         }
         return hard_conds
 
     def apply_hard_conditioning(self, x, conditions):
-        spline_degree = conditions["spline_degree"]
-        x[:, : spline_degree - 1, :] = conditions["start_pos_normalized"].clone()
-        x[:, -spline_degree + 1 :, :] = conditions["goal_pos_normalized"].clone()
+        x[:, : self.spline_degree - 1, :] = conditions["start_pos_normalized"].unsqueeze(1).repeat(1, self.spline_degree - 1, 1)
+        x[:, -self.spline_degree + 1 :, :] = conditions["goal_pos_normalized"].unsqueeze(1).repeat(1, self.spline_degree - 1, 1)
         return x

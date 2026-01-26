@@ -96,6 +96,7 @@ def run(args):
         unet_context_dim=args.context_dim,
         n_diffusion_steps=args.n_diffusion_steps,
         predict_epsilon=args.predict_epsilon,
+        spline_degree=args.spline_degree
     ).to(device)
 
     # you can load a checkpoint here
