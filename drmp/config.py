@@ -30,6 +30,7 @@ DEFAULT_TRAIN_ARGS = {
     "predict_epsilon": True,
     # Unet
     "state_dim": N_DIM,
+    "horizon": 24,
     "hidden_dim": 32,
     "dim_mults": "(1, 2, 4)",
     "kernel_size": 5,
@@ -74,7 +75,7 @@ DEFAULT_INFERENCE_ARGS = {
     "n_samples": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "diffusion",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "gpmp2-uninformative",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
@@ -95,7 +96,7 @@ DEFAULT_INFERENCE_ARGS = {
     "t_start_guide": 0,
     "n_guide_steps": 10,
     "sigma_collision": 1e1,
-    "sigma_gp": torch.inf,
+    "sigma_gp": None,
     "sigma_velocity": 3e3,
     "max_grad_norm": 0.1,
     "n_interpolate": 5,

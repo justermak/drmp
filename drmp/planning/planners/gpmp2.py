@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 import torch
 
-from drmp.planning.costs.cost_functions import (
+from drmp.planning.costs import (
     Cost,
     CostCollision,
     CostComposite,
@@ -11,8 +11,8 @@ from drmp.planning.costs.cost_functions import (
 )
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.utils.torch_timer import TimerCUDA
-from drmp.world.environments import EnvBase
-from drmp.world.robot import RobotBase
+from drmp.universe.environments import EnvBase
+from drmp.universe.robot import RobotBase
 
 
 def build_gpmp2_cost_composite(

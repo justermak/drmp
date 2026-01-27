@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from scipy import stats
 
-from drmp.world.robot import RobotBase
+from drmp.universe.robot import RobotBase
 
 
 def compute_path_length(trajectories: torch.Tensor, robot: RobotBase):

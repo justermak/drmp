@@ -9,7 +9,7 @@ from torch.utils.data import Subset
 from tqdm import tqdm
 
 from drmp.datasets.dataset import TrajectoryDatasetBase
-from drmp.inference.runner_config import RunnerConfigBase, RunnerModelWrapperBase
+from drmp.planning.inference_config import ModelConfigBase, ModelWrapperBase
 from drmp.planning.metrics import (
     bootstrap_confidence_interval,
     compute_collision_intensity,
@@ -29,7 +29,7 @@ def run_inference_for_task(
     dataset: TrajectoryDatasetBase,
     data_normalized: dict,
     n_samples: int,
-    model_wrapper: RunnerModelWrapperBase,
+    model_wrapper: ModelWrapperBase,
     return_full_data: bool = False,
 ) -> Dict[str, Any]:
     robot = dataset.robot
@@ -121,7 +121,7 @@ def get_best_trajectory(
     dataset: TrajectoryDatasetBase,
     data_normalized: dict,
     n_samples: int,
-    model_wrapper: RunnerModelWrapperBase,
+    model_wrapper: ModelWrapperBase,
     metric: str = "path-length",  # Options: "path-length", "sharpness"
 ) -> Dict[str, Any]:
     robot = dataset.robot
@@ -159,17 +159,17 @@ def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,
     n_samples: int,
-    model_wrapper: RunnerModelWrapperBase,
+    model_wrapper: ModelWrapperBase,
 ) -> Dict[str, Any]:
     statistics = []
     full_data_sample = None
     dataset: TrajectoryDatasetBase = subset.dataset
 
+    return_full_data = True
     for i in tqdm(range(n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
         data_normalized = dataset[idx]
 
-        return_full_data = i == 0
         task_results = run_inference_for_task(
             task_id=i,
             dataset=dataset,
@@ -183,6 +183,7 @@ def run_inference_on_dataset(
             if return_full_data:
                 statistics.append(task_results["stats"])
                 full_data_sample = task_results["full_data"]
+                return_full_data = False
             else:
                 statistics.append(task_results)
 
@@ -398,7 +399,7 @@ def create_test_subset(
 
 
 def run_inference(
-    runner_config: RunnerConfigBase,
+    model_config: ModelConfigBase,
     dataset: TrajectoryDatasetBase,
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
@@ -413,12 +414,12 @@ def run_inference(
     generation_dir = os.path.join(generations_dir, experiment_name)
     os.makedirs(generation_dir, exist_ok=True)
 
-    config_dict = runner_config.to_dict()
+    config_dict = model_config.to_dict()
     config_dict["n_tasks"] = n_tasks
     config_dict["n_samples"] = n_samples
     save_config_to_yaml(config_dict, os.path.join(generation_dir, "config.yaml"))
 
-    model_wrapper = runner_config.prepare(
+    model_wrapper = model_config.prepare(
         dataset=dataset, tensor_args=tensor_args, n_samples=n_samples
     )
 
@@ -478,7 +479,7 @@ def run_inference(
             visualize_results(
                 results=vis_results,
                 dataset=dataset,
-                use_extra_objects=runner_config.use_extra_objects,
+                use_extra_objects=model_config.use_extra_objects,
                 generation_dir=generation_dir,
                 generate_animation=False,
             )

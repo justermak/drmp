@@ -3,8 +3,8 @@ from typing import Set
 import torch
 
 from drmp.planning.metrics import compute_path_length, compute_sharpness
-from drmp.world.environments import EnvBase
-from drmp.world.robot import RobotBase
+from drmp.universe.environments import EnvBase
+from drmp.universe.robot import RobotBase
 
 
 def filter_longest_trajectories(

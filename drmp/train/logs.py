@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from drmp.planning.guide import Guide
 import numpy as np
 import torch
 from torch.utils.data import Subset
@@ -21,7 +22,7 @@ from drmp.utils.visualizer import Visualizer
 def _log_trajectories_metrics(
     model: DiffusionModelBase,
     context: torch.Tensor,
-    hard_conds: dict,
+    hard_conditions: dict,
     dataset: TrajectoryDatasetBase,
     planning_visualizer: Visualizer,
     tensorboard_writer: SummaryWriter,
@@ -29,17 +30,17 @@ def _log_trajectories_metrics(
     suffix: str,
     step: int,
     guide=None,
-    use_extra_objects: bool = False,
-    start_guide_steps_fraction: float = 0.0,
-    n_guide_steps: int = 5,
+    use_extra_objects: bool = None,
+    t_start_guide: float = None,
+    n_guide_steps: int = None,
 ) -> None:
     trajectories_normalized = model.run_inference(
-        context,
-        hard_conds,
-        n_samples=25,
-        start_guide_steps_fraction=start_guide_steps_fraction,
+        n_samples=20,
+        hard_conditions=hard_conditions,
+        context=context,
         guide=guide,
         n_guide_steps=n_guide_steps,
+        t_start_guide=t_start_guide,
     )[-1]
 
     trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
@@ -108,15 +109,15 @@ def log(
     step: int,
     model: DiffusionModelBase,
     subset: Subset,
+    prefix: str,
+    tensorboard_writer: SummaryWriter,
+    guide: Guide,
+    guide_extra: Guide,
+    t_start_guide: float,
+    n_guide_steps: int,
     train_losses: dict = None,
     val_losses: dict = None,
-    prefix: str = "",
-    tensorboard_writer: SummaryWriter = None,
     debug: bool = False,
-    guide=None,
-    guide_extra=None,
-    start_guide_steps_fraction: float = 0.0,
-    n_guide_steps: int = 5,
 ):
     model.eval()
     with torch.no_grad():
@@ -140,7 +141,7 @@ def log(
         data_normalized = dataset[trajectory_id]
 
         context = model.build_context(data_normalized)
-        hard_conds = model.build_hard_conditions(data_normalized)
+        hard_conditions = model.build_hard_conditions(data_normalized)
 
         planning_visualizer = Visualizer(
             env=dataset.env, robot=dataset.robot, use_extra_objects=False
@@ -153,7 +154,7 @@ def log(
             _log_trajectories_metrics(
                 model=model,
                 context=context,
-                hard_conds=hard_conds,
+                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer,
                 tensorboard_writer=tensorboard_writer,
@@ -167,7 +168,7 @@ def log(
             _log_trajectories_metrics(
                 model=model,
                 context=context,
-                hard_conds=hard_conds,
+                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer,
                 tensorboard_writer=tensorboard_writer,
@@ -175,7 +176,7 @@ def log(
                 suffix="_guide",
                 step=step,
                 guide=guide,
-                start_guide_steps_fraction=start_guide_steps_fraction,
+                t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
             )
 
@@ -183,7 +184,7 @@ def log(
             _log_trajectories_metrics(
                 model=model,
                 context=context,
-                hard_conds=hard_conds,
+                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer_extra,
                 tensorboard_writer=tensorboard_writer,
@@ -192,6 +193,6 @@ def log(
                 step=step,
                 guide=guide_extra,
                 use_extra_objects=True,
-                start_guide_steps_fraction=start_guide_steps_fraction,
+                t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
             )

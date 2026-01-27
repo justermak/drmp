@@ -7,9 +7,9 @@ from matplotlib import pyplot as plt
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 from matplotlib.patches import BoxStyle, FancyBboxPatch
 
-from drmp.world.environments import EnvBase
-from drmp.world.primitives import MultiBoxField, MultiSphereField
-from drmp.world.robot import RobotBase
+from drmp.universe.environments import EnvBase
+from drmp.universe.primitives import MultiBoxField, MultiSphereField
+from drmp.universe.robot import RobotBase
 
 
 class Visualizer:

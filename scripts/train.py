@@ -58,33 +58,48 @@ def run(args):
         dataset = TrajectoryDatasetDense(**dataset_init_config)
     dataset.load_data(normalizer_name=args.normalizer_name)
 
-    filtering_config = {
-        "filter_collision": {} if args.filter_collision else None,
-        "filter_longest_trajectories": {"portion": args.filter_longest_portion}
-        if args.filter_longest_portion is not None
-        else None,
-        "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion}
-        if args.filter_sharpest_portion is not None
-        else None,
+    dataset_usage_config = {
+        "filtering": {
+            "filter_collision": {} if args.filter_collision else None,
+            "filter_longest_trajectories": {"portion": args.filter_longest_portion}
+            if args.filter_longest_portion is not None
+            else None,
+            "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion}
+            if args.filter_sharpest_portion is not None
+            else None,
+        },
+        "normalizer_name": args.normalizer_name,
+        "apply_augmentations": args.apply_augmentations,
     }
-    print("\nFiltering configuration:")
-    for filter_name, params in filtering_config.items():
+    if args.diffusion_model_name == "GaussianDiffusionSplines":
+        dataset_usage_config["n_control_points"] = args.n_control_points
+        dataset_usage_config["spline_degree"] = args.spline_degree
+    print("\nDataset usage configuration:")
+    for key, value in dataset_usage_config.items():
+        if key != "filtering":
+            print(f"{key}: {value}")
+    print("Filtering:")
+    for filter_name, params in dataset_usage_config["filtering"].items():
         print(f"{filter_name}: {params}")
+    
 
     train_subset, train_dataloader, val_subset, val_dataloader = (
         dataset.load_train_val_split(
             batch_size=args.batch_size,
-            filtering_config=filtering_config,
+            usage_config=dataset_usage_config,
         )
     )
 
     assert args.state_dim == dataset.robot.n_dim
+    assert args.horizon == (dataset.n_support_points 
+        if args.diffusion_model_name == "GaussianDiffusion"
+        else dataset.real_n_control_points
+    )
 
     model = MODELS[args.diffusion_model_name](
+        dataset=dataset,
         state_dim=args.state_dim,
-        n_support_points=dataset.n_support_points
-        if args.diffusion_model_name == "GaussianDiffusion"
-        else dataset.real_n_control_points,
+        horizon=args.horizon,
         unet_hidden_dim=args.hidden_dim,
         unet_dim_mults=eval(args.dim_mults),
         unet_kernel_size=args.kernel_size,
@@ -103,9 +118,9 @@ def run(args):
 
     checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
-    filtering_config_path = os.path.join(checkpoint_dir, "filtering_config.yaml")
-    save_config_to_yaml(filtering_config, filtering_config_path)
-    print(f"\nSaved filtering config to {filtering_config_path}")
+    dataset_usage_config_path = os.path.join(checkpoint_dir, "dataset_usage_config.yaml")
+    save_config_to_yaml(dataset_usage_config, dataset_usage_config_path)
+    print(f"\nSaved dataset_usage config to {dataset_usage_config_path}")
 
     train(
         checkpoint_name=checkpoint_name,
@@ -130,6 +145,7 @@ def run(args):
         tensor_args=tensor_args,
         guide_sigma_collision=args.guide_sigma_collision,
         guide_sigma_gp=args.guide_sigma_gp,
+        guide_sigma_velocity=args.guide_sigma_velocity,
         guide_max_grad_norm=args.guide_max_grad_norm,
         guide_n_interpolate=args.guide_n_interpolate,
         guide_t_start_guide=args.guide_t_start_guide,

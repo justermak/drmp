@@ -6,9 +6,9 @@ import torch
 
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.trajectory_utils import interpolate_trajectories
-from drmp.world.grid_map_sdf import GridMapSDF
-from drmp.world.primitives import MultiBoxField, MultiSphereField, ObjectField
-from drmp.world.robot import RobotBase
+from drmp.universe.grid_map_sdf import GridMapSDF
+from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectField
+from drmp.universe.robot import RobotBase
 
 
 def get_envs():
@@ -117,19 +117,19 @@ class EnvBase(ABC):
 
     def compute_cost(
         self,
-        qs: torch.Tensor,
+        trajectories: torch.Tensor,
         robot: RobotBase,
         on_fixed: bool = True,
         on_extra: bool = False,
     ) -> torch.Tensor:
-        qs = robot.get_position(qs)
-        total_cost = torch.zeros(qs.shape[:-1], **self.tensor_args)
+        trajectories_pos = robot.get_position(trajectories)
+        total_cost = torch.zeros(trajectories_pos.shape[:-1], **self.tensor_args)
         if on_fixed:
-            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(qs)
+            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(trajectories_pos)
             cost_fixed = torch.relu(robot.margin - sdf_fixed).sum(dim=-1)
             total_cost += cost_fixed
         if on_extra:
-            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(qs)
+            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(trajectories_pos)
             cost_extra = torch.relu(robot.margin - sdf_extra).sum(dim=-1)
             total_cost += cost_extra
 

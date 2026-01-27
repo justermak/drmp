@@ -8,9 +8,9 @@ from drmp.datasets.dataset import (
     TrajectoryDatasetBSpline,
     TrajectoryDatasetDense,
 )
-from drmp.inference.guides import Guide
+from drmp.planning.guide import Guide, GuideSlow
 from drmp.models.diffusion import DiffusionModelBase
-from drmp.planning.costs.cost_functions import (
+from drmp.planning.costs import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
@@ -26,7 +26,7 @@ from drmp.utils.trajectory_utils import (
 )
 
 
-class RunnerModelWrapperBase(ABC):
+class ModelWrapperBase(ABC):
     def __init__(self, use_extra_objects: bool):
         self.use_extra_objects = use_extra_objects
 
@@ -40,7 +40,7 @@ class RunnerModelWrapperBase(ABC):
         pass
 
 
-class DiffusionModelWrapper(RunnerModelWrapperBase):
+class DiffusionModelWrapper(ModelWrapperBase):
     def __init__(
         self,
         model: DiffusionModelBase,
@@ -64,15 +64,15 @@ class DiffusionModelWrapper(RunnerModelWrapperBase):
         n_samples: int,
     ):
         context = self.model.build_context(data_normalized)
-        hard_conds = self.model.build_hard_conditions(data_normalized)
+        hard_conditions = self.model.build_hard_conditions(data_normalized)
 
         trajectories_iters_normalized = self.model.run_inference(
-            context=context,
-            hard_conds=hard_conds,
             n_samples=n_samples,
-            t_start_guide=self.t_start_guide,
+            hard_conditions=hard_conditions,
+            context=context,
             guide=self.guide,
             n_guide_steps=self.n_guide_steps,
+            t_start_guide=self.t_start_guide,
             ddim=self.ddim,
         )
 
@@ -92,7 +92,7 @@ class DiffusionModelWrapper(RunnerModelWrapperBase):
         return trajectories_iters, trajectories_final
 
 
-class MPDModelWrapper(RunnerModelWrapperBase):
+class MPDModelWrapper(ModelWrapperBase):
     def __init__(
         self,
         model: Any,
@@ -115,7 +115,7 @@ class MPDModelWrapper(RunnerModelWrapperBase):
         data_normalized: Dict[str, Any],
         n_samples: int,
     ):
-        hard_conds = {
+        hard_conditions = {
             0: torch.cat(
                 [
                     data_normalized["start_pos_normalized"],
@@ -134,7 +134,7 @@ class MPDModelWrapper(RunnerModelWrapperBase):
 
         trajectories_iters_normalized = self.model.run_inference(
             context=None,
-            hard_conds=hard_conds,
+            hard_conditions=hard_conditions,
             n_samples=n_samples,
             start_guide_steps_fraction=self.start_guide_steps_fraction,
             guide=self.guide,
@@ -152,7 +152,7 @@ class MPDModelWrapper(RunnerModelWrapperBase):
         return trajectories_iters, trajectories_final
 
 
-class MPDSplinesModelWrapper(RunnerModelWrapperBase):
+class MPDSplinesModelWrapper(ModelWrapperBase):
     def __init__(
         self,
         model: Any,
@@ -190,7 +190,7 @@ class MPDSplinesModelWrapper(RunnerModelWrapperBase):
             "qs_normalized": torch.cat((start, goal), dim=-1),
         }
 
-        hard_conds = {
+        hard_conditions = {
             0: start,
             1: start,
             horizon - 2: goal,
@@ -204,7 +204,7 @@ class MPDSplinesModelWrapper(RunnerModelWrapperBase):
         control_points_iters = self.model.run_inference(
             guide=self.guide,
             context_d=context,
-            hard_conds=hard_conds,
+            hard_conditions=hard_conditions,
             n_samples=n_samples,
             horizon=horizon,
             return_chain=True,
@@ -227,7 +227,7 @@ class MPDSplinesModelWrapper(RunnerModelWrapperBase):
         return trajectories_iters, trajectories_iters[-1]
 
 
-class ClassicalPlannerWrapper(RunnerModelWrapperBase):
+class ClassicalPlannerWrapper(ModelWrapperBase):
     def __init__(
         self,
         planner: ClassicalPlanner,
@@ -314,7 +314,7 @@ class ClassicalPlannerWrapper(RunnerModelWrapperBase):
             self.planner.sample_based_planner.shutdown()
 
 
-class RunnerConfigBase(ABC):
+class ModelConfigBase(ABC):
     def __init__(self, use_extra_objects: bool):
         self.use_extra_objects = use_extra_objects
 
@@ -324,7 +324,7 @@ class RunnerConfigBase(ABC):
         dataset: TrajectoryDatasetDense,
         n_samples: int,
         tensor_args: Dict[str, Any],
-    ) -> RunnerModelWrapperBase:
+    ) -> ModelWrapperBase:
         pass
 
     @abstractmethod
@@ -332,7 +332,7 @@ class RunnerConfigBase(ABC):
         pass
 
 
-class DiffusionRunnerConfig(RunnerConfigBase):
+class DiffusionConfig(ModelConfigBase):
     def __init__(
         self,
         model: DiffusionModelBase,
@@ -363,29 +363,34 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> DiffusionModelWrapper:
-        collision_cost = CostCollision(
-            robot=dataset.robot,
-            env=dataset.env,
-            n_support_points=dataset.n_support_points,
-            sigma_collision=self.sigma_collision,
-            use_extra_objects=self.use_extra_objects,
-            tensor_args=tensor_args,
-        )
+        collision_cost = None
+        if self.sigma_collision is not None:
+            collision_cost = CostCollision(
+                robot=dataset.robot,
+                env=dataset.env,
+                n_support_points=dataset.n_support_points,
+                sigma_collision=self.sigma_collision,
+                use_extra_objects=self.use_extra_objects,
+                tensor_args=tensor_args,
+            )
         
-
-        gp_cost = CostGPTrajectory(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            sigma_gp=self.sigma_gp,
-            tensor_args=tensor_args,
-        )
+        gp_cost = None
+        if self.sigma_gp is not None:
+            gp_cost = CostGPTrajectory(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                sigma_gp=self.sigma_gp,
+                tensor_args=tensor_args,
+            )
         
-        velocity_cost = CostJointVelocity(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            sigma_velocity=self.sigma_velocity,
-            tensor_args=tensor_args,
-        )
+        velocity_cost = None
+        if self.sigma_velocity is not None:
+            velocity_cost = CostJointVelocity(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                sigma_velocity=self.sigma_velocity,
+                tensor_args=tensor_args,
+            )
             
         costs = [collision_cost, gp_cost, velocity_cost]
 
@@ -396,7 +401,7 @@ class DiffusionRunnerConfig(RunnerConfigBase):
             tensor_args=tensor_args,
         )
 
-        guide = Guide(
+        guide = GuideSlow(
             dataset=dataset,
             cost=cost,
             max_grad_norm=self.max_grad_norm,
@@ -427,7 +432,7 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         }
 
 
-class MPDRunnerConfig(RunnerConfigBase):
+class MPDConfig(ModelConfigBase):
     def __init__(
         self,
         model: Any,
@@ -488,7 +493,6 @@ class MPDRunnerConfig(RunnerConfigBase):
             )
 
             guide = Guide(
-                dataset=dataset,
                 cost=cost,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
@@ -517,7 +521,7 @@ class MPDRunnerConfig(RunnerConfigBase):
         }
 
 
-class MPDSplinesRunnerConfig(RunnerConfigBase):
+class MPDSplinesConfig(ModelConfigBase):
     def __init__(
         self,
         model: Any,
@@ -584,7 +588,6 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
             )
 
             guide = Guide(
-                dataset=dataset,
                 cost=cost,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
@@ -618,7 +621,7 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
         }
 
 
-class RRTConnectRunnerConfig(RunnerConfigBase):
+class RRTConnectConfig(ModelConfigBase):
     def __init__(
         self,
         sample_steps: int,
@@ -669,7 +672,7 @@ class RRTConnectRunnerConfig(RunnerConfigBase):
         }
 
 
-class GPMP2UninformativeRunnerConfig(RunnerConfigBase):
+class GPMP2UninformativeConfig(ModelConfigBase):
     def __init__(
         self,
         opt_steps: int,
@@ -750,7 +753,7 @@ class GPMP2UninformativeRunnerConfig(RunnerConfigBase):
         }
 
 
-class GPMP2RRTPriorRunnerConfig(RunnerConfigBase):
+class GPMP2RRTPriorConfig(ModelConfigBase):
     def __init__(
         self,
         sample_steps: int,

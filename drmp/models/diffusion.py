@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple
 
+from drmp.datasets.dataset import TrajectoryDatasetBase
+from drmp.utils.trajectory_utils import fit_bsplines_to_trajectories, get_trajectories_from_bsplines
 import numpy as np
 import torch
 import torch.nn as nn
 
-from drmp.inference.guides import Guide
+from drmp.planning.guide import Guide
 from drmp.models.temporal_unet import TemporalUNet
 
 
@@ -30,7 +32,8 @@ def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):
 class DiffusionModelBase(nn.Module, ABC):
     def __init__(
         self,
-        n_support_points: int,
+        dataset: TrajectoryDatasetBase,
+        horizon: int,
         state_dim: int,
         unet_hidden_dim: int,
         unet_dim_mults: tuple,
@@ -45,7 +48,8 @@ class DiffusionModelBase(nn.Module, ABC):
         predict_epsilon: bool,
     ):
         super().__init__()
-        self.n_support_points = n_support_points
+        self.dataset = dataset
+        self.horizon = horizon
         self.state_dim = state_dim
         self.unet_hidden_dim = unet_hidden_dim
         self.unet_dim_mults = unet_dim_mults
@@ -113,14 +117,8 @@ class DiffusionModelBase(nn.Module, ABC):
         self.loss_fn = nn.MSELoss()
 
     @abstractmethod
-    def build_hard_conditions(
-        self, input_dict: Dict[str, torch.Tensor]
-    ) -> Dict[str, torch.Tensor]:
-        pass
-
-    @abstractmethod
     def apply_hard_conditioning(
-        self, x: torch.Tensor, hard_conds: Dict[str, torch.Tensor]
+        self, x: torch.Tensor, hard_conditions: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
         pass
 
@@ -129,16 +127,17 @@ class DiffusionModelBase(nn.Module, ABC):
         self, input_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
         pass
-
-    def build_context(self, input_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
-        context = torch.cat(
-            [
-                input_dict["start_pos_normalized"].view(-1, self.unet_context_dim // 2),
-                input_dict["goal_pos_normalized"].view(-1, self.unet_context_dim // 2),
-            ],
-            dim=-1,
-        )
-        return context
+    
+    @abstractmethod
+    def guide_gradient_steps(
+        self,
+        x: torch.Tensor,
+        hard_conditions: Dict[str, torch.Tensor],
+        guide: Guide,
+        n_guide_steps: int,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        pass
 
     def extract(self, a, t, x_shape) -> torch.Tensor:
         out = a.gather(-1, t)
@@ -193,26 +192,30 @@ class DiffusionModelBase(nn.Module, ABC):
         )
         return model_mean, posterior_variance, posterior_log_variance
 
-    def guide_gradient_steps(
-        self,
-        x: torch.Tensor,
-        hard_conds: Dict[str, torch.Tensor],
-        guide: Guide,
-        n_guide_steps: int,
-        debug: bool = False,
-    ) -> torch.Tensor:
-        for _ in range(n_guide_steps):
-            grad_scaled = guide(x)
-            x = x + grad_scaled
-            x = self.apply_hard_conditioning(x, hard_conds)
-
-        return x
+    def build_hard_conditions(self, input_dict):
+        hard_conditions = {
+            "start_pos_normalized": input_dict["start_pos_normalized"],
+            "goal_pos_normalized": input_dict["goal_pos_normalized"],
+            "start_pos": input_dict["start_pos"],
+            "goal_pos": input_dict["goal_pos"],
+        }
+        return hard_conditions
+    
+    def build_context(self, input_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        context = torch.cat(
+            [
+                input_dict["start_pos_normalized"].view(-1, self.unet_context_dim // 2),
+                input_dict["goal_pos_normalized"].view(-1, self.unet_context_dim // 2),
+            ],
+            dim=-1,
+        )
+        return context
 
     @torch.no_grad()
     def ddpm_sample(
         self,
         n_samples: int,
-        hard_conds: Dict[str, torch.Tensor],
+        hard_conditions: Dict[str, torch.Tensor],
         context: torch.Tensor,
         guide: Guide,
         n_guide_steps: int,
@@ -220,9 +223,9 @@ class DiffusionModelBase(nn.Module, ABC):
     ) -> torch.Tensor:
         device = self.betas.device
         x = torch.randn(
-            (n_samples, self.n_support_points, self.state_dim), device=device
+            (n_samples, self.horizon, self.state_dim), device=device
         )
-        x = self.apply_hard_conditioning(x, hard_conds)
+        x = self.apply_hard_conditioning(x, hard_conditions)
 
         chain = [x]
 
@@ -242,7 +245,7 @@ class DiffusionModelBase(nn.Module, ABC):
             if guide is not None and time <= t_start_guide:
                 x = self.guide_gradient_steps(
                     x=x,
-                    hard_conds=hard_conds,
+                    hard_conditions=hard_conditions,
                     guide=guide,
                     n_guide_steps=n_guide_steps,
                     debug=False,
@@ -252,7 +255,7 @@ class DiffusionModelBase(nn.Module, ABC):
             noise[t == 0] = 0
 
             x = x + model_std * noise
-            x = self.apply_hard_conditioning(x, hard_conds)
+            x = self.apply_hard_conditioning(x, hard_conditions)
 
             chain.append(x)
 
@@ -264,7 +267,7 @@ class DiffusionModelBase(nn.Module, ABC):
     # def ddim_sample(
     #     self,
     #     n_samples: int,
-    #     hard_conds: Dict[str, torch.Tensor],
+    #     hard_conditions: Dict[str, torch.Tensor],
     #     context: torch.Tensor,
     #     guide: Guide,
     #     n_guide_steps: int,
@@ -287,8 +290,8 @@ class DiffusionModelBase(nn.Module, ABC):
     #         zip(times[:-1], times[1:])
     #     )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-    #     x = torch.randn((n_samples, self.n_support_points, self.state_dim), device=device)
-    #     x = self.apply_hard_conditioning(x, hard_conds)
+    #     x = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
+    #     x = self.apply_hard_conditioning(x, hard_conditions)
 
     #     chain = [x]
 
@@ -305,7 +308,7 @@ class DiffusionModelBase(nn.Module, ABC):
 
     #         if time_next < 0:
     #             x = x_start
-    #             x = self.apply_hard_conditioning(x, hard_conds)
+    #             x = self.apply_hard_conditioning(x, hard_conditions)
     #             chain.append(x)
     #             break
 
@@ -322,7 +325,7 @@ class DiffusionModelBase(nn.Module, ABC):
     #         if guide is not None and time <= t_start_guide:
     #             x = self.guide_gradient_steps(
     #                 x,
-    #                 hard_conds=hard_conds,
+    #                 hard_conditions=hard_conditions,
     #                 guide=guide,
     #                 n_guide_steps=n_guide_steps,
     #                 debug=False,
@@ -330,7 +333,7 @@ class DiffusionModelBase(nn.Module, ABC):
 
     #         noise = torch.randn_like(x)
     #         x = x + sigma * noise
-    #         x = self.apply_hard_conditioning(x, hard_conds)
+    #         x = self.apply_hard_conditioning(x, hard_conditions)
 
     #         chain.append(x)
 
@@ -339,23 +342,24 @@ class DiffusionModelBase(nn.Module, ABC):
     @torch.no_grad()
     def run_inference(
         self,
-        hard_conds: Dict[str, torch.Tensor],
+        n_samples: int,
+        hard_conditions: Dict[str, torch.Tensor],
         context: torch.Tensor,
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        n_samples: int,
-        ddim: bool,
+        ddim: bool = False,
     ) -> torch.Tensor:
-        for k, v in hard_conds.items():
-            hard_conds[k] = v.repeat(n_samples, 1)
+        hard_conditions = hard_conditions.copy()
+        for k, v in hard_conditions.items():
+            hard_conditions[k] = v.repeat(n_samples, 1)
 
         context = context.repeat(n_samples, 1)
 
         if ddim:
             trajectories_normalized = self.ddim_sample(
-                n_samples,
-                hard_conds,
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
                 context=context,
                 t_start_guide=t_start_guide,
                 guide=guide,
@@ -363,8 +367,8 @@ class DiffusionModelBase(nn.Module, ABC):
             )
         else:
             trajectories_normalized = self.ddpm_sample(
-                n_samples,
-                hard_conds,
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
                 context=context,
                 t_start_guide=t_start_guide,
                 guide=guide,
@@ -386,14 +390,14 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return sample
 
-    def p_losses(self, x_start, context, t, hard_conds) -> torch.Tensor:
+    def p_losses(self, x_start, context, t, hard_conditions) -> torch.Tensor:
         noise = torch.randn_like(x_start)
 
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        x_noisy = self.apply_hard_conditioning(x_noisy, hard_conds)
+        x_noisy = self.apply_hard_conditioning(x_noisy, hard_conditions)
 
         x_recon = self.model(x_noisy, t, context)
-        x_recon = self.apply_hard_conditioning(x_recon, hard_conds)
+        x_recon = self.apply_hard_conditioning(x_recon, hard_conditions)
 
         assert noise.shape == x_recon.shape
 
@@ -404,17 +408,18 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return loss
 
-    def loss(self, x, context, hard_conds) -> torch.Tensor:
+    def loss(self, x, context, hard_conditions) -> torch.Tensor:
         t = torch.randint(
             0, self.n_diffusion_steps, (x.shape[0],), device=x.device
         ).long()
-        return self.p_losses(x, context=context, t=t, hard_conds=hard_conds)
+        return self.p_losses(x, context=context, t=t, hard_conditions=hard_conditions)
 
 
 class GaussianDiffusion(DiffusionModelBase):
     def __init__(
         self,
-        n_support_points: int,
+        dataset: TrajectoryDatasetBase,
+        horizon: int,
         state_dim: int,
         unet_hidden_dim: int,
         unet_dim_mults: tuple,
@@ -430,7 +435,8 @@ class GaussianDiffusion(DiffusionModelBase):
         **kwargs,
     ):
         super().__init__(
-            n_support_points=n_support_points,
+            dataset=dataset,
+            horizon=horizon,
             state_dim=state_dim,
             unet_hidden_dim=unet_hidden_dim,
             unet_dim_mults=unet_dim_mults,
@@ -445,36 +451,46 @@ class GaussianDiffusion(DiffusionModelBase):
             predict_epsilon=predict_epsilon,
         )
 
-    def build_hard_conditions(self, input_dict):
-        hard_conds = {
-            "start_pos_normalized": input_dict["start_pos_normalized"].view(
-                -1, self.unet_context_dim // 2
-            ),
-            "goal_pos_normalized": input_dict["goal_pos_normalized"].view(
-                -1, self.unet_context_dim // 2
-            ),
-        }
-        return hard_conds
-
     def apply_hard_conditioning(self, x, conditions):
-        x[:, 0, :] = conditions["start_pos_normalized"].clone()
-        x[:, -1, :] = conditions["goal_pos_normalized"].clone()
+        x[:, 0, :] = conditions["start_pos_normalized"]
+        x[:, -1, :] = conditions["goal_pos_normalized"]
+        return x
+    
+    def apply_hard_conditioning_unnormalized(self, x, conditions):
+        x[:, 0, :] = conditions["start_pos"]
+        x[:, -1, :] = conditions["goal_pos"]
         return x
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         trajectories_normalized = input_dict["trajectories_normalized"]
         context = self.build_context(input_dict)
-        hard_conds = self.build_hard_conditions(input_dict)
-        loss = self.loss(trajectories_normalized, context, hard_conds)
+        hard_conditions = self.build_hard_conditions(input_dict)
+        loss = self.loss(trajectories_normalized, context, hard_conditions)
         loss_dict = {"diffusion_loss": loss}
 
         return loss_dict
+    
+    def guide_gradient_steps(
+        self,
+        x: torch.Tensor,
+        hard_conditions: Dict[str, torch.Tensor],
+        guide: Guide,
+        n_guide_steps: int,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        x_unnormalized = self.dataset.normalizer.unnormalize(x)
+        for _ in range(n_guide_steps):
+            x_unnormalized = x_unnormalized + guide(x_unnormalized)
+            x_unnormalized = self.apply_hard_conditioning_unnormalized(x_unnormalized, hard_conditions)
+        x = self.dataset.normalizer.normalize(x_unnormalized)
+        return x
 
 
 class GaussianDiffusionSplines(DiffusionModelBase):
     def __init__(
         self,
-        n_support_points: int,
+        dataset: TrajectoryDatasetBase,
+        horizon: int,
         state_dim: int,
         unet_hidden_dim: int,
         unet_dim_mults: tuple,
@@ -491,7 +507,8 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         **kwargs,
     ):
         super().__init__(
-            n_support_points=n_support_points,
+            dataset=dataset,
+            horizon=horizon,
             state_dim=state_dim,
             unet_hidden_dim=unet_hidden_dim,
             unet_dim_mults=unet_dim_mults,
@@ -507,16 +524,7 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         )
         self.spline_degree = spline_degree
 
-    def build_hard_conditions(self, input_dict):
-        hard_conds = {
-            "start_pos_normalized": input_dict["start_pos_normalized"].view(
-                -1, self.state_dim
-            ),
-            "goal_pos_normalized": input_dict["goal_pos_normalized"].view(
-                -1, self.state_dim
-            ),
-        }
-        return hard_conds
+    
 
     def apply_hard_conditioning(self, x, conditions):
         x[:, : self.spline_degree - 1, :] = (
@@ -530,12 +538,48 @@ class GaussianDiffusionSplines(DiffusionModelBase):
             .repeat(1, self.spline_degree - 1, 1)
         )
         return x
+    
+    def apply_hard_conditioning_unnormalized_dense(self, x_dense, conditions):
+        x_dense[:, 0, :] = conditions["start_pos"]
+        x_dense[:, -1, :] = conditions["goal_pos"]
+        return x_dense
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         control_points_normalized = input_dict["control_points_normalized"]
         context = self.build_context(input_dict)
-        hard_conds = self.build_hard_conditions(input_dict)
-        loss = self.loss(control_points_normalized, context, hard_conds)
+        hard_conditions = self.build_hard_conditions(input_dict)
+        loss = self.loss(control_points_normalized, context, hard_conditions)
         loss_dict = {"diffusion_loss": loss}
-
         return loss_dict
+    
+    def guide_gradient_steps(
+        self,
+        x: torch.Tensor,
+        hard_conditions: Dict[str, torch.Tensor],
+        guide: Guide,
+        n_guide_steps: int,
+        debug: bool = False,
+    ) -> torch.Tensor:
+        # x_unnormalized = self.dataset.normalizer.unnormalize(x)
+        # x_unnormalized_dense = get_trajectories_from_bsplines(
+        #     control_points=x_unnormalized,
+        #     n_support_points=self.dataset.n_support_points,
+        #     degree=self.spline_degree,
+        # )
+        # for _ in range(n_guide_steps):
+        #     grad_scaled = guide(x=x_unnormalized_dense)
+        #     x_unnormalized_dense = x_unnormalized_dense + grad_scaled
+        #     x_unnormalized_dense = self.apply_hard_conditioning_unnormalized_dense(x_unnormalized_dense, hard_conditions)
+        
+        # x_unnormalized = fit_bsplines_to_trajectories(
+        #     trajectories=x_unnormalized_dense,
+        #     n_control_points=self.horizon,
+        #     degree=self.spline_degree,
+        # )
+        # x = self.dataset.normalizer.normalize(x_unnormalized)
+        
+        for _ in range(n_guide_steps):
+            x = x + guide(x)
+            x = self.apply_hard_conditioning(x, hard_conditions)
+        
+        return x

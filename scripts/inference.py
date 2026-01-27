@@ -6,14 +6,14 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
-from drmp.inference.runner import create_test_subset, run_inference
-from drmp.inference.runner_config import (
-    DiffusionRunnerConfig,
-    GPMP2RRTPriorRunnerConfig,
-    GPMP2UninformativeRunnerConfig,
-    MPDRunnerConfig,
-    MPDSplinesRunnerConfig,
-    RRTConnectRunnerConfig,
+from drmp.planning.inference import create_test_subset, run_inference
+from drmp.planning.inference_config import (
+    DiffusionConfig,
+    GPMP2RRTPriorConfig,
+    GPMP2UninformativeConfig,
+    MPDConfig,
+    MPDSplinesConfig,
+    RRTConnectConfig,
 )
 from drmp.models.diffusion import get_models
 from drmp.utils.torch_utils import fix_random_seed
@@ -72,14 +72,15 @@ def run(args):
             )
             args.checkpoint_name = checkpoint_folders[0]
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
-        model_config_path = os.path.join(checkpoint_dir, "config.yaml")
-        model_config = load_config_from_yaml(model_config_path)
+        saved_model_config_path = os.path.join(checkpoint_dir, "config.yaml")
+        saved_dataset_usage_config_path = os.path.join(checkpoint_dir, "dataset_usage_config.yaml")
+        saved_model_config = load_config_from_yaml(saved_model_config_path)
+        saved_dataset_usage_config = load_config_from_yaml(saved_dataset_usage_config_path)
 
-        normalizer_name = model_config.get("normalizer_name", "TrivialNormalizer")
-        use_splines = model_config.get("use_splines", False)
-        if use_splines:
-            dataset_init_config["n_control_points"] = model_config["n_control_points"]
-            dataset_init_config["spline_degree"] = model_config["spline_degree"]
+        normalizer_name = saved_dataset_usage_config["normalizer_name"]
+        if saved_model_config["model_name"] == "GaussianDiffusionSplines":
+            dataset_init_config["n_control_points"] = saved_dataset_usage_config["n_control_points"]
+            dataset_init_config["spline_degree"] = saved_dataset_usage_config["spline_degree"]
             dataset = TrajectoryDatasetBSpline(**dataset_init_config)
         else:
             dataset = TrajectoryDatasetDense(**dataset_init_config)
@@ -109,24 +110,24 @@ def run(args):
         if test_subset is None:
             return
 
+    model_config = None
     if args.algorithm == "diffusion":
-        model = MODELS[model_config["model_name"]](
-            state_dim=model_config["state_dim"],
-            n_support_points=model_config["n_support_points"]
-            if model_config["model_name"] == "GaussianDiffusion"
-            else model_config["real_n_control_points"],
-            unet_hidden_dim=model_config["unet_hidden_dim"],
-            unet_dim_mults=eval(model_config["unet_dim_mults"]),
-            unet_kernel_size=model_config["unet_kernel_size"],
-            unet_resnet_block_groups=model_config["unet_resnet_block_groups"],
-            unet_positional_encoding=model_config["unet_positional_encoding"],
-            unet_positional_encoding_dim=model_config["unet_positional_encoding_dim"],
-            unet_attn_heads=model_config["unet_attn_heads"],
-            unet_attn_head_dim=model_config["unet_attn_head_dim"],
-            unet_context_dim=model_config["unet_context_dim"],
-            n_diffusion_steps=model_config["n_diffusion_steps"],
-            predict_epsilon=model_config["predict_epsilon"],
-            spline_degree=model_config.get("spline_degree", None),
+        model = MODELS[saved_model_config["model_name"]](
+            dataset=dataset,
+            state_dim=saved_model_config["state_dim"],
+            horizon=saved_model_config["horizon"],
+            unet_hidden_dim=saved_model_config["unet_hidden_dim"],
+            unet_dim_mults=eval(saved_model_config["unet_dim_mults"]),
+            unet_kernel_size=saved_model_config["unet_kernel_size"],
+            unet_resnet_block_groups=saved_model_config["unet_resnet_block_groups"],
+            unet_positional_encoding=saved_model_config["unet_positional_encoding"],
+            unet_positional_encoding_dim=saved_model_config["unet_positional_encoding_dim"],
+            unet_attn_heads=saved_model_config["unet_attn_heads"],
+            unet_attn_head_dim=saved_model_config["unet_attn_head_dim"],
+            unet_context_dim=saved_model_config["unet_context_dim"],
+            n_diffusion_steps=saved_model_config["n_diffusion_steps"],
+            predict_epsilon=saved_model_config["predict_epsilon"],
+            spline_degree=saved_model_config.get("spline_degree", None),
         ).to(device)
 
         model.load_state_dict(
@@ -134,7 +135,7 @@ def run(args):
                 os.path.join(
                     checkpoint_dir,
                     "ema_model_current_state_dict.pth"
-                    if model_config["use_ema"]
+                    if saved_model_config["use_ema"]
                     else "model_current_state_dict.pth",
                 ),
                 map_location=tensor_args["device"],
@@ -143,7 +144,7 @@ def run(args):
         model.eval()
         model = torch.compile(model)
 
-        runner_config = DiffusionRunnerConfig(
+        model_config = DiffusionConfig(
             model=model,
             use_extra_objects=args.use_extra_objects,
             sigma_collision=args.sigma_collision,
@@ -173,7 +174,7 @@ def run(args):
         model.eval()
         model = torch.compile(model)
 
-        runner_config = MPDSplinesRunnerConfig(
+        model_config = MPDSplinesConfig(
             model=model,
             start_guide_steps_fraction=args.mpd_splines_start_guide_steps_fraction,
             n_guide_steps=args.mpd_splines_n_guide_steps,
@@ -205,7 +206,7 @@ def run(args):
         model.eval()
         model = torch.compile(model)
 
-        runner_config = MPDRunnerConfig(
+        model_config = MPDConfig(
             model=model,
             use_extra_objects=args.use_extra_objects,
             sigma_collision=args.mpd_sigma_collision,
@@ -218,7 +219,7 @@ def run(args):
         )
 
     elif args.algorithm == "rrt-connect":
-        runner_config = RRTConnectRunnerConfig(
+        model_config = RRTConnectConfig(
             use_extra_objects=args.use_extra_objects,
             sample_steps=args.classical_sample_steps,
             rrt_connect_max_step_size=args.rrt_connect_max_step_size,
@@ -228,7 +229,7 @@ def run(args):
         )
 
     elif args.algorithm == "gpmp2-uninformative":
-        runner_config = GPMP2UninformativeRunnerConfig(
+        model_config = GPMP2UninformativeConfig(
             use_extra_objects=args.use_extra_objects,
             opt_steps=args.classical_opt_steps,
             n_dof=args.classical_n_dof,
@@ -244,7 +245,7 @@ def run(args):
         )
 
     elif args.algorithm == "gpmp2-rrt-prior":
-        runner_config = GPMP2RRTPriorRunnerConfig(
+        model_config = GPMP2RRTPriorConfig(
             use_extra_objects=args.use_extra_objects,
             sample_steps=args.classical_sample_steps,
             opt_steps=args.classical_opt_steps,
@@ -270,7 +271,7 @@ def run(args):
         )
 
     run_inference(
-        runner_config=runner_config,
+        model_config=model_config,
         dataset=dataset,
         train_subset=train_subset if "train" in splits else None,
         val_subset=val_subset if "val" in splits else None,

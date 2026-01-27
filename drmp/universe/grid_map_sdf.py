@@ -3,7 +3,7 @@ from typing import Any, Dict
 import torch
 from torch.autograd.functional import jacobian
 
-from drmp.world.primitives import ObjectField
+from drmp.universe.primitives import ObjectField
 
 
 class GridMapSDF:

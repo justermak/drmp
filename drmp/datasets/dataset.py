@@ -19,8 +19,8 @@ from drmp.utils.trajectory_utils import (
 )
 from drmp.utils.visualizer import Visualizer
 from drmp.utils.yaml import save_config_to_yaml
-from drmp.world.environments import EnvBase, get_envs
-from drmp.world.robot import RobotBase, get_robots
+from drmp.universe.environments import EnvBase, get_envs
+from drmp.universe.robot import RobotBase, get_robots
 
 NORMALIZERS = get_normalizers()
 
@@ -520,7 +520,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
     def load_train_val_split(
         self,
         batch_size: int = 1,
-        filtering_config: Dict[str, Any] = {},
+        usage_config: Dict[str, Any] = {},
     ) -> Tuple[Subset, DataLoader, Subset, DataLoader]:
         train_idx = torch.load(os.path.join(self.dataset_dir, "train_idx.pt"))
         val_idx = torch.load(os.path.join(self.dataset_dir, "val_idx.pt"))
@@ -534,7 +534,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
             train_idxs=train_idx,
             val_idxs=val_idx,
             task_start_idxs=task_start_idxs,
-            filtering_config=filtering_config,
+            filtering_config=usage_config.get("filtering", {}),
         )
         print(f"Train dataset size after filtering: {len(train_idx)}")
         print(f"Val dataset size after filtering: {len(val_idx)}")
@@ -592,6 +592,8 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
         trajectory_normalized = self.trajectories_normalized[idx]
         start_pos_normalized = self.start_pos_normalized[idx]
         goal_pos_normalized = self.goal_pos_normalized[idx]
+        start_pos = self.start_pos[idx]
+        goal_pos = self.goal_pos[idx]
 
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
             trajectory_normalized = torch.flip(trajectory_normalized, dims=[0])
@@ -604,6 +606,8 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
             "trajectories_normalized": trajectory_normalized,
             "start_pos_normalized": start_pos_normalized,
             "goal_pos_normalized": goal_pos_normalized,
+            "start_pos": start_pos,
+            "goal_pos": goal_pos,
         }
 
         return data
@@ -667,6 +671,9 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
         control_points_normalized = self.control_points_normalized[idx]
         start_pos_normalized = self.start_pos_normalized[idx]
         goal_pos_normalized = self.goal_pos_normalized[idx]
+        start_pos = self.start_pos[idx]
+        goal_pos = self.goal_pos[idx]
+        
         control_points_normalized_augmented = torch.cat(
             [
                 start_pos_normalized.unsqueeze(0).repeat(self.spline_degree - 1, 1),
@@ -688,6 +695,8 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
             "control_points_normalized": control_points_normalized_augmented,
             "start_pos_normalized": start_pos_normalized,
             "goal_pos_normalized": goal_pos_normalized,
+            "start_pos": start_pos,
+            "goal_pos": goal_pos,
         }
 
         return data

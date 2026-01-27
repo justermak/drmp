@@ -3,8 +3,8 @@ from typing import Any, Dict, List
 
 import torch
 
-from drmp.world.environments import EnvBase
-from drmp.world.robot import RobotBase
+from drmp.universe.environments import EnvBase
+from drmp.universe.robot import RobotBase
 
 
 class ClassicalPlanner(ABC):

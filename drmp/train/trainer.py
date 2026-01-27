@@ -10,9 +10,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
 from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.inference.guides import Guide
+from drmp.planning.guide import Guide
 from drmp.models.diffusion import DiffusionModelBase
-from drmp.planning.costs.cost_functions import (
+from drmp.planning.costs import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
@@ -228,39 +228,44 @@ def train(
 
     dataset: TrajectoryDatasetBase = train_subset.dataset
 
-    collision_cost = CostCollision(
-        robot=dataset.robot,
-        env=dataset.env,
-        n_support_points=dataset.n_support_points,
-        sigma_collision=guide_sigma_collision,
-        use_extra_objects=False,
-        tensor_args=tensor_args,
-    )
+    collision_cost = None
+    if guide_sigma_collision is not None:
+        collision_cost = CostCollision(
+            robot=dataset.robot,
+            env=dataset.env,
+            n_support_points=dataset.n_support_points,
+            sigma_collision=guide_sigma_collision,
+            use_extra_objects=False,
+            tensor_args=tensor_args,
+        )
+    
+        collision_cost_extra = CostCollision(
+            robot=dataset.robot,
+            env=dataset.env,
+            n_support_points=dataset.n_support_points,
+            sigma_collision=guide_sigma_collision,
+            use_extra_objects=True,
+            tensor_args=tensor_args,
+        )
     
 
-    collision_cost_extra = CostCollision(
-        robot=dataset.robot,
-        env=dataset.env,
-        n_support_points=dataset.n_support_points,
-        sigma_collision=guide_sigma_collision,
-        use_extra_objects=True,
-        tensor_args=tensor_args,
-    )
-    
-
-    gp_cost = CostGPTrajectory(
-        robot=dataset.robot,
-        n_support_points=dataset.n_support_points,
-        sigma_gp=guide_sigma_gp,
-        tensor_args=tensor_args,
-    )
-    
-    velocity_cost = CostJointVelocity(
-        robot=dataset.robot,
-        n_support_points=dataset.n_support_points,
-        sigma_velocity=guide_sigma_velocity,
-        tensor_args=tensor_args,
-    )
+    gp_cost = None
+    if guide_sigma_gp is not None:
+        gp_cost = CostGPTrajectory(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            sigma_gp=guide_sigma_gp,
+            tensor_args=tensor_args,
+        )
+        
+    velocity_cost = None
+    if guide_sigma_velocity is not None:
+        velocity_cost =  CostJointVelocity(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            sigma_velocity=guide_sigma_velocity,
+            tensor_args=tensor_args,
+        )
     
 
     costs = [collision_cost, gp_cost, velocity_cost]
@@ -282,14 +287,12 @@ def train(
     )
 
     guide = Guide(
-        dataset=dataset,
         cost=cost,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
 
     guide_extra = Guide(
-        dataset=dataset,
         cost=cost_extra,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
@@ -302,9 +305,8 @@ def train(
         "lr": lr,
         "batch_size": train_dataloader.batch_size,
         "model_name": model.__class__.__name__,
-        "state_dim": dataset.robot.n_dim,
-        "n_support_points": dataset.n_support_points,
-        "use_splines": isinstance(dataset, TrajectoryDatasetBSpline),
+        "state_dim": model.state_dim,
+        "horizon": model.horizon,
         "unet_hidden_dim": model.unet_hidden_dim,
         "unet_dim_mults": str(model.unet_dim_mults),
         "unet_kernel_size": model.unet_kernel_size,

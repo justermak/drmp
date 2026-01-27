@@ -1,25 +1,22 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 
 from drmp.utils.trajectory_utils import interpolate_trajectories
-from drmp.world.environments import EnvBase
-from drmp.world.robot import RobotBase
+from drmp.universe.environments import EnvBase
+from drmp.universe.robot import RobotBase
 
 
 class UnaryFactor:
     def __init__(
         self,
         dim: int,
-        sigma: float,
         mean: torch.Tensor,
         tensor_args: Dict[str, Any] = None,
     ):
         self.dim = dim
-        self.sigma = sigma
         self.mean = mean
         self.tensor_args = tensor_args
-        self.K = torch.eye(dim, **tensor_args) / sigma**2
 
     def get_error(
         self, x: torch.Tensor, calc_jacobian: bool = True
@@ -29,7 +26,6 @@ class UnaryFactor:
         if calc_jacobian:
             H = (
                 torch.eye(self.dim, **self.tensor_args)
-                .unsqueeze(0)
                 .repeat(x.shape[0], 1, 1)
             )
             return error.view(x.shape[0], self.dim, 1), H
@@ -40,43 +36,41 @@ class UnaryFactor:
 class FieldFactor:
     def __init__(
         self,
-        n_dof: int,
+        n_dim: int,
         sigma: float,
-        traj_range: List,
         use_extra_objects: bool = False,
-    ):
+    ) -> None:
         self.sigma = sigma
-        self.n_dof = n_dof
-        self.traj_range = traj_range
+        self.n_dim = n_dim
         self.use_extra_objects = use_extra_objects
-        self.K = 1.0 / (sigma**2)
 
     def get_error(
         self,
-        q_trajectories: torch.Tensor,
+        trajectories: torch.Tensor,
         env: EnvBase,
         robot: RobotBase,
         n_interpolate: int,
-        calc_jacobian: bool = True,
-    ):
+        calc_jacobian: bool = False,
+        return_full_error: bool = True,
+    ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+        trajectories_interpolated = interpolate_trajectories(
+            trajectories, n_interpolate=n_interpolate
+        )
+        error_interpolated = env.compute_cost(
+            trajectories=trajectories_interpolated[:, 1:, :], robot=robot, on_extra=self.use_extra_objects   
+        )
+        error = error_interpolated if return_full_error else env.compute_cost(
+            trajectories=trajectories[:, 1:, :], robot=robot, on_extra=self.use_extra_objects
+        )
+        
         if calc_jacobian:
-            qs_interpolated = interpolate_trajectories(
-                q_trajectories, n_interpolate=n_interpolate
-            )
-            qs = qs_interpolated[:, self.traj_range[0] : self.traj_range[1], :]
-            error_interpolated = env.compute_cost(
-                qs=qs, robot=robot, on_extra=self.use_extra_objects
-            )
             H = -torch.autograd.grad(
-                error_interpolated.sum(), q_trajectories, retain_graph=True
-            )[0][:, self.traj_range[0] : self.traj_range[1], : self.n_dof]
-
-        qs = q_trajectories[:, self.traj_range[0] : self.traj_range[1], :]
-        error = env.compute_cost(qs=qs, robot=robot, on_extra=self.use_extra_objects)
-        if calc_jacobian:
+                error_interpolated.sum(), trajectories, retain_graph=True
+            )[0][:, 1:, :self.n_dim]  
             return error, H
-        else:
-            return error
+        
+        return error
+        
 
 
 class GPFactor:
@@ -87,7 +81,6 @@ class GPFactor:
         dt: float,
         num_factors: int,
         tensor_args: Dict[str, Any],
-        Q_c_inv: torch.Tensor = None,
     ):
         self.dim = dim
         self.dt = dt
@@ -97,18 +90,13 @@ class GPFactor:
         self.idx1 = torch.arange(0, self.num_factors, device=tensor_args["device"])
         self.idx2 = torch.arange(1, self.num_factors + 1, device=tensor_args["device"])
         self.phi = self.calc_phi()
-        if Q_c_inv is None:
-            Q_c_inv = torch.eye(dim, **tensor_args) / sigma**2
+        Q_c_inv = torch.eye(dim, **tensor_args) / sigma**2
         self.Q_c_inv = torch.zeros(num_factors, dim, dim, **tensor_args) + Q_c_inv
         self.Q_inv = self.calc_Q_inv()  # shape: [num_factors, state_dim, state_dim]
 
-        self.H1 = self.phi.unsqueeze(0).repeat(self.num_factors, 1, 1)
-        self.H2 = -1.0 * torch.eye(self.state_dim, **self.tensor_args).unsqueeze(
-            0
-        ).repeat(
-            self.num_factors,
-            1,
-            1,
+        self.H1 = self.phi.repeat(self.num_factors, 1, 1)
+        self.H2 = -1.0 * torch.eye(self.state_dim, **self.tensor_args).repeat(
+            self.num_factors, 1, 1
         )
 
     def calc_phi(self):
