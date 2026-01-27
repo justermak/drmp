@@ -31,6 +31,7 @@ def run_inference_for_task(
     n_samples: int,
     model_wrapper: ModelWrapperBase,
     return_full_data: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     robot = dataset.robot
     env = dataset.env
@@ -39,6 +40,7 @@ def run_inference_for_task(
             dataset=dataset,
             data_normalized=data_normalized,
             n_samples=n_samples,
+            debug=debug,
         )
     task_time = timer_model_sampling.elapsed
     if trajectories_final is None:
@@ -130,6 +132,7 @@ def get_best_trajectory(
         dataset=dataset,
         data_normalized=data_normalized,
         n_samples=n_samples,
+        debug=False,
     )
     if trajectories_final is None:
         return None
@@ -160,6 +163,7 @@ def run_inference_on_dataset(
     n_tasks: int,
     n_samples: int,
     model_wrapper: ModelWrapperBase,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     statistics = []
     full_data_sample = None
@@ -177,6 +181,7 @@ def run_inference_on_dataset(
             n_samples=n_samples,
             model_wrapper=model_wrapper,
             return_full_data=return_full_data,
+            debug=debug,
         )
 
         if task_results is not None:
@@ -436,6 +441,7 @@ def run_inference(
             n_tasks=n_tasks,
             n_samples=n_samples,
             model_wrapper=model_wrapper,
+            debug=debug,
         )
         results["train_stats"] = compute_stats(results["train"])
     if val_subset is not None:
@@ -446,6 +452,7 @@ def run_inference(
             n_tasks=n_tasks,
             n_samples=n_samples,
             model_wrapper=model_wrapper,
+            debug=debug,
         )
         results["val_stats"] = compute_stats(results["val"])
     if test_subset is not None:
@@ -456,6 +463,7 @@ def run_inference(
             n_tasks=n_tasks,
             n_samples=n_samples,
             model_wrapper=model_wrapper,
+            debug=debug,
         )
         results["test_stats"] = compute_stats(results["test"])
 

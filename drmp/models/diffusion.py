@@ -560,26 +560,27 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         n_guide_steps: int,
         debug: bool = False,
     ) -> torch.Tensor:
-        # x_unnormalized = self.dataset.normalizer.unnormalize(x)
-        # x_unnormalized_dense = get_trajectories_from_bsplines(
-        #     control_points=x_unnormalized,
-        #     n_support_points=self.dataset.n_support_points,
-        #     degree=self.spline_degree,
-        # )
-        # for _ in range(n_guide_steps):
-        #     grad_scaled = guide(x=x_unnormalized_dense)
-        #     x_unnormalized_dense = x_unnormalized_dense + grad_scaled
-        #     x_unnormalized_dense = self.apply_hard_conditioning_unnormalized_dense(x_unnormalized_dense, hard_conditions)
-        
-        # x_unnormalized = fit_bsplines_to_trajectories(
-        #     trajectories=x_unnormalized_dense,
-        #     n_control_points=self.horizon,
-        #     degree=self.spline_degree,
-        # )
-        # x = self.dataset.normalizer.normalize(x_unnormalized)
-        
+        x_unnormalized = self.dataset.normalizer.unnormalize(x)
+        x_unnormalized_dense = get_trajectories_from_bsplines(
+            control_points=x_unnormalized,
+            n_support_points=self.dataset.n_support_points,
+            degree=self.spline_degree,
+        )
         for _ in range(n_guide_steps):
-            x = x + guide(x)
-            x = self.apply_hard_conditioning(x, hard_conditions)
+            grad_scaled = guide(x=x_unnormalized_dense)
+            x_unnormalized_dense = x_unnormalized_dense + grad_scaled
+            x_unnormalized_dense = self.apply_hard_conditioning_unnormalized_dense(x_unnormalized_dense, hard_conditions)
+        
+        x_unnormalized = fit_bsplines_to_trajectories(
+            trajectories=x_unnormalized_dense,
+            n_control_points=self.horizon,
+            degree=self.spline_degree,
+        )
+        x = self.dataset.normalizer.normalize(x_unnormalized)
+        
+        # For slow guide that I need to purge
+        # for _ in range(n_guide_steps):
+        #     x = x + guide(x)
+        #     x = self.apply_hard_conditioning(x, hard_conditions)
         
         return x

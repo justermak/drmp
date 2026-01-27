@@ -232,7 +232,7 @@ def run(args):
         model_config = GPMP2UninformativeConfig(
             use_extra_objects=args.use_extra_objects,
             opt_steps=args.classical_opt_steps,
-            n_dof=args.classical_n_dof,
+            n_dim=args.classical_n_dof,
             gpmp2_n_interpolate=args.gpmp2_n_interpolate,
             gpmp2_num_samples=args.gpmp2_num_samples,
             gpmp2_sigma_start=args.gpmp2_sigma_start,
@@ -249,7 +249,7 @@ def run(args):
             use_extra_objects=args.use_extra_objects,
             sample_steps=args.classical_sample_steps,
             opt_steps=args.classical_opt_steps,
-            n_dof=args.classical_n_dof,
+            n_dim=args.classical_n_dof,
             rrt_connect_max_step_size=args.rrt_connect_max_step_size,
             rrt_connect_max_radius=args.rrt_connect_max_radius,
             rrt_connect_n_samples=args.rrt_connect_n_samples,
@@ -262,7 +262,6 @@ def run(args):
             gpmp2_step_size=args.gpmp2_step_size,
             gpmp2_delta=args.gpmp2_delta,
             gpmp2_method=args.gpmp2_method,
-            seed=args.seed,
         )
 
     else:

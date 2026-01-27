@@ -36,6 +36,7 @@ class ModelWrapperBase(ABC):
         dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
+        debug: bool = False,
     ):
         pass
 
@@ -62,6 +63,7 @@ class DiffusionModelWrapper(ModelWrapperBase):
         dataset: TrajectoryDatasetBase,
         data_normalized: Dict[str, Any],
         n_samples: int,
+        debug: bool = False,
     ):
         context = self.model.build_context(data_normalized)
         hard_conditions = self.model.build_hard_conditions(data_normalized)
@@ -114,6 +116,7 @@ class MPDModelWrapper(ModelWrapperBase):
         dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
+        debug: bool = False,
     ):
         hard_conditions = {
             0: torch.cat(
@@ -180,6 +183,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
         dataset: TrajectoryDatasetBSpline,
         data_normalized: Dict[str, Any],
         n_samples: int,
+        debug: bool = False,
     ):
         start = data_normalized["start_pos_normalized"]
         goal = data_normalized["goal_pos_normalized"]
@@ -246,6 +250,7 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         dataset: TrajectoryDatasetDense,
         data_normalized: Dict[str, Any],
         n_samples: int,
+        debug: bool = False,
     ):
         start_pos_normalized = data_normalized["start_pos_normalized"]
         goal_pos_normalized = data_normalized["goal_pos_normalized"]
@@ -264,7 +269,7 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         if self.method == "rrt-connect":
             trajectories_list = self.planner.optimize(
                 sample_steps=self.sample_steps,
-                debug=False,
+                debug=debug,
             )
             if all(t is None for t in trajectories_list):
                 return None, None
@@ -293,13 +298,13 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
             self.planner.reset_trajectories(initial_trajectories)
             trajectories = self.planner.optimize(
                 opt_steps=self.opt_steps,
-                debug=False,
+                debug=debug,
             )
         else:
             trajectories = self.planner.optimize(
                 sample_steps=self.sample_steps,
                 opt_steps=self.opt_steps,
-                debug=False,
+                debug=debug,
             )
 
         trajectories_iters = None
@@ -644,13 +649,13 @@ class RRTConnectConfig(ModelConfigBase):
     ) -> ClassicalPlannerWrapper:
         planner = RRTConnect(
             env=dataset.env,
-            robot=dataset.robot,
-            tensor_args=tensor_args,
-            n_trajectories=n_samples,
+            robot=dataset.generating_robot,
             max_step_size=self.rrt_connect_max_step_size,
-            n_radius=self.rrt_connect_max_radius,
+            max_radius=self.rrt_connect_max_radius,
             n_samples=self.rrt_connect_n_samples,
+            n_trajectories=n_samples,
             use_extra_objects=self.use_extra_objects,
+            tensor_args=tensor_args,
         )
 
         wrapper = ClassicalPlannerWrapper(
@@ -677,7 +682,7 @@ class GPMP2UninformativeConfig(ModelConfigBase):
         self,
         opt_steps: int,
         use_extra_objects: bool,
-        n_dof: int,
+        n_dim: int,
         gpmp2_n_interpolate: int,
         gpmp2_num_samples: int,
         gpmp2_sigma_start: float,
@@ -690,7 +695,7 @@ class GPMP2UninformativeConfig(ModelConfigBase):
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.opt_steps = opt_steps
-        self.n_dof = n_dof
+        self.n_dim = n_dim
         self.gpmp2_n_interpolate = gpmp2_n_interpolate
         self.gpmp2_num_samples = gpmp2_num_samples
         self.gpmp2_sigma_start = gpmp2_sigma_start
@@ -709,7 +714,7 @@ class GPMP2UninformativeConfig(ModelConfigBase):
     ) -> ClassicalPlannerWrapper:
         planner = GPMP2(
             robot=dataset.generating_robot,
-            n_dof=self.n_dof,
+            n_dim=self.n_dim,
             n_trajectories=n_samples,
             env=dataset.env,
             tensor_args=tensor_args,
@@ -740,7 +745,7 @@ class GPMP2UninformativeConfig(ModelConfigBase):
             "algorithm": "gpmp2_uninformative",
             "opt_steps": self.opt_steps,
             "use_extra_objects": self.use_extra_objects,
-            "n_dof": self.n_dof,
+            "n_dim": self.n_dim,
             "gpmp2_n_interpolate": self.gpmp2_n_interpolate,
             "gpmp2_num_samples": self.gpmp2_num_samples,
             "gpmp2_sigma_start": self.gpmp2_sigma_start,
@@ -759,7 +764,7 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
         sample_steps: int,
         opt_steps: int,
         use_extra_objects: bool,
-        n_dof: int,
+        n_dim: int,
         rrt_connect_max_step_size: float,
         rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
@@ -776,7 +781,7 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
         super().__init__(use_extra_objects=use_extra_objects)
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
-        self.n_dof = n_dof
+        self.n_dim = n_dim
         self.rrt_connect_max_step_size = rrt_connect_max_step_size
         self.rrt_connect_max_radius = rrt_connect_max_radius
         self.rrt_connect_n_samples = rrt_connect_n_samples
@@ -799,16 +804,17 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
         sample_based_planner = RRTConnect(
             env=dataset.env,
             robot=dataset.generating_robot,
-            tensor_args=tensor_args,
             max_step_size=self.rrt_connect_max_step_size,
-            n_radius=self.rrt_connect_max_radius,
+            max_radius=self.rrt_connect_max_radius,
             n_samples=self.rrt_connect_n_samples,
+            n_trajectories=n_samples,
             use_extra_objects=self.use_extra_objects,
+            tensor_args=tensor_args,
         )
 
         optimization_based_planner = GPMP2(
             robot=dataset.generating_robot,
-            n_dof=self.n_dof,
+            n_dim=self.n_dim,
             n_trajectories=n_samples,
             env=dataset.env,
             tensor_args=tensor_args,
@@ -846,7 +852,7 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
             "sample_steps": self.sample_steps,
             "opt_steps": self.opt_steps,
             "use_extra_objects": self.use_extra_objects,
-            "n_dof": self.n_dof,
+            "n_dim": self.n_dim,
             "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
             "rrt_connect_max_radius": self.rrt_connect_max_radius,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,

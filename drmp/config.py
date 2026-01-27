@@ -75,7 +75,7 @@ DEFAULT_INFERENCE_ARGS = {
     "n_samples": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "gpmp2-uninformative",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "diffusion",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",

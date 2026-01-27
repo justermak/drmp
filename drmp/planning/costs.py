@@ -21,11 +21,8 @@ class Cost(ABC):
         self.n_support_points = n_support_points
         self.tensor_args = tensor_args
 
-    def __call__(self, trajectories, **kwargs):
-        return self.eval(trajectories, **kwargs)
-
     @abstractmethod
-    def eval(self, trajectories, **kwargs):
+    def __call__(self, trajectories, **kwargs):
         pass
 
     @abstractmethod
@@ -44,7 +41,7 @@ class CostComposite(Cost):
         super().__init__(robot, n_support_points, tensor_args=tensor_args)
         self.costs = costs
 
-    def eval(
+    def __call__(
         self,
         trajectories: torch.Tensor,
         n_interpolate: int,
@@ -111,7 +108,7 @@ class CostCollision(Cost):
             use_extra_objects=self.use_extra_objects,
         )
 
-    def eval(self, trajectories: torch.Tensor, n_interpolate: int):
+    def __call__(self, trajectories: torch.Tensor, n_interpolate: int):
         cost = self.obst_factor.get_error(
             trajectories=trajectories,
             env=self.env,
@@ -192,7 +189,7 @@ class CostGPTrajectory(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajectories: torch.Tensor):
+    def __call__(self, trajectories: torch.Tensor):
         err_gp = self.gp_prior.get_error(trajectories, calc_jacobian=False)
         w_mat = self.gp_prior.Q_inv[0]
         w_mat = w_mat.reshape(1, 1, self.dim, self.dim)
@@ -234,7 +231,7 @@ class CostGP(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajectories: torch.Tensor):
+    def __call__(self, trajectories: torch.Tensor):
         pass
 
     def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
@@ -293,7 +290,7 @@ class CostGoalPrior(Cost):
             tensor_args=self.tensor_args,
         )
 
-    def eval(self, trajectories: torch.Tensor):
+    def __call__(self, trajectories: torch.Tensor):
         pass
 
     def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
@@ -323,7 +320,7 @@ class CostJointVelocity(Cost):
         super().__init__(robot, n_support_points, tensor_args)
         self.sigma_velocity = sigma_velocity
 
-    def eval(self, trajectories: torch.Tensor, **kwargs):
+    def __call__(self, trajectories: torch.Tensor, **kwargs):
         trajectories_vel = self.robot.get_velocity(trajectories, compute=True)
         cost = (
             0.5 * torch.linalg.norm(trajectories_vel, dim=-1) / self.sigma_velocity**2

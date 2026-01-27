@@ -16,8 +16,8 @@ class RRTConnect(ClassicalPlanner):
         max_step_size: float,
         max_radius: float,
         n_samples: int,
-        n_trajectories: int,
         tensor_args: Dict[str, Any],
+        n_trajectories: int = 1,
         use_extra_objects: bool = False,
         planner_id: int = None,
         eps: float = 1e-6,
@@ -238,9 +238,6 @@ class RRTConnect(ClassicalPlanner):
                     break
 
         trajectories = self.purge_duplicates_from_trajectories(paths)
-        with open("rrt_paths_debug.txt", "w") as f:
-            print(trajectories, file=f)
-
         return trajectories
 
     def print_info(self, step, elapsed_time, success):

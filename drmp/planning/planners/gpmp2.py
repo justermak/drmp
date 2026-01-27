@@ -81,7 +81,7 @@ class GPMP2(ClassicalPlanner):
         self,
         robot: RobotBase,
         env: EnvBase,
-        n_dof: int,
+        n_dim: int,
         n_support_points: int,
         n_trajectories: int,
         dt: float,
@@ -103,8 +103,8 @@ class GPMP2(ClassicalPlanner):
             use_extra_objects=use_extra_objects,
             tensor_args=tensor_args,
         )
-        self.n_dof = n_dof
-        self.dim = 2 * self.n_dof
+        self.n_dim = n_dim
+        self.dim = 2 * self.n_dim
         self.n_support_points = n_support_points
         self.N = self.dim * self.n_support_points
         self.n_trajectories = n_trajectories
