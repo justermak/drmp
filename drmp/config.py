@@ -26,7 +26,7 @@ DEFAULT_TRAIN_ARGS = {
     "filter_sharpest_portion": 0.25,
     # Diffusion Model
     "diffusion_model_name": "GaussianDiffusionSplines",  # "GaussianDiffusionSplines",
-    "n_diffusion_steps": 25,
+    "n_diffusion_steps": 4,
     "predict_epsilon": True,
     # Unet
     "state_dim": N_DIM,

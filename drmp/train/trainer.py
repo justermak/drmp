@@ -336,11 +336,6 @@ def train(
         "guide_n_guide_steps": guide_n_guide_steps,
     }
 
-    if isinstance(dataset, TrajectoryDatasetBSpline):
-        config["n_control_points"] = dataset.n_control_points
-        config["spline_degree"] = dataset.spline_degree
-        config["real_n_control_points"] = dataset.real_n_control_points
-
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
