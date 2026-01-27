@@ -13,7 +13,10 @@ from drmp.datasets.normalization import NormalizerBase, get_normalizers
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory_utils import fit_bsplines_to_trajectories
+from drmp.utils.trajectory_utils import (
+    fit_bsplines_to_trajectories,
+    get_trajectories_from_bsplines,
+)
 from drmp.utils.visualizer import Visualizer
 from drmp.utils.yaml import save_config_to_yaml
 from drmp.world.environments import EnvBase, get_envs
@@ -341,6 +344,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
         config: dict = {
             "env_name": self.env_name,
+            "robot_name": self.robot_name,
             "datasets_dir": self.datasets_dir,
             "dataset_name": self.dataset_name,
             "dataset_dir": self.dataset_dir,
@@ -422,7 +426,9 @@ class TrajectoryDatasetBase(Dataset, ABC):
         new_tasks = {}
         n_completed_tasks = 0
         n_failed_tasks = 0
-        with tqdm(total=n_tasks, mininterval=1, desc="Generating data") as pbar:
+        with tqdm(
+            total=len(tasks_to_run), mininterval=1, desc="Generating data"
+        ) as pbar:
             pbar.update(n_skipped_tasks)
 
             if max_processes > 1:
@@ -469,6 +475,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
                     pbar.update(1)
 
+        n_trajectories_total = 0
         for i in range(n_tasks):
             n_trajectories_i = 0
             if i in existing_tasks:
@@ -478,10 +485,10 @@ class TrajectoryDatasetBase(Dataset, ABC):
                 if status != "success":
                     n_trajectories_i = 0
 
-            task_start_idxs.append(n_trajectories)
-            n_trajectories += n_trajectories_i
+            task_start_idxs.append(n_trajectories_total)
+            n_trajectories_total += n_trajectories_i
 
-        task_start_idxs.append(n_trajectories)
+        task_start_idxs.append(n_trajectories_total)
 
         task_start_idxs = torch.tensor(task_start_idxs, dtype=torch.long)
         train_tasks, val_tasks = random_split(
@@ -582,18 +589,21 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
         self.goal_pos_normalized = self.normalizer.normalize(self.goal_pos)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        trajectory = self.trajectories_normalized[idx]
-        start_pos = self.start_pos_normalized[idx]
-        goal_pos = self.goal_pos_normalized[idx]
+        trajectory_normalized = self.trajectories_normalized[idx]
+        start_pos_normalized = self.start_pos_normalized[idx]
+        goal_pos_normalized = self.goal_pos_normalized[idx]
 
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
-            trajectory = torch.flip(trajectory, dims=[0])
-            start_pos, goal_pos = goal_pos, start_pos
+            trajectory_normalized = torch.flip(trajectory_normalized, dims=[0])
+            start_pos_normalized, goal_pos_normalized = (
+                goal_pos_normalized,
+                start_pos_normalized,
+            )
 
         data = {
-            "trajectories_normalized": trajectory,
-            "start_pos_normalized": start_pos,
-            "goal_pos_normalized": goal_pos,
+            "trajectories_normalized": trajectory_normalized,
+            "start_pos_normalized": start_pos_normalized,
+            "goal_pos_normalized": goal_pos_normalized,
         }
 
         return data
@@ -654,26 +664,30 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
         self.goal_pos_normalized = self.normalizer.normalize(self.goal_pos)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        control_points = self.control_points_normalized[idx]
-        start_pos = self.start_pos_normalized[idx]
-        goal_pos = self.goal_pos_normalized[idx]
-        control_points_augmented = torch.cat(
+        control_points_normalized = self.control_points_normalized[idx]
+        start_pos_normalized = self.start_pos_normalized[idx]
+        goal_pos_normalized = self.goal_pos_normalized[idx]
+        control_points_normalized_augmented = torch.cat(
             [
-                start_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
-                control_points,
-                goal_pos.unsqueeze(0).repeat(self.spline_degree - 1, 1),
+                start_pos_normalized.unsqueeze(0).repeat(self.spline_degree - 1, 1),
+                control_points_normalized,
+                goal_pos_normalized.unsqueeze(0).repeat(self.spline_degree - 1, 1),
             ],
             dim=-2,
         )
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
-            control_points_augmented = torch.flip(control_points_augmented, dims=[0])
-            start_pos, goal_pos = goal_pos, start_pos
+            control_points_normalized_augmented = torch.flip(
+                control_points_normalized_augmented, dims=[0]
+            )
+            start_pos_normalized, goal_pos_normalized = (
+                goal_pos_normalized,
+                start_pos_normalized,
+            )
 
         data = {
-            "trajectories_normalized": control_points_augmented,
-            "start_pos_normalized": start_pos,
-            "goal_pos_normalized": goal_pos,
-            "spline_degree": torch.tensor(self.spline_degree, dtype=torch.long),
+            "control_points_normalized": control_points_normalized_augmented,
+            "start_pos_normalized": start_pos_normalized,
+            "goal_pos_normalized": goal_pos_normalized,
         }
 
         return data

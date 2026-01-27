@@ -7,29 +7,25 @@ from drmp.planning.costs.cost_functions import CostComposite
 from drmp.utils.trajectory_utils import get_trajectories_from_bsplines
 
 
-class GuideTrajectories(nn.Module):
+class Guide(nn.Module):
     def __init__(
         self,
         dataset: TrajectoryDatasetBase,
         cost: CostComposite,
-        do_clip_grad: bool,
         max_grad_norm: float,
         n_interpolate: int,
     ) -> None:
         super().__init__()
-        self.cost = cost
         self.dataset = dataset
-
+        self.cost = cost
         self.n_interpolate = n_interpolate
-        self.do_clip_grad = do_clip_grad
         self.max_grad_norm = max_grad_norm
 
-    def forward(self, trajectories_normalized: torch.Tensor, **kwargs) -> torch.Tensor:
-        t_normalized = trajectories_normalized.clone()
-        if trajectories_normalized.shape[-1] == N_DIM:
-            t_normalized = torch.cat(
-                [t_normalized, torch.zeros_like(t_normalized)], dim=-1
-            )
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        if x.shape[-1] == N_DIM:
+            t_normalized = torch.cat([x, torch.zeros_like(x)], dim=-1)
+        else:
+            t_normalized = x.clone()
 
         with torch.enable_grad():
             t_normalized.requires_grad_(True)
@@ -49,13 +45,13 @@ class GuideTrajectories(nn.Module):
             ).sum()
 
             grad = torch.autograd.grad(cost, t_normalized)[0]
-            if self.do_clip_grad:
+            if self.max_grad_norm is not None:
                 grad_norm = torch.linalg.norm(grad + 1e-8, dim=-1, keepdims=True)
                 scale_ratio = torch.clip(grad_norm, 0.0, self.max_grad_norm) / grad_norm
                 grad = scale_ratio * grad
 
             grad = -1.0 * grad
 
-            if trajectories_normalized.shape[-1] == N_DIM:
+            if x.shape[-1] == N_DIM:
                 grad = grad[..., :N_DIM]
         return grad

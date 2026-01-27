@@ -126,6 +126,7 @@ def run(args):
             unet_context_dim=model_config["unet_context_dim"],
             n_diffusion_steps=model_config["n_diffusion_steps"],
             predict_epsilon=model_config["predict_epsilon"],
+            spline_degree=model_config.get("spline_degree", None),
         ).to(device)
 
         model.load_state_dict(
@@ -147,10 +148,10 @@ def run(args):
             use_extra_objects=args.use_extra_objects,
             sigma_collision=args.sigma_collision,
             sigma_gp=args.sigma_gp,
-            do_clip_grad=args.do_clip_grad,
+            sigma_velocity=args.sigma_velocity,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
-            start_guide_steps_fraction=args.start_guide_steps_fraction,
+            t_start_guide=args.t_start_guide,
             n_guide_steps=args.n_guide_steps,
             ddim=args.ddim,
         )
@@ -182,7 +183,6 @@ def run(args):
             scale_grad_prior=args.mpd_splines_scale_grad_prior,
             sigma_collision=args.mpd_splines_sigma_collision,
             sigma_gp=args.mpd_splines_sigma_gp,
-            do_clip_grad=args.mpd_splines_do_clip_grad,
             max_grad_norm=args.mpd_splines_max_grad_norm,
             n_interpolate=args.mpd_splines_n_interpolate,
             use_extra_objects=args.use_extra_objects,
@@ -210,7 +210,6 @@ def run(args):
             use_extra_objects=args.use_extra_objects,
             sigma_collision=args.mpd_sigma_collision,
             sigma_gp=args.mpd_sigma_gp,
-            do_clip_grad=args.mpd_do_clip_grad,
             max_grad_norm=args.mpd_max_grad_norm,
             n_interpolate=args.mpd_n_interpolate,
             start_guide_steps_fraction=args.mpd_start_guide_steps_fraction,

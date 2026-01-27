@@ -10,12 +10,13 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
 from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.inference.guides import GuideTrajectories
+from drmp.inference.guides import Guide
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
+    CostJointVelocity,
 )
 from drmp.train.logs import log
 from drmp.utils.torch_timer import TimerCUDA
@@ -195,10 +196,10 @@ def train(
     tensor_args: Dict[str, Any],
     guide_sigma_collision: float,
     guide_sigma_gp: float,
-    guide_do_clip_grad: bool,
+    guide_sigma_velocity: float,
     guide_max_grad_norm: float,
     guide_n_interpolate: int,
-    guide_start_guide_steps_fraction: float,
+    guide_t_start_guide: float,
     guide_n_guide_steps: int,
 ) -> None:
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
@@ -227,40 +228,44 @@ def train(
 
     dataset: TrajectoryDatasetBase = train_subset.dataset
 
-    collision_costs = [
-        CostCollision(
-            robot=dataset.robot,
-            env=dataset.env,
-            n_support_points=dataset.n_support_points,
-            sigma_collision=guide_sigma_collision,
-            use_extra_objects=False,
-            tensor_args=tensor_args,
-        )
-    ]
+    collision_cost = CostCollision(
+        robot=dataset.robot,
+        env=dataset.env,
+        n_support_points=dataset.n_support_points,
+        sigma_collision=guide_sigma_collision,
+        use_extra_objects=False,
+        tensor_args=tensor_args,
+    )
+    
 
-    collision_costs_extra = [
-        CostCollision(
-            robot=dataset.robot,
-            env=dataset.env,
-            n_support_points=dataset.n_support_points,
-            sigma_collision=guide_sigma_collision,
-            use_extra_objects=True,
-            tensor_args=tensor_args,
-        )
-    ]
+    collision_cost_extra = CostCollision(
+        robot=dataset.robot,
+        env=dataset.env,
+        n_support_points=dataset.n_support_points,
+        sigma_collision=guide_sigma_collision,
+        use_extra_objects=True,
+        tensor_args=tensor_args,
+    )
+    
 
-    sharpness_costs = [
-        CostGPTrajectory(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            sigma_gp=guide_sigma_gp,
-            tensor_args=tensor_args,
-        )
-    ]
+    gp_cost = CostGPTrajectory(
+        robot=dataset.robot,
+        n_support_points=dataset.n_support_points,
+        sigma_gp=guide_sigma_gp,
+        tensor_args=tensor_args,
+    )
+    
+    velocity_cost = CostJointVelocity(
+        robot=dataset.robot,
+        n_support_points=dataset.n_support_points,
+        sigma_velocity=guide_sigma_velocity,
+        tensor_args=tensor_args,
+    )
+    
 
-    costs = collision_costs + sharpness_costs
+    costs = [collision_cost, gp_cost, velocity_cost]
 
-    costs_extra = collision_costs_extra + sharpness_costs
+    costs_extra = [collision_cost_extra, gp_cost, velocity_cost]
 
     cost = CostComposite(
         robot=dataset.robot,
@@ -276,18 +281,16 @@ def train(
         tensor_args=tensor_args,
     )
 
-    guide = GuideTrajectories(
+    guide = Guide(
         dataset=dataset,
         cost=cost,
-        do_clip_grad=guide_do_clip_grad,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
 
-    guide_extra = GuideTrajectories(
+    guide_extra = Guide(
         dataset=dataset,
         cost=cost_extra,
-        do_clip_grad=guide_do_clip_grad,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
@@ -325,10 +328,9 @@ def train(
         "debug": debug,
         "guide_sigma_collision": guide_sigma_collision,
         "guide_sigma_gp": guide_sigma_gp,
-        "guide_do_clip_grad": guide_do_clip_grad,
         "guide_max_grad_norm": guide_max_grad_norm,
         "guide_n_interpolate": guide_n_interpolate,
-        "guide_start_guide_steps_fraction": guide_start_guide_steps_fraction,
+        "guide_t_start_guide": guide_t_start_guide,
         "guide_n_guide_steps": guide_n_guide_steps,
     }
 
@@ -398,7 +400,7 @@ def train(
                                 tensorboard_writer=tensorboard_writer,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                start_guide_steps_fraction=guide_start_guide_steps_fraction,
+                                t_start_guide=guide_t_start_guide,
                                 n_guide_steps=guide_n_guide_steps,
                             )
                         print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
@@ -427,7 +429,7 @@ def train(
                                 tensorboard_writer=tensorboard_writer,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                start_guide_steps_fraction=guide_start_guide_steps_fraction,
+                                t_start_guide=guide_t_start_guide,
                                 n_guide_steps=guide_n_guide_steps,
                             )
                         print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")

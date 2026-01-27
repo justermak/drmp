@@ -70,7 +70,7 @@ def compute_success(trajectories_free: torch.Tensor):
 def bootstrap_confidence_interval(
     data: list, confidence_level: float = 0.95, n_resamples: int = 10000
 ):
-    if len(data) in (0, 1):
+    if len(data) <= 1:
         return None, None
 
     res = stats.bootstrap(

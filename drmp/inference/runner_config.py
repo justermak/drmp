@@ -8,12 +8,13 @@ from drmp.datasets.dataset import (
     TrajectoryDatasetBSpline,
     TrajectoryDatasetDense,
 )
-from drmp.inference.guides import GuideTrajectories
+from drmp.inference.guides import Guide
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs.cost_functions import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
+    CostJointVelocity,
 )
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
@@ -43,8 +44,8 @@ class DiffusionModelWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         model: DiffusionModelBase,
-        guide: GuideTrajectories,
-        start_guide_steps_fraction: float,
+        guide: Guide,
+        t_start_guide: float,
         n_guide_steps: int,
         ddim: bool,
         use_extra_objects: bool,
@@ -52,7 +53,7 @@ class DiffusionModelWrapper(RunnerModelWrapperBase):
         super().__init__(use_extra_objects)
         self.model = model
         self.guide = guide
-        self.start_guide_steps_fraction = start_guide_steps_fraction
+        self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
 
@@ -69,7 +70,7 @@ class DiffusionModelWrapper(RunnerModelWrapperBase):
             context=context,
             hard_conds=hard_conds,
             n_samples=n_samples,
-            start_guide_steps_fraction=self.start_guide_steps_fraction,
+            t_start_guide=self.t_start_guide,
             guide=self.guide,
             n_guide_steps=self.n_guide_steps,
             ddim=self.ddim,
@@ -95,7 +96,7 @@ class MPDModelWrapper(RunnerModelWrapperBase):
     def __init__(
         self,
         model: Any,
-        guide: GuideTrajectories,
+        guide: Guide,
         start_guide_steps_fraction: float,
         n_guide_steps: int,
         ddim: bool,
@@ -156,7 +157,7 @@ class MPDSplinesModelWrapper(RunnerModelWrapperBase):
         self,
         model: Any,
         start_guide_steps_fraction: float,
-        guide: GuideTrajectories,
+        guide: Guide,
         n_guide_steps: int,
         ddim: bool,
         use_extra_objects: bool,
@@ -338,10 +339,10 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         use_extra_objects: bool,
         sigma_collision: float,
         sigma_gp: float,
-        do_clip_grad: bool,
+        sigma_velocity: float,
         max_grad_norm: float,
         n_interpolate: int,
-        start_guide_steps_fraction: float,
+        t_start_guide: float,
         n_guide_steps: int,
         ddim: bool,
     ):
@@ -349,10 +350,10 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         self.model = model
         self.sigma_collision = sigma_collision
         self.sigma_gp = sigma_gp
-        self.do_clip_grad = do_clip_grad
+        self.sigma_velocity = sigma_velocity
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
-        self.start_guide_steps_fraction = start_guide_steps_fraction
+        self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
 
@@ -362,27 +363,31 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         tensor_args: Dict[str, Any],
         n_samples: int,
     ) -> DiffusionModelWrapper:
-        collision_costs = [
-            CostCollision(
-                robot=dataset.robot,
-                env=dataset.env,
-                n_support_points=dataset.n_support_points,
-                sigma_collision=self.sigma_collision,
-                use_extra_objects=self.use_extra_objects,
-                tensor_args=tensor_args,
-            )
-        ]
+        collision_cost = CostCollision(
+            robot=dataset.robot,
+            env=dataset.env,
+            n_support_points=dataset.n_support_points,
+            sigma_collision=self.sigma_collision,
+            use_extra_objects=self.use_extra_objects,
+            tensor_args=tensor_args,
+        )
+        
 
-        sharpness_costs = [
-            CostGPTrajectory(
-                robot=dataset.robot,
-                n_support_points=dataset.n_support_points,
-                sigma_gp=self.sigma_gp,
-                tensor_args=tensor_args,
-            )
-        ]
-
-        costs = collision_costs + sharpness_costs
+        gp_cost = CostGPTrajectory(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            sigma_gp=self.sigma_gp,
+            tensor_args=tensor_args,
+        )
+        
+        velocity_cost = CostJointVelocity(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            sigma_velocity=self.sigma_velocity,
+            tensor_args=tensor_args,
+        )
+            
+        costs = [collision_cost, gp_cost, velocity_cost]
 
         cost = CostComposite(
             robot=dataset.robot,
@@ -391,10 +396,9 @@ class DiffusionRunnerConfig(RunnerConfigBase):
             tensor_args=tensor_args,
         )
 
-        guide = GuideTrajectories(
+        guide = Guide(
             dataset=dataset,
             cost=cost,
-            do_clip_grad=self.do_clip_grad,
             max_grad_norm=self.max_grad_norm,
             n_interpolate=self.n_interpolate,
         )
@@ -402,7 +406,7 @@ class DiffusionRunnerConfig(RunnerConfigBase):
         return DiffusionModelWrapper(
             model=self.model,
             guide=guide,
-            start_guide_steps_fraction=self.start_guide_steps_fraction,
+            t_start_guide=self.t_start_guide,
             n_guide_steps=self.n_guide_steps,
             ddim=self.ddim,
             use_extra_objects=self.use_extra_objects,
@@ -414,10 +418,10 @@ class DiffusionRunnerConfig(RunnerConfigBase):
             "use_extra_objects": self.use_extra_objects,
             "sigma_collision": self.sigma_collision,
             "sigma_gp": self.sigma_gp,
-            "do_clip_grad": self.do_clip_grad,
+            "sigma_velocity": self.sigma_velocity,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
-            "start_guide_steps_fraction": self.start_guide_steps_fraction,
+            "t_start_guide": self.t_start_guide,
             "n_guide_steps": self.n_guide_steps,
             "ddim": self.ddim,
         }
@@ -430,7 +434,6 @@ class MPDRunnerConfig(RunnerConfigBase):
         use_extra_objects: bool,
         sigma_collision: float,
         sigma_gp: float,
-        do_clip_grad: bool,
         max_grad_norm: float,
         n_interpolate: int,
         start_guide_steps_fraction: float,
@@ -441,7 +444,6 @@ class MPDRunnerConfig(RunnerConfigBase):
         self.model = model
         self.sigma_collision = sigma_collision
         self.sigma_gp = sigma_gp
-        self.do_clip_grad = do_clip_grad
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
         self.start_guide_steps_fraction = start_guide_steps_fraction
@@ -485,10 +487,9 @@ class MPDRunnerConfig(RunnerConfigBase):
                 tensor_args=tensor_args,
             )
 
-            guide = GuideTrajectories(
+            guide = Guide(
                 dataset=dataset,
                 cost=cost,
-                do_clip_grad=self.do_clip_grad,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
             )
@@ -504,11 +505,10 @@ class MPDRunnerConfig(RunnerConfigBase):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algorithm": "legacy_diffusion",
+            "algorithm": "mpd",
             "use_extra_objects": self.use_extra_objects,
             "sigma_collision": self.sigma_collision,
             "sigma_gp": self.sigma_gp,
-            "do_clip_grad": self.do_clip_grad,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
             "start_guide_steps_fraction": self.start_guide_steps_fraction,
@@ -528,7 +528,6 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
         scale_grad_prior: float,
         sigma_collision: float,
         sigma_gp: float,
-        do_clip_grad: bool,
         max_grad_norm: float,
         n_interpolate: int,
         ddim_sampling_timesteps: int,
@@ -543,7 +542,6 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
         self.scale_grad_prior = scale_grad_prior
         self.sigma_collision = sigma_collision
         self.sigma_gp = sigma_gp
-        self.do_clip_grad = do_clip_grad
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
         self.ddim_sampling_timesteps = ddim_sampling_timesteps
@@ -585,10 +583,9 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
                 tensor_args=tensor_args,
             )
 
-            guide = GuideTrajectories(
+            guide = Guide(
                 dataset=dataset,
                 cost=cost,
-                do_clip_grad=self.do_clip_grad,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
             )
@@ -607,6 +604,7 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "algorithm": "mpd-splines",
             "start_guide_steps_fraction": self.start_guide_steps_fraction,
             "n_guide_steps": self.n_guide_steps,
             "ddim": self.ddim,
@@ -614,7 +612,6 @@ class MPDSplinesRunnerConfig(RunnerConfigBase):
             "scale_grad_prior": self.scale_grad_prior,
             "sigma_collision": self.sigma_collision,
             "sigma_gp": self.sigma_gp,
-            "do_clip_grad": self.do_clip_grad,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
             "ddim_sampling_timesteps": self.ddim_sampling_timesteps,

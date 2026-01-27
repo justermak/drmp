@@ -117,6 +117,44 @@ def run_inference_for_task(
     return {"stats": stats, "full_data": full_data}
 
 
+def get_best_trajectory(
+    dataset: TrajectoryDatasetBase,
+    data_normalized: dict,
+    n_samples: int,
+    model_wrapper: RunnerModelWrapperBase,
+    metric: str = "path-length",  # Options: "path-length", "sharpness"
+) -> Dict[str, Any]:
+    robot = dataset.robot
+    env = dataset.env
+    _, trajectories_final = model_wrapper.sample(
+        dataset=dataset,
+        data_normalized=data_normalized,
+        n_samples=n_samples,
+    )
+    if trajectories_final is None:
+        return None
+
+    _, trajectories_final_free, _ = env.get_trajectories_collision_and_free(
+        trajectories=trajectories_final,
+        robot=robot,
+        on_extra=model_wrapper.use_extra_objects,
+    )
+
+    if trajectories_final_free.shape[0] == 0:
+        return None
+
+    if metric == "path-length":
+        path_length = compute_path_length(trajectories_final_free, robot)
+        best_traj_idx = torch.argmin(path_length).item()
+        return trajectories_final_free[best_traj_idx]
+    elif metric == "sharpness":
+        sharpness = compute_sharpness(trajectories_final_free, robot)
+        best_traj_idx = torch.argmin(sharpness).item()
+        return trajectories_final_free[best_traj_idx]
+    else:
+        raise ValueError(f"Unknown metric: {metric}")
+
+
 def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,

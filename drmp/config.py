@@ -54,11 +54,11 @@ DEFAULT_TRAIN_ARGS = {
     "log_interval": 2000,
     "checkpoint_interval": 50000,
     # Guide
-    "guide_start_guide_steps_fraction": 0.25,
+    "guide_t_start_guide": 0.25,
     "guide_n_guide_steps": 5,
     "guide_sigma_collision": 1e1,
     "guide_sigma_gp": 2e3,
-    "guide_do_clip_grad": True,
+    "guide_sigma_velocity": torch.inf,
     "guide_max_grad_norm": 1.0,
     "guide_n_interpolate": 5,
     # Other
@@ -70,7 +70,7 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 100,
+    "n_tasks": 20,
     "n_samples": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
@@ -84,12 +84,20 @@ DEFAULT_INFERENCE_ARGS = {
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "EnvDense2D_2000_50__bs_1024__lr_0.0001__steps_300000__diffusion-steps_25__splines_True__20260122_015245",
     "ddim": False,
-    "start_guide_steps_fraction": 0.25,
-    "n_guide_steps": 5,
+    # MPD guide
+    # "t_start_guide": 6,
+    # "n_guide_steps": 5,
+    # "sigma_collision": 1e1,
+    # "sigma_gp": 2e3,
+    # "max_grad_norm": 1.0,
+    # "n_interpolate": 5,
+    # Diffusion prior guide
+    "t_start_guide": 0,
+    "n_guide_steps": 10,
     "sigma_collision": 1e1,
-    "sigma_gp": 2e3,
-    "do_clip_grad": True,
-    "max_grad_norm": 1.0,
+    "sigma_gp": torch.inf,
+    "sigma_velocity": 3e3,
+    "max_grad_norm": 0.1,
     "n_interpolate": 5,
     # MPD
     "mpd_checkpoints_dir": os.path.join(
@@ -105,7 +113,6 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_n_guide_steps": 5,
     "mpd_sigma_collision": 1e1,
     "mpd_sigma_gp": 2e3,
-    "mpd_do_clip_grad": True,
     "mpd_max_grad_norm": 1.0,
     "mpd_n_interpolate": 5,
     # MPD-Splines
@@ -126,7 +133,6 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_scale_grad_prior": 0.25,
     "mpd_splines_sigma_collision": 1e1,
     "mpd_splines_sigma_gp": 2e3,
-    "mpd_splines_do_clip_grad": True,
     "mpd_splines_max_grad_norm": 1.0,
     "mpd_splines_n_interpolate": 5,
     "mpd_splines_ddim": True,
@@ -188,7 +194,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_method": "cholesky",
     # Other
     "max_processes": 1,
-    "val_portion": 0.05,
+    "val_portion": 0.1,
     "device": "cuda",
     "debug": True,
     "seed": 42,

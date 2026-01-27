@@ -96,7 +96,7 @@ def run(args):
         unet_context_dim=args.context_dim,
         n_diffusion_steps=args.n_diffusion_steps,
         predict_epsilon=args.predict_epsilon,
-        spline_degree=args.spline_degree
+        spline_degree=args.spline_degree,
     ).to(device)
 
     # you can load a checkpoint here
@@ -130,10 +130,9 @@ def run(args):
         tensor_args=tensor_args,
         guide_sigma_collision=args.guide_sigma_collision,
         guide_sigma_gp=args.guide_sigma_gp,
-        guide_do_clip_grad=args.guide_do_clip_grad,
         guide_max_grad_norm=args.guide_max_grad_norm,
         guide_n_interpolate=args.guide_n_interpolate,
-        guide_start_guide_steps_fraction=args.guide_start_guide_steps_fraction,
+        guide_t_start_guide=args.guide_t_start_guide,
         guide_n_guide_steps=args.guide_n_guide_steps,
     )
 

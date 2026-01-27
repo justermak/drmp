@@ -327,13 +327,17 @@ class CostJointVelocity(Cost):
         self,
         robot: RobotBase,
         n_support_points: int,
+        sigma_velocity: float,
         tensor_args: Dict[str, Any],
     ):
         super().__init__(robot, n_support_points, tensor_args)
+        self.sigma_velocity = sigma_velocity
 
     def eval(self, trajectories: torch.Tensor, **kwargs):
         trajectories_vel = self.robot.get_velocity(trajectories, compute=True)
-        cost = 0.5 * torch.linalg.norm(trajectories_vel, dim=-1)
+        cost = (
+            0.5 * torch.linalg.norm(trajectories_vel, dim=-1) / self.sigma_velocity**2
+        )
         return cost.sum(dim=1)
 
     def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
