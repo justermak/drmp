@@ -1,12 +1,12 @@
 import matplotlib.pyplot as plt
-from drmp.planning.guide import Guide
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
 from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.models.diffusion import DiffusionModelBase
+from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
+from drmp.planning.guide import Guide
 from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
@@ -15,7 +15,7 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
-from drmp.utils.trajectory_utils import get_trajectories_from_bsplines
+from drmp.utils.trajectory import get_trajectories_from_bsplines
 from drmp.utils.visualizer import Visualizer
 
 
@@ -29,19 +29,33 @@ def _log_trajectories_metrics(
     prefix: str,
     suffix: str,
     step: int,
+    ddim: bool,
+    shortcut_steps: int,
     guide=None,
     use_extra_objects: bool = None,
     t_start_guide: float = None,
     n_guide_steps: int = None,
 ) -> None:
-    trajectories_normalized = model.run_inference(
-        n_samples=20,
-        hard_conditions=hard_conditions,
-        context=context,
-        guide=guide,
-        n_guide_steps=n_guide_steps,
-        t_start_guide=t_start_guide,
-    )[-1]
+    if isinstance(model, DiffusionSplinesShortcut):
+        trajectories_normalized = model.run_inference(
+            n_samples=20,
+            hard_conditions=hard_conditions,
+            context=context,
+            guide=guide,
+            n_guide_steps=n_guide_steps,
+            t_start_guide=t_start_guide,
+            shortcut_steps=shortcut_steps,
+        )[-1]
+    else:
+        trajectories_normalized = model.run_inference(
+            n_samples=20,
+            hard_conditions=hard_conditions,
+            context=context,
+            guide=guide,
+            n_guide_steps=n_guide_steps,
+            t_start_guide=t_start_guide,
+            ddim=ddim,
+        )[-1]
 
     trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
 
@@ -49,7 +63,7 @@ def _log_trajectories_metrics(
         trajectories = get_trajectories_from_bsplines(
             control_points=trajectories,
             n_support_points=dataset.n_support_points,
-            degree=dataset.spline_degree,
+            degree=dataset.robot.spline_degree,
         )
 
     trajectories_collision, trajectories_free, trajectories_collision_mask = (
@@ -113,6 +127,8 @@ def log(
     tensorboard_writer: SummaryWriter,
     guide: Guide,
     guide_extra: Guide,
+    ddim: bool,
+    shortcut_steps: int,
     t_start_guide: float,
     n_guide_steps: int,
     train_losses: dict = None,
@@ -161,6 +177,8 @@ def log(
                 prefix=prefix,
                 suffix="",
                 step=step,
+                ddim=ddim,
+                shortcut_steps=shortcut_steps,
                 guide=None,
             )
 
@@ -175,6 +193,8 @@ def log(
                 prefix=prefix,
                 suffix="_guide",
                 step=step,
+                ddim=ddim,
+                shortcut_steps=shortcut_steps,
                 guide=guide,
                 t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
@@ -191,6 +211,8 @@ def log(
                 prefix=prefix,
                 suffix="_guide_extra",
                 step=step,
+                ddim=ddim,
+                shortcut_steps=shortcut_steps,
                 guide=guide_extra,
                 use_extra_objects=True,
                 t_start_guide=t_start_guide,

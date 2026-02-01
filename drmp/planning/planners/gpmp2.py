@@ -3,16 +3,16 @@ from typing import Any, Dict
 import torch
 
 from drmp.planning.costs import (
-    Cost,
     CostCollision,
     CostComposite,
     CostGoalPrior,
     CostGP,
+    FactorCost,
 )
 from drmp.planning.planners.classical_planner import ClassicalPlanner
-from drmp.utils.torch_timer import TimerCUDA
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
+from drmp.utils.torch_timer import TimerCUDA
 
 
 def build_gpmp2_cost_composite(
@@ -29,7 +29,7 @@ def build_gpmp2_cost_composite(
     num_samples: int,
     tensor_args: Dict[str, Any],
     use_extra_objects: bool = False,
-) -> Cost:
+) -> FactorCost:
     costs = []
 
     start_state = torch.cat(

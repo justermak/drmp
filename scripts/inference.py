@@ -6,6 +6,7 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
+from drmp.models.diffusion import get_models
 from drmp.planning.inference import create_test_subset, run_inference
 from drmp.planning.inference_config import (
     DiffusionConfig,
@@ -15,8 +16,7 @@ from drmp.planning.inference_config import (
     MPDSplinesConfig,
     RRTConnectConfig,
 )
-from drmp.models.diffusion import get_models
-from drmp.utils.torch_utils import fix_random_seed
+from drmp.utils.torch import fix_random_seed
 from drmp.utils.yaml import load_config_from_yaml
 
 MODELS = get_models()
@@ -73,14 +73,22 @@ def run(args):
             args.checkpoint_name = checkpoint_folders[0]
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
         saved_model_config_path = os.path.join(checkpoint_dir, "config.yaml")
-        saved_dataset_usage_config_path = os.path.join(checkpoint_dir, "dataset_usage_config.yaml")
+        saved_dataset_usage_config_path = os.path.join(
+            checkpoint_dir, "dataset_usage_config.yaml"
+        )
         saved_model_config = load_config_from_yaml(saved_model_config_path)
-        saved_dataset_usage_config = load_config_from_yaml(saved_dataset_usage_config_path)
+        saved_dataset_usage_config = load_config_from_yaml(
+            saved_dataset_usage_config_path
+        )
 
         normalizer_name = saved_dataset_usage_config["normalizer_name"]
-        if saved_model_config["model_name"] == "GaussianDiffusionSplines":
-            dataset_init_config["n_control_points"] = saved_dataset_usage_config["n_control_points"]
-            dataset_init_config["spline_degree"] = saved_dataset_usage_config["spline_degree"]
+        if saved_model_config["model_name"] in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
+            dataset_init_config["n_control_points"] = saved_dataset_usage_config[
+                "n_control_points"
+            ]
+            dataset_init_config["spline_degree"] = saved_dataset_usage_config[
+                "spline_degree"
+            ]
             dataset = TrajectoryDatasetBSpline(**dataset_init_config)
         else:
             dataset = TrajectoryDatasetDense(**dataset_init_config)
@@ -105,7 +113,6 @@ def run(args):
             n_tasks=args.n_tasks,
             threshold_start_goal_pos=args.threshold_start_goal_pos,
             use_extra_objects=args.use_extra_objects,
-            tensor_args=tensor_args,
         )
         if test_subset is None:
             return
@@ -121,13 +128,15 @@ def run(args):
             unet_kernel_size=saved_model_config["unet_kernel_size"],
             unet_resnet_block_groups=saved_model_config["unet_resnet_block_groups"],
             unet_positional_encoding=saved_model_config["unet_positional_encoding"],
-            unet_positional_encoding_dim=saved_model_config["unet_positional_encoding_dim"],
+            unet_positional_encoding_dim=saved_model_config[
+                "unet_positional_encoding_dim"
+            ],
             unet_attn_heads=saved_model_config["unet_attn_heads"],
             unet_attn_head_dim=saved_model_config["unet_attn_head_dim"],
             unet_context_dim=saved_model_config["unet_context_dim"],
             n_diffusion_steps=saved_model_config["n_diffusion_steps"],
             predict_epsilon=saved_model_config["predict_epsilon"],
-            spline_degree=saved_model_config.get("spline_degree", None),
+            spline_degree=saved_dataset_usage_config.get("spline_degree", None),
         ).to(device)
 
         model.load_state_dict(
@@ -146,15 +155,18 @@ def run(args):
 
         model_config = DiffusionConfig(
             model=model,
+            guide_dense=args.guide_dense,
             use_extra_objects=args.use_extra_objects,
-            sigma_collision=args.sigma_collision,
-            sigma_gp=args.sigma_gp,
-            sigma_velocity=args.sigma_velocity,
+            lambda_obstacles=args.lambda_obstacles,
+            lambda_position=args.lambda_position,
+            lambda_velocity=args.lambda_velocity,
+            lambda_acceleration=args.lambda_acceleration,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
             t_start_guide=args.t_start_guide,
             n_guide_steps=args.n_guide_steps,
             ddim=args.ddim,
+            shortcut_steps=args.shortcut_steps,
         )
 
     elif args.algorithm == "mpd-splines":

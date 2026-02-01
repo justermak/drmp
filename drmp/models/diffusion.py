@@ -1,27 +1,30 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple
 
-from drmp.datasets.dataset import TrajectoryDatasetBase
-from drmp.utils.trajectory_utils import fit_bsplines_to_trajectories, get_trajectories_from_bsplines
+from drmp.utils.trajectory import fit_bsplines_to_trajectories
+from drmp.utils.visualizer import Visualizer
 import numpy as np
 import torch
 import torch.nn as nn
 
-from drmp.planning.guide import Guide
-from drmp.models.temporal_unet import TemporalUNet
+from drmp.datasets.dataset import TrajectoryDatasetBase
+from drmp.models.temporal_unet import TemporalUNet, TemporalUNetShortcut
+from drmp.planning.guide import GuideBase, GuideDense
 
 
 def get_models():
     return {
-        "GaussianDiffusion": GaussianDiffusion,
-        "GaussianDiffusionSplines": GaussianDiffusionSplines,
+        "DiffusionDense": DiffusionDense,
+        "DiffusionSplines": DiffusionSplines,
+        "DiffusionSplinesShortcut": DiffusionSplinesShortcut,
     }
 
 
 def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):
-    x = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
+    trajectories = torch.linspace(0, n_diffusion_steps, n_diffusion_steps + 1)
     alphas_cumprod = (
-        torch.cos(((x / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+        torch.cos(((trajectories / n_diffusion_steps) + s) / (1 + s) * torch.pi * 0.5)
+        ** 2
     )
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
@@ -118,7 +121,7 @@ class DiffusionModelBase(nn.Module, ABC):
 
     @abstractmethod
     def apply_hard_conditioning(
-        self, x: torch.Tensor, hard_conditions: Dict[str, torch.Tensor]
+        self, trajectories: torch.Tensor, hard_conditions: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
         pass
 
@@ -127,23 +130,62 @@ class DiffusionModelBase(nn.Module, ABC):
         self, input_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
         pass
-    
-    @abstractmethod
+
+    def apply_hard_conditioning_unnormalized_dense(
+        self, trajectories_dense: torch.Tensor, hard_conditions: Dict[str, torch.Tensor]
+    ) -> torch.Tensor:
+        trajectories_dense[:, 0, :] = hard_conditions["start_pos"]
+        trajectories_dense[:, -1, :] = hard_conditions["goal_pos"]
+        return trajectories_dense
+
     def guide_gradient_steps(
         self,
-        x: torch.Tensor,
+        trajectories: torch.Tensor,
         hard_conditions: Dict[str, torch.Tensor],
-        guide: Guide,
+        guide: GuideBase,
         n_guide_steps: int,
         debug: bool = False,
     ) -> torch.Tensor:
-        pass
+        if isinstance(guide, GuideDense):
+            # if debug:
+            #     visualizer = Visualizer(self.dataset.env, self.dataset.robot)
+            trajectories_unnormalized = self.dataset.normalizer.unnormalize(
+                trajectories
+            )
+            trajectories_dense = self.dataset.robot.get_position_interpolated(
+                trajectories=trajectories_unnormalized,
+                n_support_points=self.dataset.n_support_points,
+            )
+            # if debug:
+            #     visualizer.render_scene(trajectories=trajectories_dense, save_path="debug_guide_-1.png")
+            for i in range(n_guide_steps):
+                trajectories_dense = trajectories_dense + guide(trajectories_dense)
+                trajectories_dense = self.apply_hard_conditioning_unnormalized_dense(
+                    trajectories_dense=trajectories_dense,
+                    hard_conditions=hard_conditions,
+                )
+                # if debug:
+                #     visualizer.render_scene(trajectories=trajectories_dense, save_path=f"debug_guide_{i}.png")
+            trajectories_unnormalized = fit_bsplines_to_trajectories(
+                trajectories=trajectories_dense,
+                n_control_points=self.dataset.n_control_points,
+                degree=self.dataset.robot.spline_degree,
+            )
+            x = self.dataset.normalizer.normalize(trajectories_unnormalized)
+            return x
+        else:
+            for _ in range(n_guide_steps):
+                trajectories = trajectories + guide(trajectories)
+                trajectories = self.apply_hard_conditioning(
+                    trajectories, hard_conditions
+                )
+            return trajectories
 
-    def extract(self, a, t, x_shape) -> torch.Tensor:
+    def extract(self, a, t, trajectories_shape) -> torch.Tensor:
         out = a.gather(-1, t)
-        return out.view(-1, *((1,) * (len(x_shape) - 1)))
+        return out.view(-1, *((1,) * (len(trajectories_shape) - 1)))
 
-    def predict_noise_from_start(self, x_t, t, x0) -> torch.Tensor:
+    def predict_noise_from_start(self, trajectories_t, t, x0) -> torch.Tensor:
         """
         if self.predict_epsilon, model output is (scaled) noise;
         otherwise, model predicts x0 directly
@@ -152,43 +194,55 @@ class DiffusionModelBase(nn.Module, ABC):
             return x0
         else:
             return (
-                self.extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - x0
-            ) / self.extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+                self.extract(self.sqrt_recip_alphas_cumprod, t, trajectories_t.shape)
+                * trajectories_t
+                - x0
+            ) / self.extract(self.sqrt_recipm1_alphas_cumprod, t, trajectories_t.shape)
 
-    def predict_start_from_noise(self, x_t, t, noise) -> torch.Tensor:
+    def predict_start_from_noise(self, trajectories_t, t, noise) -> torch.Tensor:
         """
         if self.predict_epsilon, model output is (scaled) noise;
         otherwise, model predicts x0 directly
         """
         if self.predict_epsilon:
             return (
-                self.extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
-                - self.extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+                self.extract(self.sqrt_recip_alphas_cumprod, t, trajectories_t.shape)
+                * trajectories_t
+                - self.extract(
+                    self.sqrt_recipm1_alphas_cumprod, t, trajectories_t.shape
+                )
+                * noise
             )
         else:
             return noise
 
     def q_posterior(
-        self, x_start, x_t, t
+        self, trajectories_start, trajectories_t, t
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         posterior_mean = (
-            self.extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
-            + self.extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            self.extract(self.posterior_mean_coef1, t, trajectories_t.shape)
+            * trajectories_start
+            + self.extract(self.posterior_mean_coef2, t, trajectories_t.shape)
+            * trajectories_t
         )
-        posterior_variance = self.extract(self.posterior_variance, t, x_t.shape)
+        posterior_variance = self.extract(
+            self.posterior_variance, t, trajectories_t.shape
+        )
         posterior_log_variance_clipped = self.extract(
-            self.posterior_log_variance_clipped, t, x_t.shape
+            self.posterior_log_variance_clipped, t, trajectories_t.shape
         )
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(
-        self, x, context, t
+        self, trajectories, context, t
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        x_recon = self.predict_start_from_noise(x, t=t, noise=self.model(x, t, context))
-        x_recon = torch.clamp(x_recon, -1.0, 1.0)
+        trajectories_recon = self.predict_start_from_noise(
+            trajectories, t=t, noise=self.model(trajectories, t, context)
+        )
+        trajectories_recon = torch.clamp(trajectories_recon, -1.0, 1.0)
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_recon, x_t=x, t=t
+            trajectories_start=trajectories_recon, trajectories_t=trajectories, t=t
         )
         return model_mean, posterior_variance, posterior_log_variance
 
@@ -200,7 +254,7 @@ class DiffusionModelBase(nn.Module, ABC):
             "goal_pos": input_dict["goal_pos"],
         }
         return hard_conditions
-    
+
     def build_context(self, input_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         context = torch.cat(
             [
@@ -217,47 +271,48 @@ class DiffusionModelBase(nn.Module, ABC):
         n_samples: int,
         hard_conditions: Dict[str, torch.Tensor],
         context: torch.Tensor,
-        guide: Guide,
+        guide: GuideBase,
         n_guide_steps: int,
         t_start_guide: float,
+        debug: bool = False,
     ) -> torch.Tensor:
         device = self.betas.device
-        x = torch.randn(
+        trajectories = torch.randn(
             (n_samples, self.horizon, self.state_dim), device=device
         )
-        x = self.apply_hard_conditioning(x, hard_conditions)
+        trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
 
-        chain = [x]
+        chain = [trajectories]
 
         for time in reversed(range(self.n_diffusion_steps)):
             t = torch.full((n_samples,), time, device=device, dtype=torch.long)
 
             model_mean, _, model_log_variance = self.p_mean_variance(
-                x=x, context=context, t=t
+                trajectories=trajectories, context=context, t=t
             )
-            x = model_mean
+            trajectories = model_mean
 
             model_log_variance = self.extract(
-                self.posterior_log_variance_clipped, t, x.shape
+                self.posterior_log_variance_clipped, t, trajectories.shape
             )
             model_std = torch.exp(0.5 * model_log_variance)
 
             if guide is not None and time <= t_start_guide:
-                x = self.guide_gradient_steps(
-                    x=x,
+                trajectories = self.guide_gradient_steps(
+                    trajectories=trajectories,
                     hard_conditions=hard_conditions,
                     guide=guide,
                     n_guide_steps=n_guide_steps,
-                    debug=False,
+                    debug=debug,
                 )
 
-            noise = torch.randn_like(x)
+            noise = torch.randn_like(trajectories)
             noise[t == 0] = 0
 
-            x = x + model_std * noise
-            x = self.apply_hard_conditioning(x, hard_conditions)
+            trajectories = trajectories + model_std * noise
+            trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
 
-            chain.append(x)
+            chain.append(trajectories)
 
         chain = torch.stack(chain, dim=1)
         return chain
@@ -269,7 +324,7 @@ class DiffusionModelBase(nn.Module, ABC):
     #     n_samples: int,
     #     hard_conditions: Dict[str, torch.Tensor],
     #     context: torch.Tensor,
-    #     guide: Guide,
+    #     guide: GuideBase,
     #     n_guide_steps: int,
     #     t_start_guide: float,
     # ) -> torch.Tensor:
@@ -290,10 +345,10 @@ class DiffusionModelBase(nn.Module, ABC):
     #         zip(times[:-1], times[1:])
     #     )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-    #     x = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
-    #     x = self.apply_hard_conditioning(x, hard_conditions)
+    #     trajectories = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
+    #     trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
 
-    #     chain = [x]
+    #     chain = [trajectories]
 
     #     for time, time_next in time_pairs:
     #         t = torch.full((n_samples,), time, device=device, dtype=torch.long)
@@ -301,121 +356,111 @@ class DiffusionModelBase(nn.Module, ABC):
     #             (n_samples,), time_next, device=device, dtype=torch.long
     #         )
 
-    #         model_out = self.model(x, t, context)
+    #         model_out = self.model(trajectories, t, context)
 
-    #         x_start = self.predict_start_from_noise(x, t=t, noise=model_out)
-    #         pred_noise = self.predict_noise_from_start(x, t=t, x0=model_out)
+    #         trajectories_start = self.predict_start_from_noise(trajectories, t=t, noise=model_out)
+    #         pred_noise = self.predict_noise_from_start(trajectories, t=t, x0=model_out)
 
     #         if time_next < 0:
-    #             x = x_start
-    #             x = self.apply_hard_conditioning(x, hard_conditions)
-    #             chain.append(x)
+    #             trajectories = trajectories_start
+    #             trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
+    #             chain.append(trajectories)
     #             break
 
-    #         alpha = self.extract(self.alphas_cumprod, t, x.shape)
-    #         alpha_next = self.extract(self.alphas_cumprod, t_next, x.shape)
+    #         alpha = self.extract(self.alphas_cumprod, t, trajectories.shape)
+    #         alpha_next = self.extract(self.alphas_cumprod, t_next, trajectories.shape)
 
     #         sigma = (
     #             eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
     #         )
     #         c = (1 - alpha_next - sigma**2).sqrt()
 
-    #         x = x_start * alpha_next.sqrt() + c * pred_noise
+    #         trajectories = trajectories_start * alpha_next.sqrt() + c * pred_noise
 
     #         if guide is not None and time <= t_start_guide:
-    #             x = self.guide_gradient_steps(
-    #                 x,
+    #             trajectories = self.guide_gradient_steps(
+    #                 trajectories,
     #                 hard_conditions=hard_conditions,
     #                 guide=guide,
     #                 n_guide_steps=n_guide_steps,
     #                 debug=False,
     #             )
 
-    #         noise = torch.randn_like(x)
-    #         x = x + sigma * noise
-    #         x = self.apply_hard_conditioning(x, hard_conditions)
+    #         noise = torch.randn_like(trajectories)
+    #         trajectories = trajectories + sigma * noise
+    #         trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
 
-    #         chain.append(x)
+    #         chain.append(trajectories)
 
     #     return chain
 
     @torch.no_grad()
+    @abstractmethod
     def run_inference(
         self,
         n_samples: int,
         hard_conditions: Dict[str, torch.Tensor],
         context: torch.Tensor,
-        guide: Guide,
+        guide: GuideBase,
         n_guide_steps: int,
         t_start_guide: float,
-        ddim: bool = False,
+        debug: bool = False,
+        **kwargs,
     ) -> torch.Tensor:
-        hard_conditions = hard_conditions.copy()
-        for k, v in hard_conditions.items():
-            hard_conditions[k] = v.repeat(n_samples, 1)
+        pass
 
-        context = context.repeat(n_samples, 1)
-
-        if ddim:
-            trajectories_normalized = self.ddim_sample(
-                n_samples=n_samples,
-                hard_conditions=hard_conditions,
-                context=context,
-                t_start_guide=t_start_guide,
-                guide=guide,
-                n_guide_steps=n_guide_steps,
-            )
-        else:
-            trajectories_normalized = self.ddpm_sample(
-                n_samples=n_samples,
-                hard_conditions=hard_conditions,
-                context=context,
-                t_start_guide=t_start_guide,
-                guide=guide,
-                n_guide_steps=n_guide_steps,
-            )
-
-        trajectories_chain_normalized = trajectories_normalized.permute(1, 0, 2, 3)
-
-        return trajectories_chain_normalized
-
-    def q_sample(self, x_start, t, noise=None) -> torch.Tensor:
+    def q_sample(self, trajectories_start, t, noise=None) -> torch.Tensor:
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = torch.randn_like(trajectories_start)
 
         sample = (
-            self.extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + self.extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+            self.extract(self.sqrt_alphas_cumprod, t, trajectories_start.shape)
+            * trajectories_start
+            + self.extract(
+                self.sqrt_one_minus_alphas_cumprod, t, trajectories_start.shape
+            )
+            * noise
         )
 
         return sample
 
-    def p_losses(self, x_start, context, t, hard_conditions) -> torch.Tensor:
-        noise = torch.randn_like(x_start)
+    def p_losses(self, trajectories_start, context, t, hard_conditions) -> torch.Tensor:
+        noise = torch.randn_like(trajectories_start)
 
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        x_noisy = self.apply_hard_conditioning(x_noisy, hard_conditions)
+        trajectories_noisy = self.q_sample(
+            trajectories_start=trajectories_start, t=t, noise=noise
+        )
+        trajectories_noisy = self.apply_hard_conditioning(
+            trajectories_noisy, hard_conditions
+        )
 
-        x_recon = self.model(x_noisy, t, context)
-        x_recon = self.apply_hard_conditioning(x_recon, hard_conditions)
+        trajectories_recon = self.model(trajectories_noisy, t, context)
+        trajectories_recon = self.apply_hard_conditioning(
+            trajectories_recon, hard_conditions
+        )
 
-        assert noise.shape == x_recon.shape
+        assert noise.shape == trajectories_recon.shape
 
         if self.predict_epsilon:
-            loss = self.loss_fn(x_recon, noise)
+            loss = self.loss_fn(trajectories_recon, noise)
         else:
-            loss = self.loss_fn(x_recon, x_start)
+            loss = self.loss_fn(trajectories_recon, trajectories_start)
 
         return loss
 
-    def loss(self, x, context, hard_conditions) -> torch.Tensor:
+    def loss(self, trajectories, context, hard_conditions) -> torch.Tensor:
         t = torch.randint(
-            0, self.n_diffusion_steps, (x.shape[0],), device=x.device
+            0,
+            self.n_diffusion_steps,
+            (trajectories.shape[0],),
+            device=trajectories.device,
         ).long()
-        return self.p_losses(x, context=context, t=t, hard_conditions=hard_conditions)
+        return self.p_losses(
+            trajectories, context=context, t=t, hard_conditions=hard_conditions
+        )
 
 
-class GaussianDiffusion(DiffusionModelBase):
+class DiffusionDense(DiffusionModelBase):
     def __init__(
         self,
         dataset: TrajectoryDatasetBase,
@@ -451,15 +496,10 @@ class GaussianDiffusion(DiffusionModelBase):
             predict_epsilon=predict_epsilon,
         )
 
-    def apply_hard_conditioning(self, x, conditions):
-        x[:, 0, :] = conditions["start_pos_normalized"]
-        x[:, -1, :] = conditions["goal_pos_normalized"]
-        return x
-    
-    def apply_hard_conditioning_unnormalized(self, x, conditions):
-        x[:, 0, :] = conditions["start_pos"]
-        x[:, -1, :] = conditions["goal_pos"]
-        return x
+    def apply_hard_conditioning(self, trajectories, conditions):
+        trajectories[:, 0, :] = conditions["start_pos_normalized"]
+        trajectories[:, -1, :] = conditions["goal_pos_normalized"]
+        return trajectories
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         trajectories_normalized = input_dict["trajectories_normalized"]
@@ -470,23 +510,50 @@ class GaussianDiffusion(DiffusionModelBase):
 
         return loss_dict
     
-    def guide_gradient_steps(
+    @torch.no_grad()
+    def run_inference(
         self,
-        x: torch.Tensor,
+        n_samples: int,
         hard_conditions: Dict[str, torch.Tensor],
-        guide: Guide,
+        context: torch.Tensor,
+        guide: GuideBase,
         n_guide_steps: int,
+        t_start_guide: float,
         debug: bool = False,
+        ddim: bool = False,
     ) -> torch.Tensor:
-        x_unnormalized = self.dataset.normalizer.unnormalize(x)
-        for _ in range(n_guide_steps):
-            x_unnormalized = x_unnormalized + guide(x_unnormalized)
-            x_unnormalized = self.apply_hard_conditioning_unnormalized(x_unnormalized, hard_conditions)
-        x = self.dataset.normalizer.normalize(x_unnormalized)
-        return x
+        hard_conditions = hard_conditions.copy()
+        for k, v in hard_conditions.items():
+            hard_conditions[k] = v.repeat(n_samples, 1)
+
+        context = context.repeat(n_samples, 1)
+        
+        if ddim:
+            trajectories_normalized = self.ddim_sample(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                t_start_guide=t_start_guide,
+                guide=guide,
+                n_guide_steps=n_guide_steps,
+            )
+        else:
+            trajectories_normalized = self.ddpm_sample(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                t_start_guide=t_start_guide,
+                guide=guide,
+                n_guide_steps=n_guide_steps,
+                debug=debug,
+            )
+
+        trajectories_chain_normalized = trajectories_normalized.permute(1, 0, 2, 3)
+
+        return trajectories_chain_normalized
 
 
-class GaussianDiffusionSplines(DiffusionModelBase):
+class DiffusionSplines(DiffusionModelBase):
     def __init__(
         self,
         dataset: TrajectoryDatasetBase,
@@ -524,25 +591,18 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         )
         self.spline_degree = spline_degree
 
-    
-
-    def apply_hard_conditioning(self, x, conditions):
-        x[:, : self.spline_degree - 1, :] = (
+    def apply_hard_conditioning(self, trajectories, conditions):
+        trajectories[:, : self.spline_degree - 1, :] = (
             conditions["start_pos_normalized"]
             .unsqueeze(1)
             .repeat(1, self.spline_degree - 1, 1)
         )
-        x[:, -self.spline_degree + 1 :, :] = (
+        trajectories[:, -self.spline_degree + 1 :, :] = (
             conditions["goal_pos_normalized"]
             .unsqueeze(1)
             .repeat(1, self.spline_degree - 1, 1)
         )
-        return x
-    
-    def apply_hard_conditioning_unnormalized_dense(self, x_dense, conditions):
-        x_dense[:, 0, :] = conditions["start_pos"]
-        x_dense[:, -1, :] = conditions["goal_pos"]
-        return x_dense
+        return trajectories
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         control_points_normalized = input_dict["control_points_normalized"]
@@ -552,35 +612,227 @@ class GaussianDiffusionSplines(DiffusionModelBase):
         loss_dict = {"diffusion_loss": loss}
         return loss_dict
     
-    def guide_gradient_steps(
+    @torch.no_grad()
+    def run_inference(
         self,
-        x: torch.Tensor,
+        n_samples: int,
         hard_conditions: Dict[str, torch.Tensor],
-        guide: Guide,
+        context: torch.Tensor,
+        guide: GuideBase,
         n_guide_steps: int,
+        t_start_guide: float,
         debug: bool = False,
+        ddim: bool = False,
     ) -> torch.Tensor:
-        x_unnormalized = self.dataset.normalizer.unnormalize(x)
-        x_unnormalized_dense = get_trajectories_from_bsplines(
-            control_points=x_unnormalized,
-            n_support_points=self.dataset.n_support_points,
-            degree=self.spline_degree,
+        hard_conditions = hard_conditions.copy()
+        for k, v in hard_conditions.items():
+            hard_conditions[k] = v.repeat(n_samples, 1)
+
+        context = context.repeat(n_samples, 1)
+        
+        if ddim:
+            trajectories_normalized = self.ddim_sample(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                t_start_guide=t_start_guide,
+                guide=guide,
+                n_guide_steps=n_guide_steps,
+            )
+        else:
+            trajectories_normalized = self.ddpm_sample(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                t_start_guide=t_start_guide,
+                guide=guide,
+                n_guide_steps=n_guide_steps,
+                debug=debug,
+            )
+
+        trajectories_chain_normalized = trajectories_normalized.permute(1, 0, 2, 3)
+
+        return trajectories_chain_normalized
+
+
+class DiffusionSplinesShortcut(DiffusionSplines):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        self.model = TemporalUNetShortcut(
+            input_dim=self.state_dim,
+            hidden_dim=self.unet_hidden_dim,
+            dim_mults=self.unet_dim_mults,
+            kernel_size=self.unet_kernel_size,
+            resnet_block_groups=self.unet_resnet_block_groups,
+            positional_encoding=self.unet_positional_encoding,
+            positional_encoding_dim=self.unet_positional_encoding_dim,
+            attn_heads=self.unet_attn_heads,
+            attn_head_dim=self.unet_attn_head_dim,
+            context_dim=self.unet_context_dim,
         )
-        for _ in range(n_guide_steps):
-            grad_scaled = guide(x=x_unnormalized_dense)
-            x_unnormalized_dense = x_unnormalized_dense + grad_scaled
-            x_unnormalized_dense = self.apply_hard_conditioning_unnormalized_dense(x_unnormalized_dense, hard_conditions)
         
-        x_unnormalized = fit_bsplines_to_trajectories(
-            trajectories=x_unnormalized_dense,
-            n_control_points=self.horizon,
-            degree=self.spline_degree,
-        )
-        x = self.dataset.normalizer.normalize(x_unnormalized)
+        self.bootstrap_ratio = 0.5
+        self.min_dt = 1.0 / self.n_diffusion_steps 
+
+    def compute_loss(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        control_points_normalized = input_dict["control_points_normalized"]
+        context = self.build_context(input_dict)
+        hard_conditions = self.build_hard_conditions(input_dict)
         
-        # For slow guide that I need to purge
-        # for _ in range(n_guide_steps):
-        #     x = x + guide(x)
-        #     x = self.apply_hard_conditioning(x, hard_conditions)
+        trajectories = control_points_normalized
+        batch_size = trajectories.shape[0]
+        n_bootstrap = int(batch_size * self.bootstrap_ratio)
+        n_flow = batch_size - n_bootstrap
         
-        return x
+        loss_dict = {}
+        
+        # x_0 (Noise)
+        x_0 = torch.randn_like(trajectories)
+        x_1 = trajectories
+        
+        # Initialize loss
+        total_loss = 0.0
+
+        # ==== 1. Flow Matching (Naive) ====
+        if n_flow > 0:
+            x_1_flow = x_1[n_bootstrap:]
+            x_0_flow = x_0[n_bootstrap:]
+            c_flow = context[n_bootstrap:]
+            
+            # Sample t uniform [0, 1]
+            t_flow = torch.rand(n_flow, device=trajectories.device)
+            t_flow_exp = t_flow.view(-1, 1, 1)
+            
+            # x_t = (1-t)x_0 + t x_1 
+            x_t_flow = (1 - t_flow_exp) * x_0_flow + t_flow_exp * x_1_flow
+            
+            # Target v = x_1 - x_0
+            v_target_flow = x_1_flow - x_0_flow
+            
+            # dt for flow matching (small value)
+            dt_flow = torch.full((n_flow,), self.min_dt, device=trajectories.device)
+            
+            # Condition samples
+            hard_cond_flow = {k: v[n_bootstrap:] for k,v in hard_conditions.items()}
+            x_t_flow = self.apply_hard_conditioning(x_t_flow, hard_cond_flow)
+            
+            v_pred_flow = self.model(x_t_flow, t_flow, dt_flow, c_flow)
+            
+            loss_flow = self.loss_fn(v_pred_flow, v_target_flow)
+            loss_dict["loss_flow"] = loss_flow
+            total_loss += loss_flow * (n_flow / batch_size)
+        
+        # ==== 2. Bootstrap ====
+        if n_bootstrap > 0:
+            x_0_bst = x_0[:n_bootstrap]
+            x_1_bst = x_1[:n_bootstrap]
+            c_bst = context[:n_bootstrap]
+            hard_cond_bst = {k: v[:n_bootstrap] for k,v in hard_conditions.items()}
+
+            # Sample dt: powers of 2 (1, 1/2, 1/4, ...)
+            # We want dt = 1/2^k. 
+            # We ensure we can take at least 2 steps of size dt/2 within 1.0 effectively?
+            # Actually shortcut model supports any dt=1/2^k.
+            # Max steps = n_diffusion_steps.
+            max_log2 = int(torch.log2(torch.tensor(self.n_diffusion_steps)))
+            # exponents k in [0, max_log2-1]
+            k_exponents = torch.randint(0, max_log2, (n_bootstrap,), device=trajectories.device)
+            dt_bst = 1.0 / (2.0 ** k_exponents)
+            
+            # Sample t aligned with dt
+            # t = i * dt. i chosen uniformly from valid steps
+            num_steps = (1.0 / dt_bst).long()
+            # If num_steps is 1 (dt=1), i=0.
+            # If num_steps is 2 (dt=0.5), i in {0, 1}.
+            # We use floor(rand * num_steps)
+            i_step = (torch.rand(n_bootstrap, device=trajectories.device) * num_steps).long()
+            t_bst = i_step.float() * dt_bst
+            
+            t_bst_exp = t_bst.view(-1, 1, 1)
+            
+            # x_t = (1-t)x_0 + t x_1 (Flow interpolation)
+            x_t_bst = (1 - t_bst_exp) * x_0_bst + t_bst_exp * x_1_bst
+            x_t_bst = self.apply_hard_conditioning(x_t_bst, hard_cond_bst)
+            
+            # Compute Target (Double step)
+            # Use no_grad for teacher
+            with torch.no_grad():
+                dt_half = dt_bst / 2.0
+                
+                # Step 1
+                v_b1 = self.model(x_t_bst, t_bst, dt_half, c_bst)
+                x_mid = x_t_bst + dt_half.view(-1, 1, 1) * v_b1
+                x_mid = self.apply_hard_conditioning(x_mid, hard_cond_bst)
+                
+                # Step 2
+                v_b2 = self.model(x_mid, t_bst + dt_half, dt_half, c_bst)
+                
+                # Target
+                v_target_bst = (v_b1 + v_b2) / 2.0
+
+            # Predict student
+            v_pred_bst = self.model(x_t_bst, t_bst, dt_bst, c_bst)
+            
+            loss_bootstrap = self.loss_fn(v_pred_bst, v_target_bst)
+            loss_dict["loss_bootstrap"] = loss_bootstrap
+            
+            total_loss += loss_bootstrap * (n_bootstrap / batch_size)
+
+        loss_dict["loss"] = total_loss
+        return loss_dict
+
+    @torch.no_grad()
+    def run_inference(
+        self,
+        n_samples: int,
+        hard_conditions: Dict[str, torch.Tensor],
+        context: torch.Tensor,
+        guide: GuideBase,
+        n_guide_steps: int,
+        t_start_guide: float,
+        shortcut_steps: int,
+        debug: bool = False,
+        **kwargs,
+    ) -> torch.Tensor:
+        
+        hard_conditions = hard_conditions.copy()
+        for k, v in hard_conditions.items():
+            hard_conditions[k] = v.repeat(n_samples, 1)
+
+        context = context.repeat(n_samples, 1)
+        device = context.device
+        
+        # x_0 (Noise)
+        trajectories = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
+        trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
+        
+        dt_val = 1.0 / shortcut_steps
+        dt = torch.full((n_samples,), dt_val, device=device)
+        
+        current_time = 0.0
+        for _ in range(shortcut_steps):
+             t = torch.full((n_samples,), current_time, device=device)
+             
+             # Predict v
+             v_pred = self.model(trajectories, t, dt, context)
+             
+             # Step: x_{t+dt} = x_t + dt * v
+             trajectories = trajectories + dt_val * v_pred
+             trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
+             
+             if guide is not None and current_time <= t_start_guide / self.n_diffusion_steps + 1e-8:
+                  trajectories = self.guide_gradient_steps(
+                      trajectories=trajectories,
+                      hard_conditions=hard_conditions,
+                      guide=guide,
+                      n_guide_steps=n_guide_steps,
+                      debug=debug
+                  )
+             
+             current_time += dt_val
+             
+        # Add singleton dimension for chain (only one step in chain effectively, or final result)
+        trajectories_chain_normalized = trajectories.unsqueeze(1).permute(1, 0, 2, 3) 
+        
+        return trajectories_chain_normalized

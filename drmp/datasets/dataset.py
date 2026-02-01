@@ -13,14 +13,12 @@ from drmp.datasets.normalization import NormalizerBase, get_normalizers
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory_utils import (
-    fit_bsplines_to_trajectories,
-    get_trajectories_from_bsplines,
-)
-from drmp.utils.visualizer import Visualizer
-from drmp.utils.yaml import save_config_to_yaml
 from drmp.universe.environments import EnvBase, get_envs
 from drmp.universe.robot import RobotBase, get_robots
+from drmp.utils.torch import fix_random_seed
+from drmp.utils.trajectory import fit_bsplines_to_trajectories
+from drmp.utils.visualizer import Visualizer
+from drmp.utils.yaml import save_config_to_yaml
 
 NORMALIZERS = get_normalizers()
 
@@ -38,6 +36,7 @@ def _worker_process_task(args):
         generating_robot_margin,
         n_support_points,
         duration,
+        spline_degree,
         tensor_args,
         n_trajectories,
         threshold_start_goal_pos,
@@ -70,11 +69,13 @@ def _worker_process_task(args):
         generating_robot = ROBOTS[robot_name](
             margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
+            spline_degree=spline_degree,
             tensor_args=tensor_args,
         )
         robot = ROBOTS[robot_name](
             margin=robot_margin,
             dt=duration / (n_support_points - 1),
+            spline_degree=spline_degree,
             tensor_args=tensor_args,
         )
 
@@ -113,7 +114,7 @@ def _worker_process_task(args):
             tensor_args=tensor_args,
         )
 
-        torch.manual_seed(seed + task_id)
+        fix_random_seed(seed + task_id)
 
         start_pos, goal_pos, success = env.random_collision_free_start_goal(
             robot=generating_robot,
@@ -181,6 +182,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
         generating_robot_margin: float,
         n_support_points: int,
         duration: float,
+        spline_degree: int,
         apply_augmentations: bool,
         tensor_args: Dict[str, Any],
     ):
@@ -196,11 +198,13 @@ class TrajectoryDatasetBase(Dataset, ABC):
         self.robot: RobotBase = ROBOTS[robot_name](
             margin=robot_margin,
             dt=duration / (n_support_points - 1),
+            spline_degree=spline_degree,
             tensor_args=tensor_args,
         )
         self.generating_robot: RobotBase = ROBOTS[robot_name](
             margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
+            spline_degree=spline_degree,
             tensor_args=tensor_args,
         )
         self.datasets_dir = datasets_dir
@@ -210,6 +214,9 @@ class TrajectoryDatasetBase(Dataset, ABC):
         self.start_pos: torch.Tensor = None
         self.goal_pos: torch.Tensor = None
         self.normalizer: NormalizerBase = None
+        self.trajectories_normalized: torch.Tensor = None
+        self.start_pos_normalized: torch.Tensor = None
+        self.goal_pos_normalized: torch.Tensor = None
         self.n_trajectories: int = 0
 
     @abstractmethod
@@ -350,6 +357,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
             "dataset_dir": self.dataset_dir,
             "n_support_points": self.n_support_points,
             "duration": self.duration,
+            "spline_degree": self.robot.spline_degree,
             "robot_margin": self.robot_margin,
             "generating_robot_margin": self.generating_robot_margin,
             "n_tasks": n_tasks,
@@ -390,6 +398,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
                 self.generating_robot_margin,
                 self.n_support_points,
                 self.duration,
+                self.spline_degree,
                 self.tensor_args,
                 n_trajectories,
                 threshold_start_goal_pos,
@@ -559,6 +568,7 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
         generating_robot_margin: float,
         n_support_points: int,
         duration: float,
+        spline_degree: int,
         apply_augmentations: bool,
         tensor_args: Dict[str, Any],
     ):
@@ -571,12 +581,10 @@ class TrajectoryDatasetDense(TrajectoryDatasetBase):
             generating_robot_margin=generating_robot_margin,
             n_support_points=n_support_points,
             duration=duration,
+            spline_degree=spline_degree,
             apply_augmentations=apply_augmentations,
             tensor_args=tensor_args,
         )
-        self.trajectories_normalized: torch.Tensor = torch.empty(0)
-        self.start_pos_normalized: torch.Tensor = torch.empty(0)
-        self.goal_pos_normalized: torch.Tensor = torch.empty(0)
 
     def load_data(self, normalizer_name="TrivialNormalizer") -> None:
         super().load_data()
@@ -638,16 +646,13 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
             generating_robot_margin=generating_robot_margin,
             n_support_points=n_support_points,
             duration=duration,
+            spline_degree=spline_degree,
             apply_augmentations=apply_augmentations,
             tensor_args=tensor_args,
         )
         self.n_control_points = n_control_points
-        self.real_n_control_points = n_control_points + 2 * (spline_degree - 1)
-        self.spline_degree = spline_degree
-        self.control_points: torch.Tensor = torch.empty(0)
-        self.control_points_normalized: torch.Tensor = torch.empty(0)
-        self.start_pos_normalized: torch.Tensor = torch.empty(0)
-        self.goal_pos_normalized: torch.Tensor = torch.empty(0)
+        self.control_points: torch.Tensor = None
+        self.control_points_normalized: torch.Tensor = None
 
     def load_data(self, normalizer_name="TrivialNormalizer") -> None:
         super().load_data()
@@ -656,7 +661,7 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
         self.control_points = fit_bsplines_to_trajectories(
             trajectories=self.trajectories,
             n_control_points=self.n_control_points,
-            degree=self.spline_degree,
+            degree=self.robot.spline_degree,
         )
 
         self.normalizer_name = normalizer_name
@@ -673,26 +678,16 @@ class TrajectoryDatasetBSpline(TrajectoryDatasetBase):
         goal_pos_normalized = self.goal_pos_normalized[idx]
         start_pos = self.start_pos[idx]
         goal_pos = self.goal_pos[idx]
-        
-        control_points_normalized_augmented = torch.cat(
-            [
-                start_pos_normalized.unsqueeze(0).repeat(self.spline_degree - 1, 1),
-                control_points_normalized,
-                goal_pos_normalized.unsqueeze(0).repeat(self.spline_degree - 1, 1),
-            ],
-            dim=-2,
-        )
+
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
-            control_points_normalized_augmented = torch.flip(
-                control_points_normalized_augmented, dims=[0]
-            )
+            control_points_normalized = torch.flip(control_points_normalized, dims=[0])
             start_pos_normalized, goal_pos_normalized = (
                 goal_pos_normalized,
                 start_pos_normalized,
             )
 
         data = {
-            "control_points_normalized": control_points_normalized_augmented,
+            "control_points_normalized": control_points_normalized,
             "start_pos_normalized": start_pos_normalized,
             "goal_pos_normalized": goal_pos_normalized,
             "start_pos": start_pos,

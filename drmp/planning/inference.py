@@ -379,7 +379,6 @@ def create_test_subset(
     dataset: TrajectoryDatasetBase,
     n_tasks: int,
     threshold_start_goal_pos: float,
-    tensor_args: Dict[str, Any],
     use_extra_objects: bool = False,
 ) -> Optional[Subset]:
     start_pos, goal_pos, success = dataset.env.random_collision_free_start_goal(
@@ -397,7 +396,8 @@ def create_test_subset(
 
     test_dataset = copy(dataset)
     test_dataset.n_trajs = n_tasks
-    test_dataset.trajs_normalized = torch.empty((n_tasks,), **tensor_args)
+    test_dataset.start_pos = start_pos
+    test_dataset.goal_pos = goal_pos
     test_dataset.start_pos_normalized = test_dataset.normalizer.normalize(start_pos)
     test_dataset.goal_pos_normalized = test_dataset.normalizer.normalize(goal_pos)
     return Subset(test_dataset, list(range(n_tasks)))
@@ -470,6 +470,7 @@ def run_inference(
     print_stats(results)
 
     if debug:
+        print("Saving data...")
         with open(os.path.join(generation_dir, "results_data_dict.pickle"), "wb") as f:
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 

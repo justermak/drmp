@@ -10,14 +10,17 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
 from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.planning.guide import Guide
 from drmp.models.diffusion import DiffusionModelBase
 from drmp.planning.costs import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
+    CostJointAcceleration,
+    CostJointPosition,
     CostJointVelocity,
+    CostObstacles,
 )
+from drmp.planning.guide import Guide
 from drmp.train.logs import log
 from drmp.utils.torch_timer import TimerCUDA
 from drmp.utils.yaml import save_config_to_yaml
@@ -192,15 +195,18 @@ def train(
     ema_warmup: int,
     ema_update_interval: int,
     use_amp: bool,
-    debug: bool,
-    tensor_args: Dict[str, Any],
-    guide_sigma_collision: float,
-    guide_sigma_gp: float,
-    guide_sigma_velocity: float,
+    ddim: bool,
+    shortcut_steps: int,
+    n_guide_steps: int,
+    t_start_guide: int,
+    guide_lambda_obstacles: float,
+    guide_lambda_position: float,
+    guide_lambda_velocity: float,
+    guide_lambda_acceleration: float,
     guide_max_grad_norm: float,
     guide_n_interpolate: int,
-    guide_t_start_guide: float,
-    guide_n_guide_steps: int,
+    debug: bool,
+    tensor_args: Dict[str, Any],
 ) -> None:
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
@@ -229,71 +235,65 @@ def train(
     dataset: TrajectoryDatasetBase = train_subset.dataset
 
     collision_cost = None
-    if guide_sigma_collision is not None:
-        collision_cost = CostCollision(
+    if guide_lambda_obstacles is not None:
+        collision_cost = CostObstacles(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            sigma_collision=guide_sigma_collision,
+            lambda_obstacles=guide_lambda_obstacles,
             use_extra_objects=False,
             tensor_args=tensor_args,
         )
-    
-        collision_cost_extra = CostCollision(
+
+        collision_cost_extra = CostObstacles(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            sigma_collision=guide_sigma_collision,
+            lambda_obstacles=guide_lambda_obstacles,
             use_extra_objects=True,
             tensor_args=tensor_args,
         )
-    
-
-    gp_cost = None
-    if guide_sigma_gp is not None:
-        gp_cost = CostGPTrajectory(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            sigma_gp=guide_sigma_gp,
-            tensor_args=tensor_args,
-        )
         
-    velocity_cost = None
-    if guide_sigma_velocity is not None:
-        velocity_cost =  CostJointVelocity(
+    position_cost = None
+    if guide_lambda_position is not None:
+        position_cost = CostJointPosition(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            sigma_velocity=guide_sigma_velocity,
+            lambda_position=guide_lambda_position,
+            tensor_args=tensor_args,
+        )
+
+    velocity_cost = None
+    if guide_lambda_velocity is not None:
+        velocity_cost = CostJointVelocity(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            lambda_velocity=guide_lambda_velocity,
+            tensor_args=tensor_args,
+        )
+
+    acceleration_cost = None
+    if guide_lambda_acceleration is not None:
+        acceleration_cost = CostJointAcceleration(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            lambda_acceleration=guide_lambda_acceleration,
             tensor_args=tensor_args,
         )
     
-
-    costs = [collision_cost, gp_cost, velocity_cost]
-
-    costs_extra = [collision_cost_extra, gp_cost, velocity_cost]
-
-    cost = CostComposite(
-        robot=dataset.robot,
-        n_support_points=dataset.n_support_points,
-        costs=costs,
-        tensor_args=tensor_args,
-    )
-
-    cost_extra = CostComposite(
-        robot=dataset.robot,
-        n_support_points=dataset.n_support_points,
-        costs=costs_extra,
-        tensor_args=tensor_args,
-    )
+    costs = [cost for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost] if cost is not None]
+    costs_extra = [cost for cost in [collision_cost_extra, position_cost, velocity_cost, acceleration_cost] if cost is not None]
 
     guide = Guide(
-        cost=cost,
+        dataset=dataset,
+        costs=costs,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
 
     guide_extra = Guide(
-        cost=cost_extra,
+        dataset=dataset,
+        costs=costs_extra,
         max_grad_norm=guide_max_grad_norm,
         n_interpolate=guide_n_interpolate,
     )
@@ -327,13 +327,17 @@ def train(
         "ema_warmup": ema_warmup,
         "ema_update_interval": ema_update_interval,
         "use_amp": use_amp,
-        "debug": debug,
-        "guide_sigma_collision": guide_sigma_collision,
-        "guide_sigma_gp": guide_sigma_gp,
+        "ddim": ddim,
+        "shortcut_steps": shortcut_steps,
+        "n_guide_steps": n_guide_steps,
+        "t_start_guide": t_start_guide,
+        "guide_lambda_obstacles": guide_lambda_obstacles,
+        "guide_lambda_position": guide_lambda_position,
+        "guide_lambda_velocity": guide_lambda_velocity,
+        "guide_lambda_acceleration": guide_lambda_acceleration,
         "guide_max_grad_norm": guide_max_grad_norm,
         "guide_n_interpolate": guide_n_interpolate,
-        "guide_t_start_guide": guide_t_start_guide,
-        "guide_n_guide_steps": guide_n_guide_steps,
+        "debug": debug,
     }
 
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
@@ -395,10 +399,12 @@ def train(
                                 prefix="TRAIN ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
+                                ddim=ddim,
+                                shortcut_steps=shortcut_steps,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                t_start_guide=guide_t_start_guide,
-                                n_guide_steps=guide_n_guide_steps,
+                                t_start_guide=t_start_guide,
+                                n_guide_steps=n_guide_steps,
                             )
                         print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
 
@@ -424,10 +430,12 @@ def train(
                                 prefix="VAL ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
+                                ddim=ddim,
+                                shortcut_steps=shortcut_steps,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                t_start_guide=guide_t_start_guide,
-                                n_guide_steps=guide_n_guide_steps,
+                                t_start_guide=t_start_guide,
+                                n_guide_steps=n_guide_steps,
                             )
                         print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")
 

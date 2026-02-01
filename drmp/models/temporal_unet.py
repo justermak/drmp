@@ -313,3 +313,81 @@ class TemporalUNet(nn.Module):
 
         x = x.permute(0, 2, 1)
         return x
+
+
+class TemporalUNetShortcut(TemporalUNet):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        if self.positional_encoding == "random_fourier":
+            positional_encodings = RandomFourierSinusoidalPosEmb(
+                self.positional_encoding_dim, is_random=True
+            )
+        elif self.positional_encoding == "learned_fourier":
+            positional_encodings = RandomFourierSinusoidalPosEmb(
+                self.positional_encoding_dim, is_random=False
+            )
+        elif self.positional_encoding == "sinusoidal":
+            positional_encodings = SinusoidalPosEmb(self.positional_encoding_dim)
+        else:
+            raise ValueError(f"Unknown positional encoding type: {self.positional_encoding}")
+        
+        self.dt_mlp = nn.Sequential(
+            positional_encodings,
+            nn.Linear(
+                self.positional_encoding_dim
+                + (1 if self.positional_encoding != "sinusoidal" else 0),
+                self.time_emb_dim,
+            ),
+            nn.Mish(),
+            nn.Linear(self.time_emb_dim, self.time_emb_dim),
+        )
+
+
+    def forward(
+        self, x: torch.Tensor, time: torch.Tensor, dt: torch.Tensor, context: torch.Tensor = None
+    ) -> torch.Tensor:
+        x = x.permute(0, 2, 1)
+        t = self.time_mlp(time)
+        dt_emb = self.dt_mlp(dt)
+        
+        t = t + dt_emb
+
+        if self.context_dim is not None:
+            if context is None:
+                raise ValueError(
+                    "Model initialized with context_dim but no context provided in forward"
+                )
+            c = self.context_mlp(context)
+            t = t + c
+
+        x = self.init_conv(x)
+        r = x.clone()
+
+        h = []
+
+        for block1, block2, downsample in self.downs:
+            x = block1(x, t)
+            h.append(x)
+            x = block2(x, t)
+            h.append(x)
+            x = downsample(x)
+
+        x = self.mid_block1(x, t)
+        x = self.mid_attn(x)
+        x = self.mid_block2(x, t)
+
+        for upsample, block1, block2 in self.ups:
+            x = upsample(x)
+            x = torch.cat((x, h.pop()), dim=1)
+            x = block1(x, t)
+
+            x = torch.cat((x, h.pop()), dim=1)
+            x = block2(x, t)
+
+        x = torch.cat((x, r), dim=1)
+        x = self.final_res_block(x, t)
+        x = self.final_conv(x)
+
+        x = x.permute(0, 2, 1)
+        return x

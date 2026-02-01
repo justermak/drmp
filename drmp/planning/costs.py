@@ -7,14 +7,136 @@ import torch
 from drmp.planning.factors import FieldFactor, GPFactor, UnaryFactor
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
+from drmp.utils.trajectory import interpolate_trajectories
 
 
 class Cost(ABC):
     def __init__(
+        self, robot: RobotBase, n_support_points: int, tensor_args: Dict[str, Any]
+    ) -> None:
+        self.robot = robot
+        self.dim = 2 * robot.n_dim
+        self.n_support_points = n_support_points
+        self.tensor_args = tensor_args
+
+    @abstractmethod
+    def __call__(self, trajectories: torch.Tensor, n_interpolate: int) -> torch.Tensor:
+        pass
+
+
+class CostObstacles(Cost):
+    def __init__(
+        self,
+        robot: RobotBase,
+        env: EnvBase,
+        n_support_points: int,
+        lambda_obstacles: float,
+        use_extra_objects: bool,
+        tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+        self.env = env
+        self.lambda_obstacles = lambda_obstacles
+        self.use_extra_objects = use_extra_objects
+
+    def __call__(
+        self,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
+    ):
+        trajectories_interpolated = interpolate_trajectories(
+            trajectories, n_interpolate=n_interpolate
+        )
+        cost = (
+            self.env.compute_cost(
+                trajectories=trajectories_interpolated,
+                robot=self.robot,
+                on_extra=self.use_extra_objects,
+            ).sum(-1)
+            * self.lambda_obstacles
+        )
+        return cost
+
+class CostJointPosition(Cost):
+    def __init__(
         self,
         robot: RobotBase,
         n_support_points: int,
+        lambda_position: float,
         tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+        self.lambda_position = lambda_position
+
+    def __call__(
+        self,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
+    ):
+        cost = (
+            0.5 * (trajectories**2).sum(-1).sum(-1) * self.lambda_position
+        )
+        return cost
+
+
+class CostJointVelocity(Cost):
+    def __init__(
+        self,
+        robot: RobotBase,
+        n_support_points: int,
+        lambda_velocity: float,
+        tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+        self.lambda_velocity = lambda_velocity
+
+    def __call__(
+        self,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
+    ):
+        trajectories_vel = self.robot.get_velocity(
+            trajectories=trajectories,
+            mode="forward",
+        )
+        cost = (
+            0.5
+            * (trajectories_vel**2).sum(-1).sum(-1)
+            * self.lambda_velocity
+        )
+        return cost
+    
+class CostJointAcceleration(Cost):
+    def __init__(
+        self,
+        robot: RobotBase,
+        n_support_points: int,
+        lambda_acceleration: float,
+        tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+        self.lambda_acceleration = lambda_acceleration
+
+    def __call__(
+        self,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
+    ):
+        trajectories_acc = self.robot.get_acceleration(
+            trajectories=trajectories,
+            mode="forward",
+        )
+        cost = (
+            0.5
+            * (trajectories_acc**2).sum(-1).sum(-1)
+            * self.lambda_acceleration
+        )
+        return cost
+
+
+class FactorCost(ABC):
+    def __init__(
+        self, robot: RobotBase, n_support_points: int, tensor_args: Dict[str, Any]
     ):
         self.robot = robot
         self.dim = 2 * robot.n_dim
@@ -30,12 +152,12 @@ class Cost(ABC):
         pass
 
 
-class CostComposite(Cost):
+class CostComposite(FactorCost):
     def __init__(
         self,
         robot: RobotBase,
         n_support_points: int,
-        costs: List[Cost],
+        costs: List[FactorCost],
         tensor_args: Dict[str, Any],
     ):
         super().__init__(robot, n_support_points, tensor_args=tensor_args)
@@ -88,7 +210,7 @@ class CostComposite(Cost):
         return A, b, K
 
 
-class CostCollision(Cost):
+class CostCollision(FactorCost):
     def __init__(
         self,
         robot: RobotBase,
@@ -109,14 +231,17 @@ class CostCollision(Cost):
         )
 
     def __call__(self, trajectories: torch.Tensor, n_interpolate: int):
-        cost = self.obst_factor.get_error(
-            trajectories=trajectories,
-            env=self.env,
-            robot=self.robot,
-            n_interpolate=n_interpolate,
-            calc_jacobian=False,
-            return_full_error=True
-        ).sum(-1) / self.sigma_collision**2
+        cost = (
+            self.obst_factor.get_error(
+                trajectories=trajectories,
+                env=self.env,
+                robot=self.robot,
+                n_interpolate=n_interpolate,
+                calc_jacobian=False,
+                return_full_error=True,
+            ).sum(-1)
+            / self.sigma_collision**2
+        )
 
         return cost
 
@@ -162,14 +287,17 @@ class CostCollision(Cost):
         # https://github.com/anindex/stoch_gpmp/blob/main/stoch_gpmp/costs/cost_functions.py#L275
 
         b = err_obst.unsqueeze(-1)
-        K = torch.eye(
-            (self.n_support_points - 1), **self.tensor_args
-        ).repeat(batch_size, 1, 1) / self.sigma_collision**2
+        K = (
+            torch.eye((self.n_support_points - 1), **self.tensor_args).repeat(
+                batch_size, 1, 1
+            )
+            / self.sigma_collision**2
+        )
 
         return A, b, K
 
 
-class CostGPTrajectory(Cost):
+class CostGPTrajectory(FactorCost):
     def __init__(
         self,
         robot: RobotBase,
@@ -202,7 +330,7 @@ class CostGPTrajectory(Cost):
         pass
 
 
-class CostGP(Cost):
+class CostGP(FactorCost):
     def __init__(
         self,
         robot: RobotBase,
@@ -255,7 +383,9 @@ class CostGP(Cost):
         err_p, H_p = self.start_prior.get_error(trajectories[:, [0]])
         A[:, : self.dim, : self.dim] = H_p
         b[:, : self.dim] = err_p
-        K[:, : self.dim, : self.dim] = torch.eye(self.dim, **self.tensor_args) / self.sigma_start**2
+        K[:, : self.dim, : self.dim] = (
+            torch.eye(self.dim, **self.tensor_args) / self.sigma_start**2
+        )
 
         err_gp, H1_gp, H2_gp = self.gp_prior.get_error(trajectories)
 
@@ -267,7 +397,7 @@ class CostGP(Cost):
         return A, b, K
 
 
-class CostGoalPrior(Cost):
+class CostGoalPrior(FactorCost):
     def __init__(
         self,
         robot: RobotBase,
@@ -307,25 +437,3 @@ class CostGoalPrior(Cost):
         K = torch.eye(self.dim, **self.tensor_args) / self.sigma_goal_prior**2
 
         return A, b, K
-
-
-class CostJointVelocity(Cost):
-    def __init__(
-        self,
-        robot: RobotBase,
-        n_support_points: int,
-        sigma_velocity: float,
-        tensor_args: Dict[str, Any],
-    ):
-        super().__init__(robot, n_support_points, tensor_args)
-        self.sigma_velocity = sigma_velocity
-
-    def __call__(self, trajectories: torch.Tensor, **kwargs):
-        trajectories_vel = self.robot.get_velocity(trajectories, compute=True)
-        cost = (
-            0.5 * torch.linalg.norm(trajectories_vel, dim=-1) / self.sigma_velocity**2
-        )
-        return cost.sum(dim=1)
-
-    def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
-        return None, None, None

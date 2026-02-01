@@ -2,9 +2,9 @@ from typing import Any, Dict, Tuple
 
 import torch
 
-from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
+from drmp.utils.trajectory import interpolate_trajectories
 
 
 class UnaryFactor:
@@ -24,10 +24,7 @@ class UnaryFactor:
         error = self.mean - x
 
         if calc_jacobian:
-            H = (
-                torch.eye(self.dim, **self.tensor_args)
-                .repeat(x.shape[0], 1, 1)
-            )
+            H = torch.eye(self.dim, **self.tensor_args).repeat(x.shape[0], 1, 1)
             return error.view(x.shape[0], self.dim, 1), H
         else:
             return error
@@ -57,20 +54,27 @@ class FieldFactor:
             trajectories, n_interpolate=n_interpolate
         )
         error_interpolated = env.compute_cost(
-            trajectories=trajectories_interpolated[:, 1:, :], robot=robot, on_extra=self.use_extra_objects   
+            trajectories=trajectories_interpolated[:, 1:, :],
+            robot=robot,
+            on_extra=self.use_extra_objects,
         )
-        error = error_interpolated if return_full_error else env.compute_cost(
-            trajectories=trajectories[:, 1:, :], robot=robot, on_extra=self.use_extra_objects
+        error = (
+            error_interpolated
+            if return_full_error
+            else env.compute_cost(
+                trajectories=trajectories[:, 1:, :],
+                robot=robot,
+                on_extra=self.use_extra_objects,
+            )
         )
-        
+
         if calc_jacobian:
             H = -torch.autograd.grad(
                 error_interpolated.sum(), trajectories, retain_graph=True
-            )[0][:, 1:, :self.n_dim]  
+            )[0][:, 1:, : self.n_dim]
             return error, H
-        
+
         return error
-        
 
 
 class GPFactor:

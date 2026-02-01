@@ -54,10 +54,10 @@ class TrivialNormalizer(NormalizerBase):
         pass
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
-        return x
+        return x.clone()
 
     def unnormalize(self, x: torch.Tensor) -> torch.Tensor:
-        return x
+        return x.clone()
 
 
 class GaussianNormalizer(NormalizerBase):

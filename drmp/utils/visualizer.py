@@ -28,7 +28,6 @@ class Visualizer:
     }
 
     START_GOAL_RADIUS = 0.005
-    TRAJECTORY_POINT_SIZE = 4
 
     def __init__(
         self, env: EnvBase, robot: RobotBase, use_extra_objects: bool = True
@@ -151,7 +150,7 @@ class Visualizer:
         for p, color in zip(pos_np, colors):
             circle = plt.Circle(
                 p,
-                self.robot.margin * (2.0 if moving else 1.0),
+                self.robot.margin * (1.0 if moving else 0.5),
                 color=color,
                 alpha=0.5,
                 zorder=zorder,

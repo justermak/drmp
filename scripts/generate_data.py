@@ -3,7 +3,7 @@ import torch
 
 from drmp.config import DEFAULT_DATA_GENERATION_ARGS
 from drmp.datasets.dataset import TrajectoryDatasetDense
-from drmp.utils.torch_utils import fix_random_seed
+from drmp.utils.torch import fix_random_seed
 
 
 def run(args):

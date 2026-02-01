@@ -4,11 +4,11 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 
-from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.trajectory_utils import interpolate_trajectories
 from drmp.universe.grid_map_sdf import GridMapSDF
 from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectField
 from drmp.universe.robot import RobotBase
+from drmp.utils.torch_timer import TimerCUDA
+from drmp.utils.trajectory import interpolate_trajectories
 
 
 def get_envs():
@@ -125,11 +125,15 @@ class EnvBase(ABC):
         trajectories_pos = robot.get_position(trajectories)
         total_cost = torch.zeros(trajectories_pos.shape[:-1], **self.tensor_args)
         if on_fixed:
-            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(trajectories_pos)
+            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(
+                trajectories_pos
+            )
             cost_fixed = torch.relu(robot.margin - sdf_fixed).sum(dim=-1)
             total_cost += cost_fixed
         if on_extra:
-            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(trajectories_pos)
+            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(
+                trajectories_pos
+            )
             cost_extra = torch.relu(robot.margin - sdf_extra).sum(dim=-1)
             total_cost += cost_extra
 
@@ -215,6 +219,46 @@ class EnvBase(ABC):
         trajectories_free = trajectories[~trajectories_collision_mask]
 
         return trajectories_collision, trajectories_free, points_collision_mask
+
+
+class EnvEmpty2D(EnvBase):
+    def __init__(
+        self,
+        tensor_args: Dict[str, Any],
+    ):
+        # Create workspace boundary boxes
+        limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
+        boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
+            limits_np
+        )
+
+        obj_field_fixed = ObjectField(
+            [
+                MultiBoxField(
+                    boundary_centers,
+                    boundary_half_sizes,
+                    tensor_args=tensor_args,
+                )
+            ]
+        )
+
+        obj_field_extra = ObjectField(
+            [
+                MultiSphereField(
+                    np.array([[0.0, 0.0]]),
+                    np.array([0.1]),
+                    tensor_args=tensor_args,
+                )
+            ]
+        )
+
+        super().__init__(
+            limits=torch.tensor(limits_np, **tensor_args),
+            obj_field_fixed=obj_field_fixed,
+            obj_field_extra=obj_field_extra,
+            sdf_cell_size=0.005,
+            tensor_args=tensor_args,
+        )
 
 
 class EnvSimple2D(EnvBase):

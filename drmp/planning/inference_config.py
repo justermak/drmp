@@ -8,19 +8,22 @@ from drmp.datasets.dataset import (
     TrajectoryDatasetBSpline,
     TrajectoryDatasetDense,
 )
-from drmp.planning.guide import Guide, GuideSlow
-from drmp.models.diffusion import DiffusionModelBase
+from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
 from drmp.planning.costs import (
     CostCollision,
     CostComposite,
     CostGPTrajectory,
+    CostJointAcceleration,
+    CostJointPosition,
     CostJointVelocity,
+    CostObstacles,
 )
+from drmp.planning.guide import Guide, GuideDense
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory_utils import (
+from drmp.utils.trajectory import (
     create_straight_line_trajectory,
     get_trajectories_from_bsplines,
 )
@@ -50,6 +53,7 @@ class DiffusionModelWrapper(ModelWrapperBase):
         n_guide_steps: int,
         ddim: bool,
         use_extra_objects: bool,
+        shortcut_steps: int = None,
     ):
         super().__init__(use_extra_objects)
         self.model = model
@@ -57,6 +61,7 @@ class DiffusionModelWrapper(ModelWrapperBase):
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
+        self.shortcut_steps = shortcut_steps
 
     def sample(
         self,
@@ -67,16 +72,29 @@ class DiffusionModelWrapper(ModelWrapperBase):
     ):
         context = self.model.build_context(data_normalized)
         hard_conditions = self.model.build_hard_conditions(data_normalized)
-
-        trajectories_iters_normalized = self.model.run_inference(
-            n_samples=n_samples,
-            hard_conditions=hard_conditions,
-            context=context,
-            guide=self.guide,
-            n_guide_steps=self.n_guide_steps,
-            t_start_guide=self.t_start_guide,
-            ddim=self.ddim,
-        )
+        if isinstance(self.model, DiffusionSplinesShortcut):
+            trajectories_iters_normalized = self.model.run_inference(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                guide=self.guide,
+                n_guide_steps=self.n_guide_steps,
+                t_start_guide=self.t_start_guide,
+                ddim=self.ddim,
+                shortcut_steps=self.shortcut_steps,
+                debug=debug,
+            )
+        else:
+            trajectories_iters_normalized = self.model.run_inference(
+                n_samples=n_samples,
+                hard_conditions=hard_conditions,
+                context=context,
+                guide=self.guide,
+                n_guide_steps=self.n_guide_steps,
+                t_start_guide=self.t_start_guide,
+                ddim=self.ddim,
+                debug=debug,
+            )
 
         trajectories_iters = dataset.normalizer.unnormalize(
             trajectories_iters_normalized
@@ -86,7 +104,7 @@ class DiffusionModelWrapper(ModelWrapperBase):
             trajectories_iters = get_trajectories_from_bsplines(
                 control_points=trajectories_iters,
                 n_support_points=dataset.n_support_points,
-                degree=dataset.spline_degree,
+                degree=dataset.robot.spline_degree,
             )
 
         trajectories_final = trajectories_iters[-1]
@@ -341,26 +359,32 @@ class DiffusionConfig(ModelConfigBase):
     def __init__(
         self,
         model: DiffusionModelBase,
+        guide_dense: bool,
         use_extra_objects: bool,
-        sigma_collision: float,
-        sigma_gp: float,
-        sigma_velocity: float,
+        lambda_obstacles: float,
+        lambda_position: float,
+        lambda_velocity: float,
+        lambda_acceleration: float,
         max_grad_norm: float,
         n_interpolate: int,
         t_start_guide: float,
         n_guide_steps: int,
         ddim: bool,
+        shortcut_steps: int = None,
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.model = model
-        self.sigma_collision = sigma_collision
-        self.sigma_gp = sigma_gp
-        self.sigma_velocity = sigma_velocity
+        self.guide_dense = guide_dense
+        self.lambda_obstacles = lambda_obstacles
+        self.lambda_position = lambda_position
+        self.lambda_velocity = lambda_velocity
+        self.lambda_acceleration = lambda_acceleration
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.ddim = ddim
+        self.shortcut_steps = shortcut_steps
 
     def prepare(
         self,
@@ -369,48 +393,63 @@ class DiffusionConfig(ModelConfigBase):
         n_samples: int,
     ) -> DiffusionModelWrapper:
         collision_cost = None
-        if self.sigma_collision is not None:
-            collision_cost = CostCollision(
+        if self.lambda_obstacles is not None:
+            collision_cost = CostObstacles(
                 robot=dataset.robot,
                 env=dataset.env,
                 n_support_points=dataset.n_support_points,
-                sigma_collision=self.sigma_collision,
+                lambda_obstacles=self.lambda_obstacles,
                 use_extra_objects=self.use_extra_objects,
                 tensor_args=tensor_args,
             )
-        
-        gp_cost = None
-        if self.sigma_gp is not None:
-            gp_cost = CostGPTrajectory(
+
+        position_cost = None
+        if self.lambda_position is not None:
+            position_cost = CostJointPosition(
                 robot=dataset.robot,
                 n_support_points=dataset.n_support_points,
-                sigma_gp=self.sigma_gp,
+                lambda_position=self.lambda_position,
                 tensor_args=tensor_args,
             )
-        
+
         velocity_cost = None
-        if self.sigma_velocity is not None:
+        if self.lambda_velocity is not None:
             velocity_cost = CostJointVelocity(
                 robot=dataset.robot,
                 n_support_points=dataset.n_support_points,
-                sigma_velocity=self.sigma_velocity,
+                lambda_velocity=self.lambda_velocity,
                 tensor_args=tensor_args,
             )
-            
-        costs = [collision_cost, gp_cost, velocity_cost]
 
-        cost = CostComposite(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            costs=costs,
-            tensor_args=tensor_args,
-        )
+        acceleration_cost = None
+        if self.lambda_acceleration is not None:
+            acceleration_cost = CostJointAcceleration(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                lambda_acceleration=self.lambda_acceleration,
+                tensor_args=tensor_args,
+            )
 
-        guide = GuideSlow(
-            dataset=dataset,
-            cost=cost,
-            max_grad_norm=self.max_grad_norm,
-            n_interpolate=self.n_interpolate,
+        costs = [
+            cost
+            for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+            if cost is not None
+        ]
+
+        guide = (
+            GuideDense(
+                dataset=dataset,
+                costs=costs,
+                max_grad_norm=self.max_grad_norm,
+                n_interpolate=self.n_interpolate,
+            )
+            if self.guide_dense
+            else Guide(
+                dataset=dataset,
+                costs=costs,
+                max_grad_norm=self.max_grad_norm,
+                n_interpolate=self.n_interpolate,
+            )
         )
 
         return DiffusionModelWrapper(
@@ -420,19 +459,22 @@ class DiffusionConfig(ModelConfigBase):
             n_guide_steps=self.n_guide_steps,
             ddim=self.ddim,
             use_extra_objects=self.use_extra_objects,
+            shortcut_steps=self.shortcut_steps,
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "algorithm": "diffusion",
             "use_extra_objects": self.use_extra_objects,
-            "sigma_collision": self.sigma_collision,
-            "sigma_gp": self.sigma_gp,
-            "sigma_velocity": self.sigma_velocity,
+            "lambda_obstacles": self.lambda_obstacles,
+            "lambda_position": self.lambda_position,
+            "lambda_velocity": self.lambda_velocity,
+            "lambda_acceleration": self.lambda_acceleration,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
             "t_start_guide": self.t_start_guide,
             "n_guide_steps": self.n_guide_steps,
+            "shortcut_steps": self.shortcut_steps,
             "ddim": self.ddim,
         }
 
@@ -498,6 +540,7 @@ class MPDConfig(ModelConfigBase):
             )
 
             guide = Guide(
+                dataset=dataset,
                 cost=cost,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
@@ -593,6 +636,7 @@ class MPDSplinesConfig(ModelConfigBase):
             )
 
             guide = Guide(
+                dataset=dataset,
                 cost=cost,
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,

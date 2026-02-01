@@ -1,3 +1,4 @@
+from functools import cache
 from typing import Any, Dict
 
 import numpy as np
@@ -24,13 +25,18 @@ def create_straight_line_trajectory(
     return trajectories
 
 
-def _get_knots(n_control_points: int, degree: int) -> np.ndarray:
+@cache
+def _get_knots(
+    n_control_points: int, degree: int, device: torch.device, dtype: torch.dtype
+) -> torch.Tensor:
     n_internal = n_control_points - degree - 1
     internal_knots = np.linspace(0, 1, n_internal + 2)
     knots = np.concatenate(([0.0] * degree, internal_knots, [1.0] * degree))
-    return knots
+    knots_torch = torch.tensor(knots, device=device, dtype=dtype)
+    return knots_torch
 
 
+@cache
 def _compute_bspline_basis(
     t: torch.Tensor, knots: torch.Tensor, degree: int, n_control_points: int
 ) -> torch.Tensor:
@@ -84,12 +90,31 @@ def fit_bsplines_to_trajectories(
     dtype = trajectories.dtype
     n_support_points = trajectories.shape[-2]
 
-    knots_np = _get_knots(n_control_points, degree)
-    knots = torch.tensor(knots_np, device=device, dtype=dtype)
+    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
     t_eval = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
     basis = _compute_bspline_basis(t_eval, knots, degree, n_control_points)
-    basis_pinv = torch.linalg.pinv(basis)
-    control_points = torch.matmul(basis_pinv, trajectories)
+    n_fixed = degree - 1
+
+    basis_start = basis[:, :n_fixed]
+    basis_mid = basis[:, n_fixed:-n_fixed]
+    basis_end = basis[:, -n_fixed:]
+
+    start_pos = trajectories[..., 0, :]
+    goal_pos = trajectories[..., -1, :]
+
+    term_start = basis_start.sum(dim=1, keepdim=True) @ start_pos.unsqueeze(-2)
+    term_end = basis_end.sum(dim=1, keepdim=True) @ goal_pos.unsqueeze(-2)
+
+    residuals = trajectories - term_start - term_end
+
+    basis_mid_pinv = torch.linalg.pinv(basis_mid)
+    control_points_mid = basis_mid_pinv @ residuals
+    control_points_start = torch.stack([start_pos] * n_fixed, dim=-2)
+    control_points_end = torch.stack([goal_pos] * n_fixed, dim=-2)
+
+    control_points = torch.cat(
+        [control_points_start, control_points_mid, control_points_end], dim=-2
+    )
 
     return control_points
 
@@ -103,13 +128,34 @@ def get_trajectories_from_bsplines(
     dtype = control_points.dtype
     n_control_points = control_points.shape[-2]
 
-    knots_np = _get_knots(n_control_points, degree)
-    knots = torch.tensor(knots_np, device=device, dtype=dtype)
+    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
     t_eval = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
     basis = _compute_bspline_basis(t_eval, knots, degree, n_control_points)
     trajectories = torch.einsum("sc,...cd->...sd", basis, control_points)
 
     return trajectories
+
+
+def get_trajectories_derivative_from_bsplines(
+    control_points: torch.Tensor,
+    n_support_points: int,
+    degree: int,
+) -> torch.Tensor:
+    device = control_points.device
+    dtype = control_points.dtype
+    n_control_points = control_points.shape[-2]
+
+    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
+
+    new_control_points = (
+        (control_points[..., 1:, :] - control_points[..., :-1, :]) * degree
+    ) / (
+        knots[degree + 1 : n_control_points + degree] - knots[1:n_control_points]
+    ).unsqueeze(-1)
+
+    return get_trajectories_from_bsplines(
+        new_control_points, n_support_points, degree - 1
+    )
 
 
 def smoothen_trajectory(

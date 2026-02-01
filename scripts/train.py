@@ -8,7 +8,7 @@ from drmp.config import DEFAULT_TRAIN_ARGS
 from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
 from drmp.models.diffusion import get_models
 from drmp.train import train
-from drmp.utils.torch_utils import fix_random_seed
+from drmp.utils.torch import fix_random_seed
 from drmp.utils.yaml import load_config_from_yaml, save_config_to_yaml
 
 MODELS = get_models()
@@ -50,7 +50,7 @@ def run(args):
     }
 
     dataset = None
-    if args.diffusion_model_name == "GaussianDiffusionSplines":
+    if args.diffusion_model_name in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
         dataset_init_config["n_control_points"] = args.n_control_points
         dataset_init_config["spline_degree"] = args.spline_degree
         dataset = TrajectoryDatasetBSpline(**dataset_init_config)
@@ -71,7 +71,7 @@ def run(args):
         "normalizer_name": args.normalizer_name,
         "apply_augmentations": args.apply_augmentations,
     }
-    if args.diffusion_model_name == "GaussianDiffusionSplines":
+    if args.diffusion_model_name in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
         dataset_usage_config["n_control_points"] = args.n_control_points
         dataset_usage_config["spline_degree"] = args.spline_degree
     print("\nDataset usage configuration:")
@@ -81,7 +81,6 @@ def run(args):
     print("Filtering:")
     for filter_name, params in dataset_usage_config["filtering"].items():
         print(f"{filter_name}: {params}")
-    
 
     train_subset, train_dataloader, val_subset, val_dataloader = (
         dataset.load_train_val_split(
@@ -91,9 +90,10 @@ def run(args):
     )
 
     assert args.state_dim == dataset.robot.n_dim
-    assert args.horizon == (dataset.n_support_points 
-        if args.diffusion_model_name == "GaussianDiffusion"
-        else dataset.real_n_control_points
+    assert args.horizon == (
+        dataset.n_support_points
+        if args.diffusion_model_name == "DiffusionDense"
+        else dataset.n_control_points
     )
 
     model = MODELS[args.diffusion_model_name](
@@ -118,7 +118,9 @@ def run(args):
 
     checkpoint_dir = os.path.join(args.checkpoints_dir, "checkpoints", checkpoint_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
-    dataset_usage_config_path = os.path.join(checkpoint_dir, "dataset_usage_config.yaml")
+    dataset_usage_config_path = os.path.join(
+        checkpoint_dir, "dataset_usage_config.yaml"
+    )
     save_config_to_yaml(dataset_usage_config, dataset_usage_config_path)
     print(f"\nSaved dataset_usage config to {dataset_usage_config_path}")
 
@@ -141,15 +143,18 @@ def run(args):
         ema_warmup=args.ema_warmup,
         ema_update_interval=args.ema_update_interval,
         use_amp=args.use_amp,
-        debug=args.debug,
-        tensor_args=tensor_args,
-        guide_sigma_collision=args.guide_sigma_collision,
-        guide_sigma_gp=args.guide_sigma_gp,
-        guide_sigma_velocity=args.guide_sigma_velocity,
+        ddim=args.ddim,
+        shortcut_steps=args.shortcut_steps,
+        n_guide_steps=args.n_guide_steps,
+        t_start_guide=args.t_start_guide,
+        guide_lambda_obstacles=args.guide_lambda_obstacles,
+        guide_lambda_position=args.guide_lambda_position,
+        guide_lambda_velocity=args.guide_lambda_velocity,
+        guide_lambda_acceleration=args.guide_lambda_acceleration,
         guide_max_grad_norm=args.guide_max_grad_norm,
         guide_n_interpolate=args.guide_n_interpolate,
-        guide_t_start_guide=args.guide_t_start_guide,
-        guide_n_guide_steps=args.guide_n_guide_steps,
+        debug=args.debug,
+        tensor_args=tensor_args,
     )
 
 

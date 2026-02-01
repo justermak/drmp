@@ -20,9 +20,12 @@ def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase):
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
-    trajectories_vel = robot.get_velocity(trajectories, compute=True)
-    sharpness = torch.linalg.norm(torch.diff(trajectories_vel, dim=-2), dim=-1).sum(-1)
-    return sharpness
+    trajectories_pos = robot.get_position(trajectories)
+    trajectories_vel = torch.diff(trajectories_pos, dim=-2) / robot.dt
+    trajectories_acc = torch.diff(trajectories_vel, dim=-2) / robot.dt
+    trajectories_jerk = torch.diff(trajectories_acc, dim=-2) / robot.dt
+    integrated_squared_jerk = (trajectories_jerk**2).sum(-1).sum(-1) * robot.dt
+    return integrated_squared_jerk
 
 
 def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase):

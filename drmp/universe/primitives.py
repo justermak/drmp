@@ -100,7 +100,7 @@ class ObjectField(PrimitiveShapeField):
 
     def compute_signed_distance(self, x: torch.Tensor) -> torch.Tensor:
         sdf_fields = [field.compute_signed_distance(x) for field in self.fields]
-        return torch.concat(sdf_fields, dim=-1)
+        return torch.cat(sdf_fields, dim=-1)
 
     def to(
         self, device: torch.device = None, dtype: torch.dtype = None
