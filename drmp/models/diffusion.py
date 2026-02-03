@@ -656,8 +656,42 @@ class DiffusionSplines(DiffusionModelBase):
 
 
 class DiffusionSplinesShortcut(DiffusionSplines):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        dataset: TrajectoryDatasetBase,
+        horizon: int,
+        state_dim: int,
+        unet_hidden_dim: int,
+        unet_dim_mults: tuple,
+        unet_kernel_size: int,
+        unet_resnet_block_groups: int,
+        unet_positional_encoding: str,
+        unet_positional_encoding_dim: int,
+        unet_attn_heads: int,
+        unet_attn_head_dim: int,
+        unet_context_dim: int,
+        n_diffusion_steps: int,
+        predict_epsilon: bool,
+        spline_degree: int,
+        n_bootstrap: int,
+    ):
+        super().__init__(
+            dataset=dataset,
+            horizon=horizon,
+            state_dim=state_dim,
+            unet_hidden_dim=unet_hidden_dim,
+            unet_dim_mults=unet_dim_mults,
+            unet_kernel_size=unet_kernel_size,
+            unet_resnet_block_groups=unet_resnet_block_groups,
+            unet_positional_encoding=unet_positional_encoding,
+            unet_positional_encoding_dim=unet_positional_encoding_dim,
+            unet_attn_heads=unet_attn_heads,
+            unet_attn_head_dim=unet_attn_head_dim,
+            unet_context_dim=unet_context_dim,
+            n_diffusion_steps=n_diffusion_steps,
+            predict_epsilon=predict_epsilon,
+            spline_degree=spline_degree
+        )
         
         self.model = TemporalUNetShortcut(
             input_dim=self.state_dim,
@@ -672,7 +706,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             context_dim=self.unet_context_dim,
         )
         
-        self.bootstrap_ratio = 0.5
+        self.n_bootstrap = n_bootstrap
         self.min_dt = 1.0 / self.n_diffusion_steps 
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -682,8 +716,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
         
         trajectories = control_points_normalized
         batch_size = trajectories.shape[0]
-        n_bootstrap = int(batch_size * self.bootstrap_ratio)
-        n_flow = batch_size - n_bootstrap
+        n_flow = batch_size - self.n_bootstrap
         
         loss_dict = {}
         
@@ -696,9 +729,9 @@ class DiffusionSplinesShortcut(DiffusionSplines):
 
         # ==== 1. Flow Matching (Naive) ====
         if n_flow > 0:
-            x_1_flow = x_1[n_bootstrap:]
-            x_0_flow = x_0[n_bootstrap:]
-            c_flow = context[n_bootstrap:]
+            x_1_flow = x_1[self.n_bootstrap:]
+            x_0_flow = x_0[self.n_bootstrap:]
+            c_flow = context[self.n_bootstrap:]
             
             # Sample t uniform [0, 1]
             t_flow = torch.rand(n_flow, device=trajectories.device)
@@ -714,7 +747,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             dt_flow = torch.full((n_flow,), self.min_dt, device=trajectories.device)
             
             # Condition samples
-            hard_cond_flow = {k: v[n_bootstrap:] for k,v in hard_conditions.items()}
+            hard_cond_flow = {k: v[self.n_bootstrap:] for k,v in hard_conditions.items()}
             x_t_flow = self.apply_hard_conditioning(x_t_flow, hard_cond_flow)
             
             v_pred_flow = self.model(x_t_flow, t_flow, dt_flow, c_flow)
@@ -724,11 +757,11 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             total_loss += loss_flow * (n_flow / batch_size)
         
         # ==== 2. Bootstrap ====
-        if n_bootstrap > 0:
-            x_0_bst = x_0[:n_bootstrap]
-            x_1_bst = x_1[:n_bootstrap]
-            c_bst = context[:n_bootstrap]
-            hard_cond_bst = {k: v[:n_bootstrap] for k,v in hard_conditions.items()}
+        if self.n_bootstrap > 0:
+            x_0_bst = x_0[:self.n_bootstrap]
+            x_1_bst = x_1[:self.n_bootstrap]
+            c_bst = context[:self.n_bootstrap]
+            hard_cond_bst = {k: v[:self.n_bootstrap] for k,v in hard_conditions.items()}
 
             # Sample dt: powers of 2 (1, 1/2, 1/4, ...)
             # We want dt = 1/2^k. 
@@ -737,7 +770,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             # Max steps = n_diffusion_steps.
             max_log2 = int(torch.log2(torch.tensor(self.n_diffusion_steps)))
             # exponents k in [0, max_log2-1]
-            k_exponents = torch.randint(0, max_log2, (n_bootstrap,), device=trajectories.device)
+            k_exponents = torch.randint(0, max_log2, (self.n_bootstrap,), device=trajectories.device)
             dt_bst = 1.0 / (2.0 ** k_exponents)
             
             # Sample t aligned with dt
@@ -746,7 +779,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             # If num_steps is 1 (dt=1), i=0.
             # If num_steps is 2 (dt=0.5), i in {0, 1}.
             # We use floor(rand * num_steps)
-            i_step = (torch.rand(n_bootstrap, device=trajectories.device) * num_steps).long()
+            i_step = (torch.rand(self.n_bootstrap, device=trajectories.device) * num_steps).long()
             t_bst = i_step.float() * dt_bst
             
             t_bst_exp = t_bst.view(-1, 1, 1)
@@ -777,7 +810,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             loss_bootstrap = self.loss_fn(v_pred_bst, v_target_bst)
             loss_dict["loss_bootstrap"] = loss_bootstrap
             
-            total_loss += loss_bootstrap * (n_bootstrap / batch_size)
+            total_loss += loss_bootstrap * (self.n_bootstrap / batch_size)
 
         loss_dict["loss"] = total_loss
         return loss_dict

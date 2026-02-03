@@ -22,8 +22,8 @@ DEFAULT_TRAIN_ARGS = {
     "spline_degree": 3,
     "apply_augmentations": True,
     "filter_collision": True,
-    "filter_longest_portion": 0.25,
-    "filter_sharpest_portion": 0.25,
+    "filter_longest_portion": 0.1,
+    "filter_sharpest_portion": 0.1,
     # Diffusion Model
     "diffusion_model_name": "DiffusionSplinesShortcut",  # "DiffusionDense", "DiffusionSplines", "DiffusionSplinesShortcut"
     "n_diffusion_steps": 32,
@@ -43,10 +43,11 @@ DEFAULT_TRAIN_ARGS = {
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 300000,
+    "num_train_steps": 500000,
     "lr": 1e-4,
+    "weight_decay": 0.0,
     "batch_size": 1024,
-    "clip_grad": True,
+    "n_bootstrap": 128,
     "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
@@ -66,7 +67,7 @@ DEFAULT_TRAIN_ARGS = {
     "guide_max_grad_norm": 1.0,
     "guide_n_interpolate": 10,
     # Other
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }

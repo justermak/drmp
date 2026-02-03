@@ -112,6 +112,7 @@ def run(args):
         n_diffusion_steps=args.n_diffusion_steps,
         predict_epsilon=args.predict_epsilon,
         spline_degree=args.spline_degree,
+        n_bootstrap=args.n_bootstrap
     ).to(device)
 
     # you can load a checkpoint here
@@ -133,10 +134,10 @@ def run(args):
         val_subset=val_subset,
         checkpoints_dir=args.checkpoints_dir,
         lr=args.lr,
+        weight_decay=args.weight_decay,
         log_interval=args.log_interval,
         checkpoint_interval=args.checkpoint_interval,
         num_train_steps=args.num_train_steps,
-        clip_grad=args.clip_grad,
         clip_grad_max_norm=args.clip_grad_max_norm,
         use_ema=args.use_ema,
         ema_decay=args.ema_decay,

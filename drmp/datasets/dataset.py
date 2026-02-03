@@ -273,8 +273,8 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
     def filter_data(
         self,
-        train_idxs: List[int],
-        val_idxs: List[int],
+        train_idx: torch.Tensor,
+        val_idx: torch.Tensor,
         task_start_idxs: torch.Tensor,
         filtering_config: Dict[str, Any],
     ) -> Tuple[List[int], List[int]]:
@@ -295,8 +295,8 @@ class TrajectoryDatasetBase(Dataset, ABC):
             )
             indices_to_exclude.update(excluded)
 
-        train_filtered = [idx for idx in train_idxs if idx not in indices_to_exclude]
-        val_filtered = [idx for idx in val_idxs if idx not in indices_to_exclude]
+        train_filtered = [idx for idx in train_idx.tolist() if idx not in indices_to_exclude]
+        val_filtered = [idx for idx in val_idx.tolist() if idx not in indices_to_exclude]
 
         return train_filtered, val_filtered
 
@@ -540,8 +540,8 @@ class TrajectoryDatasetBase(Dataset, ABC):
 
         print("\nApplying trajectory filters...")
         train_idx, val_idx = self.filter_data(
-            train_idxs=train_idx,
-            val_idxs=val_idx,
+            train_idx=train_idx,
+            val_idx=val_idx,
             task_start_idxs=task_start_idxs,
             filtering_config=usage_config.get("filtering", {}),
         )

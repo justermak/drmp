@@ -47,7 +47,6 @@ def train_step(
     optimizer: torch.optim.Optimizer,
     scaler: torch.amp.GradScaler,
     use_amp: bool,
-    clip_grad: Union[bool, float],
     clip_grad_max_norm: float,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
@@ -59,11 +58,11 @@ def train_step(
     optimizer.zero_grad()
     scaler.scale(train_loss).backward()
 
-    if clip_grad:
+    if clip_grad_max_norm is not None:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(
             model.parameters(),
-            max_norm=clip_grad_max_norm if isinstance(clip_grad, bool) else clip_grad,
+            max_norm=clip_grad_max_norm,
         )
 
     scaler.step(optimizer)
@@ -183,12 +182,12 @@ def train(
     val_dataloader: DataLoader,
     val_subset: Subset,
     lr: float,
+    weight_decay: float,
     num_train_steps: int,
     checkpoint_name: Optional[str],
     checkpoints_dir: str,
     log_interval: int,
     checkpoint_interval: int,
-    clip_grad: Union[bool, float],
     clip_grad_max_norm: float,
     use_ema: bool,
     ema_decay: float,
@@ -211,7 +210,7 @@ def train(
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
 
-    optimizer = torch.optim.Adam(lr=lr, params=model.parameters())
+    optimizer = torch.optim.Adam(lr=lr, weight_decay=weight_decay, params=model.parameters())
 
     scaler = torch.amp.GradScaler(device=tensor_args["device"], enabled=use_amp)
 
@@ -320,7 +319,6 @@ def train(
         "predict_epsilon": model.predict_epsilon,
         "log_interval": log_interval,
         "checkpoint_interval": checkpoint_interval,
-        "clip_grad": clip_grad,
         "clip_grad_max_norm": clip_grad_max_norm,
         "use_ema": use_ema,
         "ema_decay": ema_decay,
@@ -371,7 +369,6 @@ def train(
                             optimizer=optimizer,
                             scaler=scaler,
                             use_amp=use_amp,
-                            clip_grad=clip_grad,
                             clip_grad_max_norm=clip_grad_max_norm,
                         )
 
