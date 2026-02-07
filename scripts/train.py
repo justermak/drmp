@@ -112,7 +112,7 @@ def run(args):
         n_diffusion_steps=args.n_diffusion_steps,
         predict_epsilon=args.predict_epsilon,
         spline_degree=args.spline_degree,
-        n_bootstrap=args.n_bootstrap
+        bootstrap_fraction=args.bootstrap_fraction
     ).to(device)
 
     # you can load a checkpoint here
@@ -166,7 +166,7 @@ if __name__ == "__main__":
 
     for key, value in DEFAULT_TRAIN_ARGS.items():
         arg_name = f"--{key}"
-        arg_type = type(value if value is not None else str)
+        arg_type = type(value) if value is not None else str
 
         if isinstance(value, bool):
             parser.add_argument(arg_name, action="store_true", default=value)

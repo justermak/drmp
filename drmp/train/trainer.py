@@ -9,12 +9,9 @@ from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
-from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.models.diffusion import DiffusionModelBase
+from drmp.datasets.dataset import TrajectoryDatasetBase
+from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
 from drmp.planning.costs import (
-    CostCollision,
-    CostComposite,
-    CostGPTrajectory,
     CostJointAcceleration,
     CostJointPosition,
     CostJointVelocity,
@@ -303,6 +300,7 @@ def train(
         "checkpoint_dir": checkpoint_dir,
         "lr": lr,
         "batch_size": train_dataloader.batch_size,
+        "bootstrap"
         "model_name": model.__class__.__name__,
         "state_dim": model.state_dim,
         "horizon": model.horizon,
@@ -337,6 +335,9 @@ def train(
         "guide_n_interpolate": guide_n_interpolate,
         "debug": debug,
     }
+    
+    if isinstance(model, DiffusionSplinesShortcut):
+        config["bootstrap_factor"] = model.bootstrap_factor
 
     save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
     save_model_to_disk(

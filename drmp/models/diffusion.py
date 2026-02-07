@@ -131,13 +131,6 @@ class DiffusionModelBase(nn.Module, ABC):
     ) -> Dict[str, torch.Tensor]:
         pass
 
-    def apply_hard_conditioning_unnormalized_dense(
-        self, trajectories_dense: torch.Tensor, hard_conditions: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
-        trajectories_dense[:, 0, :] = hard_conditions["start_pos"]
-        trajectories_dense[:, -1, :] = hard_conditions["goal_pos"]
-        return trajectories_dense
-
     def guide_gradient_steps(
         self,
         trajectories: torch.Tensor,
@@ -146,40 +139,12 @@ class DiffusionModelBase(nn.Module, ABC):
         n_guide_steps: int,
         debug: bool = False,
     ) -> torch.Tensor:
-        if isinstance(guide, GuideDense):
-            # if debug:
-            #     visualizer = Visualizer(self.dataset.env, self.dataset.robot)
-            trajectories_unnormalized = self.dataset.normalizer.unnormalize(
-                trajectories
+        for _ in range(n_guide_steps):
+            trajectories = trajectories + guide(trajectories)
+            trajectories = self.apply_hard_conditioning(
+                trajectories, hard_conditions
             )
-            trajectories_dense = self.dataset.robot.get_position_interpolated(
-                trajectories=trajectories_unnormalized,
-                n_support_points=self.dataset.n_support_points,
-            )
-            # if debug:
-            #     visualizer.render_scene(trajectories=trajectories_dense, save_path="debug_guide_-1.png")
-            for i in range(n_guide_steps):
-                trajectories_dense = trajectories_dense + guide(trajectories_dense)
-                trajectories_dense = self.apply_hard_conditioning_unnormalized_dense(
-                    trajectories_dense=trajectories_dense,
-                    hard_conditions=hard_conditions,
-                )
-                # if debug:
-                #     visualizer.render_scene(trajectories=trajectories_dense, save_path=f"debug_guide_{i}.png")
-            trajectories_unnormalized = fit_bsplines_to_trajectories(
-                trajectories=trajectories_dense,
-                n_control_points=self.dataset.n_control_points,
-                degree=self.dataset.robot.spline_degree,
-            )
-            x = self.dataset.normalizer.normalize(trajectories_unnormalized)
-            return x
-        else:
-            for _ in range(n_guide_steps):
-                trajectories = trajectories + guide(trajectories)
-                trajectories = self.apply_hard_conditioning(
-                    trajectories, hard_conditions
-                )
-            return trajectories
+        return trajectories
 
     def extract(self, a, t, trajectories_shape) -> torch.Tensor:
         out = a.gather(-1, t)
@@ -250,8 +215,6 @@ class DiffusionModelBase(nn.Module, ABC):
         hard_conditions = {
             "start_pos_normalized": input_dict["start_pos_normalized"],
             "goal_pos_normalized": input_dict["goal_pos_normalized"],
-            "start_pos": input_dict["start_pos"],
-            "goal_pos": input_dict["goal_pos"],
         }
         return hard_conditions
 
@@ -424,20 +387,14 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return sample
 
-    def p_losses(self, trajectories_start, context, t, hard_conditions) -> torch.Tensor:
+    def p_losses(self, trajectories_start, context, t) -> torch.Tensor:
         noise = torch.randn_like(trajectories_start)
 
         trajectories_noisy = self.q_sample(
             trajectories_start=trajectories_start, t=t, noise=noise
         )
-        trajectories_noisy = self.apply_hard_conditioning(
-            trajectories_noisy, hard_conditions
-        )
 
         trajectories_recon = self.model(trajectories_noisy, t, context)
-        trajectories_recon = self.apply_hard_conditioning(
-            trajectories_recon, hard_conditions
-        )
 
         assert noise.shape == trajectories_recon.shape
 
@@ -448,7 +405,7 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return loss
 
-    def loss(self, trajectories, context, hard_conditions) -> torch.Tensor:
+    def loss(self, trajectories, context) -> torch.Tensor:
         t = torch.randint(
             0,
             self.n_diffusion_steps,
@@ -456,7 +413,7 @@ class DiffusionModelBase(nn.Module, ABC):
             device=trajectories.device,
         ).long()
         return self.p_losses(
-            trajectories, context=context, t=t, hard_conditions=hard_conditions
+            trajectories, context=context, t=t
         )
 
 
@@ -504,9 +461,8 @@ class DiffusionDense(DiffusionModelBase):
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         trajectories_normalized = input_dict["trajectories_normalized"]
         context = self.build_context(input_dict)
-        hard_conditions = self.build_hard_conditions(input_dict)
-        loss = self.loss(trajectories_normalized, context, hard_conditions)
-        loss_dict = {"diffusion_loss": loss}
+        loss = self.loss(trajectories_normalized, context)
+        loss_dict = {"loss": loss}
 
         return loss_dict
     
@@ -607,8 +563,7 @@ class DiffusionSplines(DiffusionModelBase):
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]):
         control_points_normalized = input_dict["control_points_normalized"]
         context = self.build_context(input_dict)
-        hard_conditions = self.build_hard_conditions(input_dict)
-        loss = self.loss(control_points_normalized, context, hard_conditions)
+        loss = self.loss(control_points_normalized, context)
         loss_dict = {"diffusion_loss": loss}
         return loss_dict
     
@@ -627,7 +582,7 @@ class DiffusionSplines(DiffusionModelBase):
         hard_conditions = hard_conditions.copy()
         for k, v in hard_conditions.items():
             hard_conditions[k] = v.repeat(n_samples, 1)
-
+            
         context = context.repeat(n_samples, 1)
         
         if ddim:
@@ -673,7 +628,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
         n_diffusion_steps: int,
         predict_epsilon: bool,
         spline_degree: int,
-        n_bootstrap: int,
+        bootstrap_fraction: int,
     ):
         super().__init__(
             dataset=dataset,
@@ -706,49 +661,39 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             context_dim=self.unet_context_dim,
         )
         
-        self.n_bootstrap = n_bootstrap
+        self.bootstrap_fraction = bootstrap_fraction
         self.min_dt = 1.0 / self.n_diffusion_steps 
+        self.eps = 1e-5
 
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         control_points_normalized = input_dict["control_points_normalized"]
         context = self.build_context(input_dict)
-        hard_conditions = self.build_hard_conditions(input_dict)
         
         trajectories = control_points_normalized
         batch_size = trajectories.shape[0]
-        n_flow = batch_size - self.n_bootstrap
+        n_bootstrap = int(batch_size * self.bootstrap_fraction)
+        n_flow = batch_size - n_bootstrap
         
         loss_dict = {}
         
-        # x_0 (Noise)
         x_0 = torch.randn_like(trajectories)
         x_1 = trajectories
         
-        # Initialize loss
         total_loss = 0.0
 
-        # ==== 1. Flow Matching (Naive) ====
         if n_flow > 0:
-            x_1_flow = x_1[self.n_bootstrap:]
-            x_0_flow = x_0[self.n_bootstrap:]
-            c_flow = context[self.n_bootstrap:]
+            x_1_flow = x_1[n_bootstrap:]
+            x_0_flow = x_0[n_bootstrap:]
+            c_flow = context[n_bootstrap:]
             
-            # Sample t uniform [0, 1]
             t_flow = torch.rand(n_flow, device=trajectories.device)
             t_flow_exp = t_flow.view(-1, 1, 1)
             
-            # x_t = (1-t)x_0 + t x_1 
-            x_t_flow = (1 - t_flow_exp) * x_0_flow + t_flow_exp * x_1_flow
+            x_t_flow = (1 - (1 - self.eps) * t_flow_exp) * x_0_flow + t_flow_exp * x_1_flow
             
-            # Target v = x_1 - x_0
-            v_target_flow = x_1_flow - x_0_flow
+            v_target_flow = x_1_flow - (1 - self.eps) * x_0_flow
             
-            # dt for flow matching (small value)
             dt_flow = torch.full((n_flow,), self.min_dt, device=trajectories.device)
-            
-            # Condition samples
-            hard_cond_flow = {k: v[self.n_bootstrap:] for k,v in hard_conditions.items()}
-            x_t_flow = self.apply_hard_conditioning(x_t_flow, hard_cond_flow)
             
             v_pred_flow = self.model(x_t_flow, t_flow, dt_flow, c_flow)
             
@@ -756,61 +701,38 @@ class DiffusionSplinesShortcut(DiffusionSplines):
             loss_dict["loss_flow"] = loss_flow
             total_loss += loss_flow * (n_flow / batch_size)
         
-        # ==== 2. Bootstrap ====
-        if self.n_bootstrap > 0:
-            x_0_bst = x_0[:self.n_bootstrap]
-            x_1_bst = x_1[:self.n_bootstrap]
-            c_bst = context[:self.n_bootstrap]
-            hard_cond_bst = {k: v[:self.n_bootstrap] for k,v in hard_conditions.items()}
+        if n_bootstrap > 0:
+            x_0_bootstrap = x_0[:n_bootstrap]
+            x_1_bootstrap = x_1[:n_bootstrap]
+            c_bootstrap = context[:n_bootstrap]
 
-            # Sample dt: powers of 2 (1, 1/2, 1/4, ...)
-            # We want dt = 1/2^k. 
-            # We ensure we can take at least 2 steps of size dt/2 within 1.0 effectively?
-            # Actually shortcut model supports any dt=1/2^k.
-            # Max steps = n_diffusion_steps.
             max_log2 = int(torch.log2(torch.tensor(self.n_diffusion_steps)))
-            # exponents k in [0, max_log2-1]
-            k_exponents = torch.randint(0, max_log2, (self.n_bootstrap,), device=trajectories.device)
-            dt_bst = 1.0 / (2.0 ** k_exponents)
+            k_exponents = torch.randint(0, max_log2, (n_bootstrap,), device=trajectories.device)
+            dt_bootstrap = 1.0 / (2.0 ** k_exponents)
             
-            # Sample t aligned with dt
-            # t = i * dt. i chosen uniformly from valid steps
-            num_steps = (1.0 / dt_bst).long()
-            # If num_steps is 1 (dt=1), i=0.
-            # If num_steps is 2 (dt=0.5), i in {0, 1}.
-            # We use floor(rand * num_steps)
-            i_step = (torch.rand(self.n_bootstrap, device=trajectories.device) * num_steps).long()
-            t_bst = i_step.float() * dt_bst
+            num_steps = (2 ** k_exponents).long()
+            i_step = (torch.rand(n_bootstrap, device=trajectories.device) * num_steps).long()
+            t_bootstrap = i_step.float() * dt_bootstrap
             
-            t_bst_exp = t_bst.view(-1, 1, 1)
+            t_bootstrap_exp = t_bootstrap.view(-1, 1, 1)
+            x_t_bootstrap = (1 - (1 - self.eps) * t_bootstrap_exp) * x_0_bootstrap + t_bootstrap_exp * x_1_bootstrap
             
-            # x_t = (1-t)x_0 + t x_1 (Flow interpolation)
-            x_t_bst = (1 - t_bst_exp) * x_0_bst + t_bst_exp * x_1_bst
-            x_t_bst = self.apply_hard_conditioning(x_t_bst, hard_cond_bst)
-            
-            # Compute Target (Double step)
-            # Use no_grad for teacher
             with torch.no_grad():
-                dt_half = dt_bst / 2.0
+                dt_half = dt_bootstrap / 2.0
                 
-                # Step 1
-                v_b1 = self.model(x_t_bst, t_bst, dt_half, c_bst)
-                x_mid = x_t_bst + dt_half.view(-1, 1, 1) * v_b1
-                x_mid = self.apply_hard_conditioning(x_mid, hard_cond_bst)
+                v_b1 = self.model(x_t_bootstrap, t_bootstrap, dt_half, c_bootstrap)
+                x_mid = x_t_bootstrap + dt_half.view(-1, 1, 1) * v_b1
                 
-                # Step 2
-                v_b2 = self.model(x_mid, t_bst + dt_half, dt_half, c_bst)
+                v_b2 = self.model(x_mid, t_bootstrap + dt_half, dt_half, c_bootstrap)
                 
-                # Target
-                v_target_bst = (v_b1 + v_b2) / 2.0
+                v_target_bootstrap = (v_b1 + v_b2) / 2.0
 
-            # Predict student
-            v_pred_bst = self.model(x_t_bst, t_bst, dt_bst, c_bst)
+            v_pred_bootstrap = self.model(x_t_bootstrap, t_bootstrap, dt_bootstrap, c_bootstrap)
             
-            loss_bootstrap = self.loss_fn(v_pred_bst, v_target_bst)
+            loss_bootstrap = self.loss_fn(v_pred_bootstrap, v_target_bootstrap)
             loss_dict["loss_bootstrap"] = loss_bootstrap
             
-            total_loss += loss_bootstrap * (self.n_bootstrap / batch_size)
+            total_loss += loss_bootstrap * (n_bootstrap / batch_size)
 
         loss_dict["loss"] = total_loss
         return loss_dict
@@ -836,9 +758,7 @@ class DiffusionSplinesShortcut(DiffusionSplines):
         context = context.repeat(n_samples, 1)
         device = context.device
         
-        # x_0 (Noise)
         trajectories = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
-        trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
         
         dt_val = 1.0 / shortcut_steps
         dt = torch.full((n_samples,), dt_val, device=device)
@@ -846,13 +766,8 @@ class DiffusionSplinesShortcut(DiffusionSplines):
         current_time = 0.0
         for _ in range(shortcut_steps):
              t = torch.full((n_samples,), current_time, device=device)
-             
-             # Predict v
              v_pred = self.model(trajectories, t, dt, context)
-             
-             # Step: x_{t+dt} = x_t + dt * v
              trajectories = trajectories + dt_val * v_pred
-             trajectories = self.apply_hard_conditioning(trajectories, hard_conditions)
              
              if guide is not None and current_time <= t_start_guide / self.n_diffusion_steps + 1e-8:
                   trajectories = self.guide_gradient_steps(
@@ -865,7 +780,6 @@ class DiffusionSplinesShortcut(DiffusionSplines):
              
              current_time += dt_val
              
-        # Add singleton dimension for chain (only one step in chain effectively, or final result)
         trajectories_chain_normalized = trajectories.unsqueeze(1).permute(1, 0, 2, 3) 
         
         return trajectories_chain_normalized

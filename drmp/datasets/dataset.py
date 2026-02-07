@@ -193,6 +193,7 @@ class TrajectoryDatasetBase(Dataset, ABC):
         self.duration = duration
         self.robot_margin = robot_margin
         self.generating_robot_margin = generating_robot_margin
+        self.spline_degree = spline_degree
         self.apply_augmentations = apply_augmentations
         self.env: EnvBase = ENVS[env_name](tensor_args=tensor_args)
         self.robot: RobotBase = ROBOTS[robot_name](
@@ -285,6 +286,8 @@ class TrajectoryDatasetBase(Dataset, ABC):
         filter_functions = get_filter_functions()
         indices_to_exclude = set()
         for filter_name, filter_params in filtering_config.items():
+            if filter_params is None:
+                continue
             filter_fn = filter_functions[filter_name]
             excluded = filter_fn(
                 trajectories=self.trajectories,
@@ -505,20 +508,20 @@ class TrajectoryDatasetBase(Dataset, ABC):
         )
         train_tasks_idxs = torch.tensor(train_tasks.indices)
         val_tasks_idxs = torch.tensor(val_tasks.indices)
-        train_idxs = [
+        train_idxs = torch.tensor([
             i
             for task_start_idx, task_end_idx in zip(
                 task_start_idxs[train_tasks_idxs], task_start_idxs[train_tasks_idxs + 1]
             )
             for i in range(task_start_idx, task_end_idx)
-        ]
-        val_idxs = [
+        ])
+        val_idxs = torch.tensor([
             i
             for task_start_idx, task_end_idx in zip(
                 task_start_idxs[val_tasks_idxs], task_start_idxs[val_tasks_idxs + 1]
             )
             for i in range(task_start_idx, task_end_idx)
-        ]
+        ])
 
         torch.save(train_idxs, os.path.join(self.dataset_dir, "train_idx.pt"))
         torch.save(val_idxs, os.path.join(self.dataset_dir, "val_idx.pt"))
@@ -545,8 +548,11 @@ class TrajectoryDatasetBase(Dataset, ABC):
             task_start_idxs=task_start_idxs,
             filtering_config=usage_config.get("filtering", {}),
         )
+        train_idx = train_idx[:len(train_idx) // batch_size * batch_size]
+        val_idx = val_idx[:len(val_idx) // batch_size * batch_size]
         print(f"Train dataset size after filtering: {len(train_idx)}")
         print(f"Val dataset size after filtering: {len(val_idx)}")
+        
 
         train_subset = Subset(self, train_idx)
         val_subset = Subset(self, val_idx)
