@@ -10,9 +10,9 @@ from drmp.planning.costs import (
     FactorCost,
 )
 from drmp.planning.planners.classical_planner import ClassicalPlanner
+from drmp.torch_timer import TimerCUDA
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils.torch_timer import TimerCUDA
 
 
 def build_gpmp2_cost_composite(
@@ -26,7 +26,6 @@ def build_gpmp2_cost_composite(
     sigma_goal_prior: float,
     sigma_gp: float,
     sigma_collision: float,
-    num_samples: int,
     tensor_args: Dict[str, Any],
     use_extra_objects: bool = False,
 ) -> FactorCost:
@@ -51,7 +50,6 @@ def build_gpmp2_cost_composite(
         n_support_points=n_support_points,
         goal_state=goal_state,
         n_trajectories=n_trajectories,
-        num_samples=num_samples,
         sigma_goal_prior=sigma_goal_prior,
         tensor_args=tensor_args,
     )
@@ -86,7 +84,6 @@ class GPMP2(ClassicalPlanner):
         n_trajectories: int,
         dt: float,
         n_interpolate: int,
-        num_samples: int,
         sigma_start: float,
         sigma_gp: float,
         sigma_goal_prior: float,
@@ -113,14 +110,13 @@ class GPMP2(ClassicalPlanner):
         self.method = method
 
         self.n_interpolate = n_interpolate
-        self.num_samples = num_samples
         self.sigma_start = sigma_start
         self.sigma_gp = sigma_gp
         self.sigma_goal_prior = sigma_goal_prior
         self.sigma_collision = sigma_collision
         self.step_size = step_size
 
-        self._particle_means: torch.Tensor = None
+        self._trajectories: torch.Tensor = None
 
     def _build_start_goal_cost(self, start_pos: torch.Tensor, goal_pos: torch.Tensor):
         self.start_pos = start_pos
@@ -139,7 +135,6 @@ class GPMP2(ClassicalPlanner):
             sigma_gp=self.sigma_gp,
             sigma_collision=self.sigma_collision,
             sigma_goal_prior=self.sigma_goal_prior,
-            num_samples=self.num_samples,
             tensor_args=self.tensor_args,
         )
 
@@ -147,13 +142,13 @@ class GPMP2(ClassicalPlanner):
         self.start_pos = start_pos.to(**self.tensor_args)
         self.goal_pos = goal_pos.to(**self.tensor_args)
         self._build_start_goal_cost(self.start_pos, self.goal_pos)
-        self._particle_means = None
+        self._trajectories = None
 
-    def reset_trajectories(self, initial_particle_means: torch.Tensor):
-        self._particle_means = initial_particle_means
+    def reset_trajectories(self, initial_trajectories: torch.Tensor):
+        self._trajectories = initial_trajectories
 
     def get_trajectories(self):
-        trajectories = self._particle_means.clone()
+        trajectories = self._trajectories.clone()
         return trajectories
 
     def optimize(self, opt_steps: int = 1, print_freq: int = 100, debug: bool = True):
@@ -173,7 +168,7 @@ class GPMP2(ClassicalPlanner):
 
     def _step(self):
         A, b, K = self.cost.get_linear_system(
-            trajectories=self._particle_means, n_interpolate=self.n_interpolate
+            trajectories=self._trajectories, n_interpolate=self.n_interpolate
         )
 
         J_t_J, g = self._get_grad_terms(
@@ -195,8 +190,8 @@ class GPMP2(ClassicalPlanner):
             self.dim,
         )
 
-        self._particle_means = (
-            self._particle_means + self.step_size * d_theta
+        self._trajectories = (
+            self._trajectories + self.step_size * d_theta
         ).detach()
 
         return b, K

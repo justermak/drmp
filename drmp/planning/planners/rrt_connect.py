@@ -3,9 +3,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 from drmp.planning.planners.classical_planner import ClassicalPlanner
+from drmp.torch_timer import TimerCUDA
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils.torch_timer import TimerCUDA
 
 
 class RRTConnect(ClassicalPlanner):
@@ -19,7 +19,6 @@ class RRTConnect(ClassicalPlanner):
         tensor_args: Dict[str, Any],
         n_trajectories: int = 1,
         use_extra_objects: bool = False,
-        planner_id: int = None,
         eps: float = 1e-6,
     ):
         super().__init__(
@@ -30,12 +29,12 @@ class RRTConnect(ClassicalPlanner):
         )
         self.max_step_size = max_step_size
         self.max_radius = max_radius
+        self.n_samples = n_samples
         self.n_trajectories = n_trajectories
+        self.n_trajectories_with_luft = int(1.2 * n_trajectories)
         self.use_extra_objects = use_extra_objects
-        self.planner_id = planner_id
         self.eps = eps
 
-        self.n_samples = n_samples
         self.samples: torch.Tensor = None
         ok = self._initialize_samples()
         if not ok:
@@ -48,13 +47,13 @@ class RRTConnect(ClassicalPlanner):
         self.samples_ptr = 0
 
         self.nodes_trees_1_pos = (
-            self.start_pos.unsqueeze(0).repeat(self.n_trajectories, 1).unsqueeze(1)
+            self.start_pos.unsqueeze(0).repeat(self.n_trajectories_with_luft, 1).unsqueeze(1)
         )
         self.nodes_trees_2_pos = (
-            self.goal_pos.unsqueeze(0).repeat(self.n_trajectories, 1).unsqueeze(1)
+            self.goal_pos.unsqueeze(0).repeat(self.n_trajectories_with_luft, 1).unsqueeze(1)
         )
-        self.nodes_trees_1_parents = [[None] for _ in range(self.n_trajectories)]
-        self.nodes_trees_2_parents = [[None] for _ in range(self.n_trajectories)]
+        self.nodes_trees_1_parents = [[None] for _ in range(self.n_trajectories_with_luft)]
+        self.nodes_trees_2_parents = [[None] for _ in range(self.n_trajectories_with_luft)]
 
     def _initialize_samples(self) -> bool:
         samples, success = self.env.random_collision_free_q(
@@ -69,23 +68,23 @@ class RRTConnect(ClassicalPlanner):
         self.samples = samples
         return success
 
-    def sample(self) -> torch.Tensor:
-        if self.samples_ptr + self.n_trajectories > len(self.samples):
+    def sample(self, n_samples) -> torch.Tensor:
+        if self.samples_ptr + n_samples > len(self.samples):
             self._initialize_samples()
             self.samples_ptr = 0
 
         samples = self.samples[
-            self.samples_ptr : self.samples_ptr + self.n_trajectories
+            self.samples_ptr : self.samples_ptr + n_samples
         ]
-        self.samples_ptr += self.n_trajectories
+        self.samples_ptr += n_samples
         return samples
 
     def get_nearest_nodes(
-        self, nodes: torch.Tensor, targets: torch.Tensor
+        self, nodes: torch.Tensor, targets: torch.Tensor, idxs: List[int]
     ) -> Tuple[torch.Tensor, torch.LongTensor]:
-        distances = torch.linalg.norm(nodes - targets.unsqueeze(1), dim=-1)
+        distances = torch.linalg.norm(nodes[idxs] - targets.unsqueeze(1), dim=-1)
         min_idxs = torch.min(distances, dim=-1).indices
-        return nodes[torch.arange(nodes.shape[0]), min_idxs], min_idxs
+        return nodes[idxs, min_idxs], min_idxs
 
     def extend(
         self,
@@ -116,8 +115,8 @@ class RRTConnect(ClassicalPlanner):
         )
         sequences = torch.cat((sequences, sequences[:, -1:, :]), dim=1)
         hack = torch.arange(sequences.shape[1], 0, -1).to(**self.tensor_args)
-        idxs = torch.argmax(in_collision * hack, dim=-1) - 1
-        res = sequences[torch.arange(sequences.shape[0]), idxs]
+        max_idxs = torch.argmax(in_collision * hack, dim=-1) - 1
+        res = sequences[torch.arange(sequences.shape[0]), max_idxs]
         return res
 
     def purge_duplicates_from_trajectories(
@@ -126,6 +125,7 @@ class RRTConnect(ClassicalPlanner):
         selections = []
         for path in paths:
             if path is None:
+                print("WTF: RRT-Connect failed to find a path")
                 selections.append(None)
                 continue
             if path.shape[0] <= 2:
@@ -154,23 +154,19 @@ class RRTConnect(ClassicalPlanner):
         return path
 
     def optimize(
-        self, sample_steps: int, print_freq: int = 10, debug: bool = True
+        self, sample_steps: int, print_freq: int = 50, debug: bool = True
     ) -> Optional[torch.Tensor]:
         self.sample_steps = sample_steps
 
         step = 0
         n_success = 0
-        paths = [None] * self.n_trajectories
-        idxs = set(range(self.n_trajectories))
-
+        paths = []
+        idxs = set(range(self.n_trajectories_with_luft))
+        idxs_list = list(idxs)
         with TimerCUDA() as t:
             while step < sample_steps:
                 if debug and step % print_freq == 0:
                     self.print_info(step, t.elapsed, n_success)
-                    # self.visualize_trees(
-                    #     traj_idx=0,
-                    #     save_path=f"rrt_trees_step_{step}_planner_{self.planner_id}.png",
-                    # )
 
                 step += 1
 
@@ -182,36 +178,40 @@ class RRTConnect(ClassicalPlanner):
                     self.nodes_trees_2_parents,
                     self.nodes_trees_1_parents,
                 )
-                targets = self.sample()
+                targets = self.sample(len(idxs_list))
                 nearest_pos, nearest_idxs = self.get_nearest_nodes(
-                    self.nodes_trees_1_pos, targets
+                    self.nodes_trees_1_pos, targets, idxs_list
                 )
                 extended = self.extend(
                     nearest_pos, targets, self.max_step_size, self.max_radius
                 )
-                n1 = self.cut(extended)
+                cut = self.cut(extended)
+                n1 = torch.zeros_like(self.nodes_trees_1_pos[..., 0, :])
+                n1[idxs_list] = cut
 
                 self.nodes_trees_1_pos = torch.cat(
                     [self.nodes_trees_1_pos, n1.unsqueeze(1)], dim=1
                 )
-                for i in range(self.n_trajectories):
-                    self.nodes_trees_1_parents[i].append(nearest_idxs[i].item())
+                for i, j in enumerate(idxs_list):
+                    self.nodes_trees_1_parents[j].append(nearest_idxs[i].item())
 
                 nearest_pos, nearest_idxs = self.get_nearest_nodes(
-                    self.nodes_trees_2_pos, n1
+                    self.nodes_trees_2_pos, cut, idxs_list
                 )
                 extended = self.extend(
-                    nearest_pos, n1, self.max_step_size, self.max_radius
+                    nearest_pos, cut, self.max_step_size, self.max_radius
                 )
-                n2 = self.cut(extended)
+                cut = self.cut(extended)
+                n2 = torch.zeros_like(self.nodes_trees_2_pos[..., 0, :])
+                n2[idxs_list] = cut
 
                 self.nodes_trees_2_pos = torch.cat(
                     [self.nodes_trees_2_pos, n2.unsqueeze(1)], dim=1
                 )
-                for i in range(self.n_trajectories):
-                    self.nodes_trees_2_parents[i].append(nearest_idxs[i].item())
+                for i, j in enumerate(idxs_list):
+                    self.nodes_trees_2_parents[j].append(nearest_idxs[i].item())
 
-                for i in list(idxs):
+                for i in idxs_list:
                     if torch.allclose(
                         self.nodes_trees_1_pos[i][-1],
                         self.nodes_trees_2_pos[i][-1],
@@ -228,10 +228,11 @@ class RRTConnect(ClassicalPlanner):
                         if torch.allclose(tree_1_root, self.goal_pos, atol=self.eps):
                             path1, path2 = path2, path1
 
-                        paths[i] = torch.cat(path1[::-1] + path2[1:], dim=0)
+                        paths.append(torch.cat(path1[::-1] + path2[1:], dim=0))
                         n_success += 1
                         idxs.remove(i)
-
+                        
+                idxs_list = list(idxs)
                 if n_success >= self.n_trajectories:
                     if debug:
                         self.print_info(step, t.elapsed, n_success)
@@ -243,7 +244,7 @@ class RRTConnect(ClassicalPlanner):
     def print_info(self, step, elapsed_time, success):
         total_nodes = sum(
             len(self.nodes_trees_1_pos[i]) + len(self.nodes_trees_2_pos[i])
-            for i in range(self.n_trajectories)
+            for i in range(self.n_trajectories_with_luft)
         )
         pad = len(str(self.sample_steps))
         print(
@@ -268,7 +269,7 @@ class RRTConnect(ClassicalPlanner):
         fig, ax = plt.subplots(figsize=(10, 10))
 
         # Render environment
-        from drmp.utils.visualizer import Visualizer
+        from drmp.visualizer import Visualizer
 
         vis = Visualizer(self.env, self.robot, use_extra_objects=self.use_extra_objects)
         vis._render_environment(ax, use_extra_objects=self.use_extra_objects)

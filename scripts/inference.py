@@ -5,19 +5,16 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
-from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
-from drmp.models.diffusion import get_models
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.model.generative_models import get_models, get_additional_inference_args
 from drmp.planning.inference import create_test_subset, run_inference
 from drmp.planning.inference_config import (
-    DiffusionConfig,
-    GPMP2RRTPriorConfig,
-    GPMP2UninformativeConfig,
+    ClassicalConfig,
+    GenerativeModelConfig,
     MPDConfig,
     MPDSplinesConfig,
-    RRTConnectConfig,
 )
-from drmp.utils.torch import fix_random_seed
-from drmp.utils.yaml import load_config_from_yaml
+from drmp.utils import fix_random_seed, load_config_from_yaml
 
 MODELS = get_models()
 
@@ -29,33 +26,16 @@ def run(args):
 
     print("-------- INFERENCE STARTED --------")
     print(f"algorithm: {args.algorithm}")
-    if args.algorithm == "diffusion":
+    if args.algorithm == "generative-model":
         print(f"model: {args.checkpoint_name}")
     print(f"dataset: {args.dataset_name}")
     print(f"n_tasks: {args.n_tasks}")
-    print(f"n_samples: {args.n_samples}")
-
-    dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
-    dataset_config_path = os.path.join(dataset_dir, "config.yaml")
-    dataset_config = load_config_from_yaml(dataset_config_path)
-
-    dataset_init_config = {
-        "datasets_dir": args.datasets_dir,
-        "dataset_name": args.dataset_name,
-        "env_name": dataset_config["env_name"],
-        "robot_name": dataset_config["robot_name"],
-        "robot_margin": dataset_config["robot_margin"],
-        "generating_robot_margin": dataset_config["generating_robot_margin"],
-        "n_support_points": dataset_config["n_support_points"],
-        "duration": dataset_config["duration"],
-        "apply_augmentations": False,
-        "tensor_args": tensor_args,
-    }
+    print(f"n_trajectories_per_task: {args.n_trajectories_per_task}")
 
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if args.algorithm == "diffusion":
-            experiment_name = f"{args.checkpoint_name if args.checkpoint_name else 'diffusion'}_{timestamp}"
+        if args.algorithm == "generative-model":
+            experiment_name = f"{args.checkpoint_name if args.checkpoint_name else 'generative-model'}_{timestamp}"
         elif args.algorithm == "mpd":
             experiment_name = f"mpd_{args.mpd_checkpoint_name if args.mpd_checkpoint_name else 'model'}_{timestamp}"
         else:
@@ -63,46 +43,27 @@ def run(args):
     else:
         experiment_name = args.experiment_name
 
-    if args.algorithm == "diffusion":
-        if args.checkpoint_name is None:
-            checkpoint_folders = os.listdir(args.checkpoints_dir)
-            checkpoint_folders.sort(
-                key=lambda x: os.path.getmtime(os.path.join(args.checkpoints_dir, x)),
-                reverse=True,
+    dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
+    dataset_init_config_path = os.path.join(dataset_dir, "init_config.yaml")
+    dataset_init_config = load_config_from_yaml(dataset_init_config_path)
+
+    dataset = TrajectoryDataset(**dataset_init_config, tensor_args=tensor_args)
+    dataset_usage_config = {
+        "apply_augmentations": False,
+        "normalizer_name": "TrivialNormalizer",
+        "n_control_points": None
+        if args.algorithm != "mpd-splines"
+        else args.mpd_splines_n_control_points,
+        "filtering_config": {},
+    }
+    if args.algorithm == "generative-model":
+        dataset_usage_config = load_config_from_yaml(
+            os.path.join(
+                args.checkpoints_dir, args.checkpoint_name, "dataset_usage_config.yaml"
             )
-            args.checkpoint_name = checkpoint_folders[0]
-        checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
-        saved_model_config_path = os.path.join(checkpoint_dir, "config.yaml")
-        saved_dataset_usage_config_path = os.path.join(
-            checkpoint_dir, "dataset_usage_config.yaml"
-        )
-        saved_model_config = load_config_from_yaml(saved_model_config_path)
-        saved_dataset_usage_config = load_config_from_yaml(
-            saved_dataset_usage_config_path
         )
 
-        normalizer_name = saved_dataset_usage_config["normalizer_name"]
-        if saved_model_config["model_name"] in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
-            dataset_init_config["n_control_points"] = saved_dataset_usage_config[
-                "n_control_points"
-            ]
-            dataset_init_config["spline_degree"] = saved_dataset_usage_config[
-                "spline_degree"
-            ]
-            dataset = TrajectoryDatasetBSpline(**dataset_init_config)
-        else:
-            dataset = TrajectoryDatasetDense(**dataset_init_config)
-        dataset.load_data(normalizer_name=normalizer_name)
-    elif args.algorithm == "mpd-splines":
-        dataset_init_config["n_control_points"] = args.mpd_splines_n_control_points
-        dataset_init_config["spline_degree"] = args.mpd_splines_spline_degree
-        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
-        dataset.load_data()
-    else:
-        dataset = TrajectoryDatasetDense(**dataset_init_config)
-        dataset.load_data()
-
-    train_subset, _, val_subset, _ = dataset.load_train_val_split()
+    train_subset, _, val_subset, _ = dataset.load_data(dataset_dir=dataset_dir, **dataset_usage_config)
 
     splits = eval(args.splits)
 
@@ -118,25 +79,30 @@ def run(args):
             return
 
     model_config = None
-    if args.algorithm == "diffusion":
+    if args.algorithm == "generative-model":
+        checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
+        saved_model_config = load_config_from_yaml(
+            os.path.join(
+                args.checkpoints_dir, args.checkpoint_name, "config.yaml"
+            )
+        )
+        additional_args = get_additional_inference_args(saved_model_config["model_name"], args)
         model = MODELS[saved_model_config["model_name"]](
             dataset=dataset,
             state_dim=saved_model_config["state_dim"],
             horizon=saved_model_config["horizon"],
-            unet_hidden_dim=saved_model_config["unet_hidden_dim"],
-            unet_dim_mults=eval(saved_model_config["unet_dim_mults"]),
-            unet_kernel_size=saved_model_config["unet_kernel_size"],
-            unet_resnet_block_groups=saved_model_config["unet_resnet_block_groups"],
-            unet_positional_encoding=saved_model_config["unet_positional_encoding"],
-            unet_positional_encoding_dim=saved_model_config[
-                "unet_positional_encoding_dim"
+            hidden_dim=saved_model_config["hidden_dim"],
+            dim_mults=eval(saved_model_config["dim_mults"]),
+            kernel_size=saved_model_config["kernel_size"],
+            resnet_block_groups=saved_model_config["resnet_block_groups"],
+            positional_encoding=saved_model_config["positional_encoding"],
+            positional_encoding_dim=saved_model_config[
+                "positional_encoding_dim"
             ],
-            unet_attn_heads=saved_model_config["unet_attn_heads"],
-            unet_attn_head_dim=saved_model_config["unet_attn_head_dim"],
-            unet_context_dim=saved_model_config["unet_context_dim"],
-            n_diffusion_steps=saved_model_config["n_diffusion_steps"],
-            predict_epsilon=saved_model_config["predict_epsilon"],
-            spline_degree=saved_dataset_usage_config.get("spline_degree", None),
+            attn_heads=saved_model_config["attn_heads"],
+            attn_head_dim=saved_model_config["attn_head_dim"],
+            context_dim=saved_model_config["context_dim"],
+            **additional_args,
         ).to(device)
 
         model.load_state_dict(
@@ -153,20 +119,20 @@ def run(args):
         model.eval()
         model = torch.compile(model)
 
-        model_config = DiffusionConfig(
+        model_config = GenerativeModelConfig(
             model=model,
-            guide_dense=args.guide_dense,
+            model_name=saved_model_config["model_name"],
             use_extra_objects=args.use_extra_objects,
+            t_start_guide=args.t_start_guide,
+            n_guide_steps=args.n_guide_steps,
             lambda_obstacles=args.lambda_obstacles,
             lambda_position=args.lambda_position,
             lambda_velocity=args.lambda_velocity,
             lambda_acceleration=args.lambda_acceleration,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
-            t_start_guide=args.t_start_guide,
-            n_guide_steps=args.n_guide_steps,
-            ddim=args.ddim,
-            shortcut_steps=args.shortcut_steps,
+            n_inference_steps=args.n_inference_steps,
+            eta=args.eta,
         )
 
     elif args.algorithm == "mpd-splines":
@@ -230,34 +196,8 @@ def run(args):
             ddim=args.mpd_ddim,
         )
 
-    elif args.algorithm == "rrt-connect":
-        model_config = RRTConnectConfig(
-            use_extra_objects=args.use_extra_objects,
-            sample_steps=args.classical_sample_steps,
-            rrt_connect_max_step_size=args.rrt_connect_max_step_size,
-            rrt_connect_max_radius=args.rrt_connect_max_radius,
-            rrt_connect_n_samples=args.rrt_connect_n_samples,
-            seed=args.seed,
-        )
-
-    elif args.algorithm == "gpmp2-uninformative":
-        model_config = GPMP2UninformativeConfig(
-            use_extra_objects=args.use_extra_objects,
-            opt_steps=args.classical_opt_steps,
-            n_dim=args.classical_n_dof,
-            gpmp2_n_interpolate=args.gpmp2_n_interpolate,
-            gpmp2_num_samples=args.gpmp2_num_samples,
-            gpmp2_sigma_start=args.gpmp2_sigma_start,
-            gpmp2_sigma_goal_prior=args.gpmp2_sigma_goal_prior,
-            gpmp2_sigma_gp=args.gpmp2_sigma_gp,
-            gpmp2_sigma_collision=args.gpmp2_sigma_collision,
-            gpmp2_step_size=args.gpmp2_step_size,
-            gpmp2_delta=args.gpmp2_delta,
-            gpmp2_method=args.gpmp2_method,
-        )
-
-    elif args.algorithm == "gpmp2-rrt-prior":
-        model_config = GPMP2RRTPriorConfig(
+    elif args.algorithm == "classical":
+        model_config = ClassicalConfig(
             use_extra_objects=args.use_extra_objects,
             sample_steps=args.classical_sample_steps,
             opt_steps=args.classical_opt_steps,
@@ -266,7 +206,6 @@ def run(args):
             rrt_connect_max_radius=args.rrt_connect_max_radius,
             rrt_connect_n_samples=args.rrt_connect_n_samples,
             gpmp2_n_interpolate=args.gpmp2_n_interpolate,
-            gpmp2_num_samples=args.gpmp2_num_samples,
             gpmp2_sigma_start=args.gpmp2_sigma_start,
             gpmp2_sigma_goal_prior=args.gpmp2_sigma_goal_prior,
             gpmp2_sigma_gp=args.gpmp2_sigma_gp,
@@ -278,7 +217,7 @@ def run(args):
 
     else:
         raise ValueError(
-            f"Unknown algorithm: {args.algorithm}. Valid options: diffusion, mpd, rrt-connect, gpmp2-uninformative, gpmp2-rrt-prior"
+            f"Unknown algorithm: {args.algorithm}. Valid options: generative-model, mpd, mpd-splines, classical"
         )
 
     run_inference(
@@ -290,7 +229,7 @@ def run(args):
         generations_dir=args.generations_dir,
         experiment_name=experiment_name,
         n_tasks=args.n_tasks,
-        n_samples=args.n_samples,
+        n_trajectories_per_task=args.n_trajectories_per_task,
         debug=args.debug,
         tensor_args=tensor_args,
     )

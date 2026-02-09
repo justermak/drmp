@@ -1,9 +1,11 @@
+import os
+
 import configargparse
 import torch
 
 from drmp.config import DEFAULT_DATA_GENERATION_ARGS
-from drmp.datasets.dataset import TrajectoryDatasetDense
-from drmp.utils.torch import fix_random_seed
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.utils import fix_random_seed
 
 
 def run(args):
@@ -14,24 +16,25 @@ def run(args):
     print("-------- GENERATING DATA --------")
     print(f"env: {args.env_name}")
     print(f"n_tasks: {args.n_tasks}")
-    print(f"n_trajectories per task: {args.n_trajectories}")
+    print(f"N trajectories per task: {args.n_trajectories_per_task}")
 
-    dataset = TrajectoryDatasetDense(
-        datasets_dir=args.datasets_dir,
-        dataset_name=args.dataset_name,
+    dataset = TrajectoryDataset(
         env_name=args.env_name,
         robot_name=args.robot_name,
         robot_margin=args.robot_margin,
         generating_robot_margin=args.generating_robot_margin,
         n_support_points=args.n_support_points,
         duration=args.duration,
-        apply_augmentations=False,
+        spline_degree=args.spline_degree,
         tensor_args=tensor_args,
     )
 
+    dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
+
     dataset.generate_data(
+        dataset_dir=dataset_dir,
         n_tasks=args.n_tasks,
-        n_trajectories=args.n_trajectories,
+        n_trajectories_per_task=args.n_trajectories_per_task,
         threshold_start_goal_pos=args.threshold_start_goal_pos,
         sample_steps=args.sample_steps,
         opt_steps=args.opt_steps,
@@ -40,7 +43,7 @@ def run(args):
         rrt_connect_max_radius=args.rrt_connect_max_radius,
         rrt_connect_n_samples=args.rrt_connect_n_samples,
         gpmp2_n_interpolate=args.gpmp2_n_interpolate,
-        gpmp2_num_samples=args.gpmp2_num_samples,
+        gpmp2_n_samples=args.gpmp2_n_samples,
         gpmp2_sigma_start=args.gpmp2_sigma_start,
         gpmp2_sigma_goal_prior=args.gpmp2_sigma_goal_prior,
         gpmp2_sigma_gp=args.gpmp2_sigma_gp,

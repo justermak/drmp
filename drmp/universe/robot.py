@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import torch
 
-from drmp.utils.trajectory import (
+from drmp.utils import (
     get_trajectories_derivative_from_bsplines,
     get_trajectories_from_bsplines,
 )
@@ -162,7 +162,7 @@ class RobotSphere2D(RobotBase):
             degree=self.spline_degree,
         ) / (self.dt * (n_support_points - 1))
         return trajectories_vel
-    
+
     def get_acceleration(
         self,
         trajectories: torch.Tensor,

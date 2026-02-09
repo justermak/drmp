@@ -18,18 +18,26 @@ DEFAULT_TRAIN_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
     "normalizer_name": "TrivialNormalizer",
-    "n_control_points": 24,
+    "n_control_points": 24, # set to None for non-spline models
     "spline_degree": 3,
     "apply_augmentations": True,
     "filter_collision": True,
     "filter_longest_portion": None,
     "filter_sharpest_portion": None,
-    # Diffusion Model
-    "diffusion_model_name": "DiffusionSplinesShortcut",  # "DiffusionDense", "DiffusionSplines", "DiffusionSplinesShortcut"
+    # Generative model
+    "model_name": "DiffusionShortcut",  # "Diffusion", "DiffusionShortcut", "FlowMatchingShortcut", "Drift"
+    # Diffusion and/or FlowMatching
     "n_diffusion_steps": 32,
     "predict_epsilon": True,
-    "ddim": False,
-    "shortcut_steps": 8,
+    # Shortcut
+    "bootstrap_fraction": 0.25,
+    # Drift
+    "temperature": 0.9,
+    # Inference
+    "inference_args":{
+        "n_inference_steps": 4,
+        "eta": 0.0,
+    },
     # Unet
     "state_dim": N_DIM,
     "horizon": 24,
@@ -46,8 +54,7 @@ DEFAULT_TRAIN_ARGS = {
     "num_train_steps": 500000,
     "lr": 1e-4,
     "weight_decay": 0,
-    "batch_size": 2048,
-    "bootstrap_fraction": 0.25,
+    "batch_size": 128,
     "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
@@ -60,14 +67,14 @@ DEFAULT_TRAIN_ARGS = {
     # Guide
     "t_start_guide": 0,
     "n_guide_steps": 2,
-    "guide_lambda_obstacles": 5e-3,
-    "guide_lambda_position": 3e-6,
-    "guide_lambda_velocity": 3e-7,
-    "guide_lambda_acceleration": 7e-7,
-    "guide_max_grad_norm": 1.0,
-    "guide_n_interpolate": 10,
+    "lambda_obstacles": 5e-3,
+    "lambda_position": 3e-6,
+    "lambda_velocity": 3e-7,
+    "lambda_acceleration": 7e-7,
+    "max_grad_norm": 1.0,
+    "n_interpolate": 10,
     # Other
-    "device": "cuda:6",
+    "device": "cuda",
     "debug": False,
     "seed": 42,
 }
@@ -75,22 +82,22 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 200,
-    "n_samples": 100,
+    "n_tasks": 100,
+    "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "diffusion",  # Options: "diffusion", "mpd", "mpd-splines", "rrt-connect", "gpmp2-uninformative", "gpmp2-rrt-prior"
+    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "classical"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
     "threshold_start_goal_pos": 1.5,
     "use_extra_objects": True,
-    # Diffusion model
+    # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "DiffusionSplines__EnvDense2D_2000_50__bs_1024__lr_0.0001__steps_300000__diffusion-steps_25__20260126_230039",
-    "ddim": False,
-    "shortcut_steps": 4,
-    "guide_dense": False,
+    "checkpoint_name": "DiffusionDense__EnvDense2D_2000_50__bs_128__lr_0.0001__steps_500000__diffusion-steps_32__20260207_210215",
+    "n_inference_steps": 4, # set to None for DDPM, DDIM or shortcut otherwise 
+    # DDIM
+    "eta": 0.0,
     # MPD guide
     # "t_start_guide": 6,
     # "n_guide_steps": 5,
@@ -147,9 +154,10 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_n_interpolate": 5,
     "mpd_splines_ddim": True,
     # Classical algorithm
+    "classical_max_processes": 4,
     "classical_n_dof": N_DIM,
-    "classical_sample_steps": 10000,
-    "classical_opt_steps": 300,
+    "classical_sample_steps": 10000, # set to None for straight lines instead of RRT-Connect
+    "classical_opt_steps": 300, # set to None to skip GPMP2
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
@@ -157,7 +165,6 @@ DEFAULT_INFERENCE_ARGS = {
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
-    "gpmp2_num_samples": 64,
     "gpmp2_sigma_start": 3e-2,
     "gpmp2_sigma_goal_prior": 3e-2,
     "gpmp2_sigma_gp": 1,
@@ -181,9 +188,10 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "generating_robot_margin": 0.02,
     "n_support_points": 64,
     "duration": 5.0,
+    "spline_degree": 3,
     # Task generation
     "n_tasks": 2000,
-    "n_trajectories": 50,
+    "n_trajectories_per_task": 50,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "sample_steps": 10000,
@@ -194,7 +202,6 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
-    "gpmp2_num_samples": 64,
     "gpmp2_sigma_start": 3e-2,
     "gpmp2_sigma_goal_prior": 3e-2,
     "gpmp2_sigma_gp": 1,

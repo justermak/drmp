@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from typing import Dict, Any
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
-from drmp.datasets.dataset import TrajectoryDatasetBase, TrajectoryDatasetBSpline
-from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.model.generative_models import GenerativeModel, FlowMatchingShortcut
 from drmp.planning.guide import Guide
 from drmp.planning.metrics import (
     compute_collision_intensity,
@@ -15,56 +16,49 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
-from drmp.utils.trajectory import get_trajectories_from_bsplines
-from drmp.utils.visualizer import Visualizer
+from drmp.utils import get_trajectories_from_bsplines
+from drmp.visualizer import Visualizer
 
 
 def _log_trajectories_metrics(
-    model: DiffusionModelBase,
+    model: GenerativeModel,
+    start_pos: torch.Tensor,
+    goal_pos: torch.Tensor,
     context: torch.Tensor,
-    hard_conditions: dict,
-    dataset: TrajectoryDatasetBase,
+    dataset: TrajectoryDataset,
     planning_visualizer: Visualizer,
     tensorboard_writer: SummaryWriter,
     prefix: str,
     suffix: str,
     step: int,
-    ddim: bool,
-    shortcut_steps: int,
+    inference_args: Dict[str, Any],
     guide=None,
     use_extra_objects: bool = None,
     t_start_guide: float = None,
     n_guide_steps: int = None,
 ) -> None:
-    if isinstance(model, DiffusionSplinesShortcut):
-        trajectories_normalized = model.run_inference(
-            n_samples=20,
-            hard_conditions=hard_conditions,
-            context=context,
-            guide=guide,
-            n_guide_steps=n_guide_steps,
-            t_start_guide=t_start_guide,
-            shortcut_steps=shortcut_steps,
-        )[-1]
-    else:
-        trajectories_normalized = model.run_inference(
-            n_samples=20,
-            hard_conditions=hard_conditions,
-            context=context,
-            guide=guide,
-            n_guide_steps=n_guide_steps,
-            t_start_guide=t_start_guide,
-            ddim=ddim,
-        )[-1]
+    trajectories_normalized = model.run_inference(
+        n_samples=20,
+        context=context,
+        guide=guide,
+        n_guide_steps=n_guide_steps,
+        t_start_guide=t_start_guide,
+        **inference_args,
+    )[-1]
 
     trajectories = dataset.normalizer.unnormalize(trajectories_normalized)
 
-    if isinstance(dataset, TrajectoryDatasetBSpline):
+    if dataset.n_control_points is not None:
+        trajectories[..., :2, :] = start_pos.unsqueeze(0)
+        trajectories[..., -2:, :] = goal_pos.unsqueeze(0)
         trajectories = get_trajectories_from_bsplines(
             control_points=trajectories,
             n_support_points=dataset.n_support_points,
             degree=dataset.robot.spline_degree,
         )
+    else:
+        trajectories[..., 0, :] = start_pos.unsqueeze(0)
+        trajectories[..., -1, :] = goal_pos.unsqueeze(0)
 
     trajectories_collision, trajectories_free, trajectories_collision_mask = (
         dataset.env.get_trajectories_collision_and_free(
@@ -121,14 +115,13 @@ def _log_trajectories_metrics(
 
 def log(
     step: int,
-    model: DiffusionModelBase,
+    model: GenerativeModel,
     subset: Subset,
     prefix: str,
     tensorboard_writer: SummaryWriter,
     guide: Guide,
     guide_extra: Guide,
-    ddim: bool,
-    shortcut_steps: int,
+    inference_args: Dict[str, Any],
     t_start_guide: float,
     n_guide_steps: int,
     train_losses: dict = None,
@@ -152,12 +145,13 @@ def log(
                         step,
                     )
 
-        dataset: TrajectoryDatasetBase = subset.dataset
+        dataset: TrajectoryDataset = subset.dataset
         trajectory_id = np.random.choice(subset.indices)
-        data_normalized = dataset[trajectory_id]
+        data = dataset[trajectory_id]
 
-        context = model.build_context(data_normalized)
-        hard_conditions = model.build_hard_conditions(data_normalized)
+        context = model.build_context(data)
+        start_pos = data["start_pos"]
+        goal_pos = data["goal_pos"]
 
         planning_visualizer = Visualizer(
             env=dataset.env, robot=dataset.robot, use_extra_objects=False
@@ -169,32 +163,32 @@ def log(
         if tensorboard_writer is not None:
             _log_trajectories_metrics(
                 model=model,
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 context=context,
-                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer,
                 tensorboard_writer=tensorboard_writer,
                 prefix=prefix,
                 suffix="",
                 step=step,
-                ddim=ddim,
-                shortcut_steps=shortcut_steps,
+                inference_args=inference_args,
                 guide=None,
             )
 
         if guide is not None and tensorboard_writer is not None:
             _log_trajectories_metrics(
                 model=model,
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 context=context,
-                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer,
                 tensorboard_writer=tensorboard_writer,
                 prefix=prefix,
                 suffix="_guide",
                 step=step,
-                ddim=ddim,
-                shortcut_steps=shortcut_steps,
+                inference_args=inference_args,
                 guide=guide,
                 t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
@@ -203,16 +197,16 @@ def log(
         if guide_extra is not None and tensorboard_writer is not None:
             _log_trajectories_metrics(
                 model=model,
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 context=context,
-                hard_conditions=hard_conditions,
                 dataset=dataset,
                 planning_visualizer=planning_visualizer_extra,
                 tensorboard_writer=tensorboard_writer,
                 prefix=prefix,
                 suffix="_guide_extra",
                 step=step,
-                ddim=ddim,
-                shortcut_steps=shortcut_steps,
+                inference_args=inference_args,
                 guide=guide_extra,
                 use_extra_objects=True,
                 t_start_guide=t_start_guide,

@@ -7,7 +7,7 @@ import torch
 from drmp.planning.factors import FieldFactor, GPFactor, UnaryFactor
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils.trajectory import interpolate_trajectories
+from drmp.utils import interpolate_trajectories
 
 
 class Cost(ABC):
@@ -57,6 +57,7 @@ class CostObstacles(Cost):
         )
         return cost
 
+
 class CostJointPosition(Cost):
     def __init__(
         self,
@@ -73,9 +74,7 @@ class CostJointPosition(Cost):
         trajectories: torch.Tensor,
         n_interpolate: int,
     ):
-        cost = (
-            0.5 * (trajectories**2).sum(-1).sum(-1) * self.lambda_position
-        )
+        cost = 0.5 * (trajectories**2).sum(-1).sum(-1) * self.lambda_position
         return cost
 
 
@@ -99,13 +98,10 @@ class CostJointVelocity(Cost):
             trajectories=trajectories,
             mode="forward",
         )
-        cost = (
-            0.5
-            * (trajectories_vel**2).sum(-1).sum(-1)
-            * self.lambda_velocity
-        )
+        cost = 0.5 * (trajectories_vel**2).sum(-1).sum(-1) * self.lambda_velocity
         return cost
-    
+
+
 class CostJointAcceleration(Cost):
     def __init__(
         self,
@@ -126,11 +122,7 @@ class CostJointAcceleration(Cost):
             trajectories=trajectories,
             mode="forward",
         )
-        cost = (
-            0.5
-            * (trajectories_acc**2).sum(-1).sum(-1)
-            * self.lambda_acceleration
-        )
+        cost = 0.5 * (trajectories_acc**2).sum(-1).sum(-1) * self.lambda_acceleration
         return cost
 
 
@@ -404,14 +396,12 @@ class CostGoalPrior(FactorCost):
         n_support_points: int,
         goal_state: torch.Tensor,
         n_trajectories: int,
-        num_samples: int,
         sigma_goal_prior: float,
         tensor_args: Dict[str, Any],
     ):
         super().__init__(robot, n_support_points, tensor_args=tensor_args)
         self.goal_state = goal_state
         self.n_trajectories = n_trajectories
-        self.num_samples = num_samples
         self.sigma_goal_prior = sigma_goal_prior
 
         self.goal_prior = UnaryFactor(

@@ -4,11 +4,11 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 
+from drmp.torch_timer import TimerCUDA
 from drmp.universe.grid_map_sdf import GridMapSDF
 from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectField
 from drmp.universe.robot import RobotBase
-from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.trajectory import interpolate_trajectories
+from drmp.utils import interpolate_trajectories
 
 
 def get_envs():

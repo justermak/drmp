@@ -3,12 +3,8 @@ from typing import Any, Dict
 
 import torch
 
-from drmp.datasets.dataset import (
-    TrajectoryDatasetBase,
-    TrajectoryDatasetBSpline,
-    TrajectoryDatasetDense,
-)
-from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.model.generative_models import GenerativeModel
 from drmp.planning.costs import (
     CostCollision,
     CostComposite,
@@ -18,15 +14,12 @@ from drmp.planning.costs import (
     CostJointVelocity,
     CostObstacles,
 )
-from drmp.planning.guide import Guide, GuideDense
+from drmp.planning.guide import Guide
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.utils.trajectory import (
-    create_straight_line_trajectory,
-    get_trajectories_from_bsplines,
-)
+from drmp.utils import get_trajectories_from_bsplines
 
 
 class ModelWrapperBase(ABC):
@@ -36,76 +29,76 @@ class ModelWrapperBase(ABC):
     @abstractmethod
     def sample(
         self,
-        dataset: TrajectoryDatasetDense,
-        data_normalized: Dict[str, Any],
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        data: Dict[str, Any],
+        n_trajectories_per_task: int,
         debug: bool = False,
     ):
         pass
 
 
-class DiffusionModelWrapper(ModelWrapperBase):
+class GenerativeModelWrapper(ModelWrapperBase):
     def __init__(
         self,
-        model: DiffusionModelBase,
+        use_extra_objects: bool,
+        model: GenerativeModel,
+        model_name: str,
         guide: Guide,
         t_start_guide: float,
         n_guide_steps: int,
-        ddim: bool,
-        use_extra_objects: bool,
-        shortcut_steps: int = None,
+        n_inference_steps: int,
+        eta: float,
     ):
         super().__init__(use_extra_objects)
         self.model = model
+        self.model_name = model_name
         self.guide = guide
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
-        self.ddim = ddim
-        self.shortcut_steps = shortcut_steps
-
+        self.n_inference_steps = n_inference_steps
+        self.eta = eta
+        
     def sample(
         self,
-        dataset: TrajectoryDatasetBase,
-        data_normalized: Dict[str, Any],
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        data: Dict[str, Any],
+        n_trajectories_per_task: int,
         debug: bool = False,
     ):
-        context = self.model.build_context(data_normalized)
-        hard_conditions = self.model.build_hard_conditions(data_normalized)
-        if isinstance(self.model, DiffusionSplinesShortcut):
-            trajectories_iters_normalized = self.model.run_inference(
-                n_samples=n_samples,
-                hard_conditions=hard_conditions,
-                context=context,
-                guide=self.guide,
-                n_guide_steps=self.n_guide_steps,
-                t_start_guide=self.t_start_guide,
-                ddim=self.ddim,
-                shortcut_steps=self.shortcut_steps,
-                debug=debug,
-            )
-        else:
-            trajectories_iters_normalized = self.model.run_inference(
-                n_samples=n_samples,
-                hard_conditions=hard_conditions,
-                context=context,
-                guide=self.guide,
-                n_guide_steps=self.n_guide_steps,
-                t_start_guide=self.t_start_guide,
-                ddim=self.ddim,
-                debug=debug,
-            )
+        context = self.model.build_context(data)
+        start_pos = data["start_pos"]
+        goal_pos = data["goal_pos"]
+        additional_options = {}
+        if self.model_name == "Diffusion":
+            additional_options["n_inference_steps"] = self.n_inference_steps
+            additional_options["eta"] = self.eta
+        if self.model_name == "FlowMatchingShortcut":
+            additional_options["n_inference_steps"] = self.n_inference_steps
+        trajectories_iters_normalized = self.model.run_inference(
+            n_samples=n_trajectories_per_task,
+            context=context,
+            guide=self.guide,
+            n_guide_steps=self.n_guide_steps,
+            t_start_guide=self.t_start_guide,
+            debug=debug,
+            **additional_options,
+        )
 
         trajectories_iters = dataset.normalizer.unnormalize(
             trajectories_iters_normalized
         )
 
-        if isinstance(dataset, TrajectoryDatasetBSpline):
+        if dataset.n_control_points is not None:
+            trajectories_iters[..., :2, :] = start_pos.unsqueeze(0)
+            trajectories_iters[..., -2:, :] = goal_pos.unsqueeze(0)
             trajectories_iters = get_trajectories_from_bsplines(
                 control_points=trajectories_iters,
                 n_support_points=dataset.n_support_points,
                 degree=dataset.robot.spline_degree,
             )
+        else:
+            trajectories_iters[..., 0, :] = start_pos.unsqueeze(0)
+            trajectories_iters[..., -1, :] = goal_pos.unsqueeze(0)
 
         trajectories_final = trajectories_iters[-1]
 
@@ -131,23 +124,23 @@ class MPDModelWrapper(ModelWrapperBase):
 
     def sample(
         self,
-        dataset: TrajectoryDatasetDense,
-        data_normalized: Dict[str, Any],
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        data: Dict[str, Any],
+        n_trajectories_per_task: int,
         debug: bool = False,
     ):
         hard_conditions = {
             0: torch.cat(
                 [
-                    data_normalized["start_pos_normalized"],
-                    torch.zeros_like(data_normalized["start_pos_normalized"]),
+                    data["start_pos_normalized"],
+                    torch.zeros_like(data["start_pos_normalized"]),
                 ],
                 dim=-1,
             ),
             dataset.n_support_points - 1: torch.cat(
                 [
-                    data_normalized["goal_pos_normalized"],
-                    torch.zeros_like(data_normalized["goal_pos_normalized"]),
+                    data["goal_pos_normalized"],
+                    torch.zeros_like(data["goal_pos_normalized"]),
                 ],
                 dim=-1,
             ),
@@ -156,7 +149,7 @@ class MPDModelWrapper(ModelWrapperBase):
         trajectories_iters_normalized = self.model.run_inference(
             context=None,
             hard_conditions=hard_conditions,
-            n_samples=n_samples,
+            n_samples=n_trajectories_per_task,
             start_guide_steps_fraction=self.start_guide_steps_fraction,
             guide=self.guide,
             n_guide_steps=self.n_guide_steps,
@@ -198,13 +191,13 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
 
     def sample(
         self,
-        dataset: TrajectoryDatasetBSpline,
-        data_normalized: Dict[str, Any],
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        data: Dict[str, Any],
+        n_trajectories_per_task: int,
         debug: bool = False,
     ):
-        start = data_normalized["start_pos_normalized"]
-        goal = data_normalized["goal_pos_normalized"]
+        start = data["start_pos_normalized"]
+        goal = data["goal_pos_normalized"]
 
         horizon = dataset.n_control_points
 
@@ -227,7 +220,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
             guide=self.guide,
             context_d=context,
             hard_conditions=hard_conditions,
-            n_samples=n_samples,
+            n_samples=n_trajectories_per_task,
             horizon=horizon,
             return_chain=True,
             return_chain_x_recon=False,
@@ -253,28 +246,23 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
     def __init__(
         self,
         planner: ClassicalPlanner,
-        method: str,
         sample_steps: int,
         opt_steps: int,
     ):
         super().__init__(planner.use_extra_objects)
         self.planner = planner
-        self.method = method
         self.sample_steps = sample_steps
         self.opt_steps = opt_steps
 
     def sample(
         self,
-        dataset: TrajectoryDatasetDense,
-        data_normalized: Dict[str, Any],
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        data: Dict[str, Any],
+        n_trajectories_per_task: int,
         debug: bool = False,
     ):
-        start_pos_normalized = data_normalized["start_pos_normalized"]
-        goal_pos_normalized = data_normalized["goal_pos_normalized"]
-
-        start_pos = dataset.normalizer.unnormalize(start_pos_normalized)
-        goal_pos = dataset.normalizer.unnormalize(goal_pos_normalized)
+        start_pos = data["start_pos"]
+        goal_pos = data["goal_pos"]
 
         qs = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
         collision_mask = dataset.env.get_collision_mask(
@@ -284,57 +272,17 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
             return None, None
 
         self.planner.reset(start_pos, goal_pos)
-        if self.method == "rrt-connect":
-            trajectories_list = self.planner.optimize(
-                sample_steps=self.sample_steps,
-                debug=debug,
-            )
-            if all(t is None for t in trajectories_list):
-                return None, None
-            max_len = max([t.shape[0] for t in trajectories_list if t is not None])
-            trajectories = torch.stack(
-                [
-                    torch.cat((t, goal_pos.repeat((max_len - t.shape[0], 1))), dim=0)
-                    if t is not None
-                    else torch.cat(
-                        (start_pos, goal_pos.repeat((max_len - 1, 1))), dim=0
-                    )
-                    for t in trajectories_list
-                ]
-            )
-            trajectories = torch.cat(
-                (trajectories, torch.zeros_like(trajectories)), dim=-1
-            )
-        elif self.method == "gpmp2-uninformative":
-            initial_trajectories = create_straight_line_trajectory(
-                start_pos=start_pos,
-                goal_pos=goal_pos,
-                n_support_points=dataset.n_support_points,
-                dt=dataset.robot.dt,
-                tensor_args=dataset.tensor_args,
-            ).repeat((n_samples, 1, 1))
-            self.planner.reset_trajectories(initial_trajectories)
-            trajectories = self.planner.optimize(
-                opt_steps=self.opt_steps,
-                debug=debug,
-            )
-        else:
-            trajectories = self.planner.optimize(
-                sample_steps=self.sample_steps,
-                opt_steps=self.opt_steps,
-                debug=debug,
-            )
+        
+        trajectories = self.planner.optimize(
+            sample_steps=self.sample_steps,
+            opt_steps=self.opt_steps,
+            debug=debug,
+        )
 
         trajectories_iters = None
         trajectories_final = trajectories
 
         return trajectories_iters, trajectories_final
-
-    def cleanup(self):
-        if hasattr(self.planner, "shutdown"):
-            self.planner.shutdown()
-        elif hasattr(self.planner, "sample_based_planner"):
-            self.planner.sample_based_planner.shutdown()
 
 
 class ModelConfigBase(ABC):
@@ -344,8 +292,8 @@ class ModelConfigBase(ABC):
     @abstractmethod
     def prepare(
         self,
-        dataset: TrajectoryDatasetDense,
-        n_samples: int,
+        dataset: TrajectoryDataset,
+        n_trajectories_per_task: int,
         tensor_args: Dict[str, Any],
     ) -> ModelWrapperBase:
         pass
@@ -355,11 +303,13 @@ class ModelConfigBase(ABC):
         pass
 
 
-class DiffusionConfig(ModelConfigBase):
+class GenerativeModelConfig(ModelConfigBase):
     def __init__(
         self,
-        model: DiffusionModelBase,
-        guide_dense: bool,
+        model: GenerativeModel,
+        model_name: str,
+        t_start_guide: float,
+        n_guide_steps: int,
         use_extra_objects: bool,
         lambda_obstacles: float,
         lambda_position: float,
@@ -367,31 +317,29 @@ class DiffusionConfig(ModelConfigBase):
         lambda_acceleration: float,
         max_grad_norm: float,
         n_interpolate: int,
-        t_start_guide: float,
-        n_guide_steps: int,
-        ddim: bool,
-        shortcut_steps: int = None,
+        n_inference_steps: int,
+        eta: float,
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.model = model
-        self.guide_dense = guide_dense
+        self.model_name = model_name
+        self.t_start_guide = t_start_guide
+        self.n_guide_steps = n_guide_steps
         self.lambda_obstacles = lambda_obstacles
         self.lambda_position = lambda_position
         self.lambda_velocity = lambda_velocity
         self.lambda_acceleration = lambda_acceleration
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
-        self.t_start_guide = t_start_guide
-        self.n_guide_steps = n_guide_steps
-        self.ddim = ddim
-        self.shortcut_steps = shortcut_steps
+        self.n_inference_steps = n_inference_steps
+        self.eta = eta
 
     def prepare(
         self,
-        dataset: TrajectoryDatasetDense,
+        dataset: TrajectoryDataset,
         tensor_args: Dict[str, Any],
-        n_samples: int,
-    ) -> DiffusionModelWrapper:
+        n_trajectories_per_task: int,
+    ) -> GenerativeModelWrapper:
         collision_cost = None
         if self.lambda_obstacles is not None:
             collision_cost = CostObstacles(
@@ -432,19 +380,17 @@ class DiffusionConfig(ModelConfigBase):
 
         costs = [
             cost
-            for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+            for cost in [
+                collision_cost,
+                position_cost,
+                velocity_cost,
+                acceleration_cost,
+            ]
             if cost is not None
         ]
 
         guide = (
-            GuideDense(
-                dataset=dataset,
-                costs=costs,
-                max_grad_norm=self.max_grad_norm,
-                n_interpolate=self.n_interpolate,
-            )
-            if self.guide_dense
-            else Guide(
+            Guide(
                 dataset=dataset,
                 costs=costs,
                 max_grad_norm=self.max_grad_norm,
@@ -452,19 +398,19 @@ class DiffusionConfig(ModelConfigBase):
             )
         )
 
-        return DiffusionModelWrapper(
+        return GenerativeModelWrapper(
+            use_extra_objects=self.use_extra_objects,
             model=self.model,
+            model_name=self.model_name,
             guide=guide,
             t_start_guide=self.t_start_guide,
             n_guide_steps=self.n_guide_steps,
-            ddim=self.ddim,
-            use_extra_objects=self.use_extra_objects,
-            shortcut_steps=self.shortcut_steps,
+            n_inference_steps=self.n_inference_steps,
+            eta=self.eta,
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algorithm": "diffusion",
             "use_extra_objects": self.use_extra_objects,
             "lambda_obstacles": self.lambda_obstacles,
             "lambda_position": self.lambda_position,
@@ -474,8 +420,7 @@ class DiffusionConfig(ModelConfigBase):
             "n_interpolate": self.n_interpolate,
             "t_start_guide": self.t_start_guide,
             "n_guide_steps": self.n_guide_steps,
-            "shortcut_steps": self.shortcut_steps,
-            "ddim": self.ddim,
+            "n_inference_steps": self.n_inference_steps,
         }
 
 
@@ -504,9 +449,9 @@ class MPDConfig(ModelConfigBase):
 
     def prepare(
         self,
-        dataset: TrajectoryDatasetDense,
+        dataset: TrajectoryDataset,
         tensor_args: Dict[str, Any],
-        n_samples: int,
+        n_trajectories_per_task: int,
     ) -> MPDModelWrapper:
         guide = None
         if self.n_guide_steps > 0:
@@ -557,7 +502,6 @@ class MPDConfig(ModelConfigBase):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algorithm": "mpd",
             "use_extra_objects": self.use_extra_objects,
             "sigma_collision": self.sigma_collision,
             "sigma_gp": self.sigma_gp,
@@ -600,9 +544,9 @@ class MPDSplinesConfig(ModelConfigBase):
 
     def prepare(
         self,
-        dataset: TrajectoryDatasetDense,
+        dataset: TrajectoryDataset,
         tensor_args: Dict[str, Any],
-        n_samples: int,
+        n_trajectories_per_task: int,
     ) -> MPDSplinesModelWrapper:
         guide = None
         if self.n_guide_steps > 0:
@@ -656,7 +600,6 @@ class MPDSplinesConfig(ModelConfigBase):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algorithm": "mpd-splines",
             "start_guide_steps_fraction": self.start_guide_steps_fraction,
             "n_guide_steps": self.n_guide_steps,
             "ddim": self.ddim,
@@ -670,150 +613,17 @@ class MPDSplinesConfig(ModelConfigBase):
         }
 
 
-class RRTConnectConfig(ModelConfigBase):
+class ClassicalConfig(ModelConfigBase):
     def __init__(
         self,
-        sample_steps: int,
         use_extra_objects: bool,
-        rrt_connect_max_step_size: float,
-        rrt_connect_max_radius: float,
-        rrt_connect_n_samples: int,
-    ):
-        super().__init__(use_extra_objects=use_extra_objects)
-        self.sample_steps = sample_steps
-        self.rrt_connect_max_step_size = rrt_connect_max_step_size
-        self.rrt_connect_max_radius = rrt_connect_max_radius
-        self.rrt_connect_n_samples = rrt_connect_n_samples
-
-    def prepare(
-        self,
-        dataset: TrajectoryDatasetDense,
-        tensor_args: Dict[str, Any],
-        n_samples: int,
-    ) -> ClassicalPlannerWrapper:
-        planner = RRTConnect(
-            env=dataset.env,
-            robot=dataset.generating_robot,
-            max_step_size=self.rrt_connect_max_step_size,
-            max_radius=self.rrt_connect_max_radius,
-            n_samples=self.rrt_connect_n_samples,
-            n_trajectories=n_samples,
-            use_extra_objects=self.use_extra_objects,
-            tensor_args=tensor_args,
-        )
-
-        wrapper = ClassicalPlannerWrapper(
-            planner=planner,
-            method="rrt-connect",
-            sample_steps=self.sample_steps,
-            opt_steps=0,
-        )
-        return wrapper
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "algorithm": "rrt_connect",
-            "sample_steps": self.sample_steps,
-            "use_extra_objects": self.use_extra_objects,
-            "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
-            "rrt_connect_max_radius": self.rrt_connect_max_radius,
-            "rrt_connect_n_samples": self.rrt_connect_n_samples,
-        }
-
-
-class GPMP2UninformativeConfig(ModelConfigBase):
-    def __init__(
-        self,
-        opt_steps: int,
-        use_extra_objects: bool,
-        n_dim: int,
-        gpmp2_n_interpolate: int,
-        gpmp2_num_samples: int,
-        gpmp2_sigma_start: float,
-        gpmp2_sigma_goal_prior: float,
-        gpmp2_sigma_gp: float,
-        gpmp2_sigma_collision: float,
-        gpmp2_step_size: float,
-        gpmp2_delta: float,
-        gpmp2_method: str,
-    ):
-        super().__init__(use_extra_objects=use_extra_objects)
-        self.opt_steps = opt_steps
-        self.n_dim = n_dim
-        self.gpmp2_n_interpolate = gpmp2_n_interpolate
-        self.gpmp2_num_samples = gpmp2_num_samples
-        self.gpmp2_sigma_start = gpmp2_sigma_start
-        self.gpmp2_sigma_goal_prior = gpmp2_sigma_goal_prior
-        self.gpmp2_sigma_gp = gpmp2_sigma_gp
-        self.gpmp2_sigma_collision = gpmp2_sigma_collision
-        self.gpmp2_step_size = gpmp2_step_size
-        self.gpmp2_delta = gpmp2_delta
-        self.gpmp2_method = gpmp2_method
-
-    def prepare(
-        self,
-        dataset: TrajectoryDatasetDense,
-        tensor_args: Dict[str, Any],
-        n_samples: int,
-    ) -> ClassicalPlannerWrapper:
-        planner = GPMP2(
-            robot=dataset.generating_robot,
-            n_dim=self.n_dim,
-            n_trajectories=n_samples,
-            env=dataset.env,
-            tensor_args=tensor_args,
-            n_support_points=dataset.n_support_points,
-            dt=dataset.generating_robot.dt,
-            n_interpolate=self.gpmp2_n_interpolate,
-            num_samples=self.gpmp2_num_samples,
-            sigma_start=self.gpmp2_sigma_start,
-            sigma_gp=self.gpmp2_sigma_gp,
-            sigma_goal_prior=self.gpmp2_sigma_goal_prior,
-            sigma_collision=self.gpmp2_sigma_collision,
-            step_size=self.gpmp2_step_size,
-            delta=self.gpmp2_delta,
-            method=self.gpmp2_method,
-            use_extra_objects=self.use_extra_objects,
-        )
-
-        wrapper = ClassicalPlannerWrapper(
-            planner=planner,
-            method="gpmp2-uninformative",
-            sample_steps=0,
-            opt_steps=self.opt_steps,
-        )
-        return wrapper
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "algorithm": "gpmp2_uninformative",
-            "opt_steps": self.opt_steps,
-            "use_extra_objects": self.use_extra_objects,
-            "n_dim": self.n_dim,
-            "gpmp2_n_interpolate": self.gpmp2_n_interpolate,
-            "gpmp2_num_samples": self.gpmp2_num_samples,
-            "gpmp2_sigma_start": self.gpmp2_sigma_start,
-            "gpmp2_sigma_goal_prior": self.gpmp2_sigma_goal_prior,
-            "gpmp2_sigma_gp": self.gpmp2_sigma_gp,
-            "gpmp2_sigma_collision": self.gpmp2_sigma_collision,
-            "gpmp2_step_size": self.gpmp2_step_size,
-            "gpmp2_delta": self.gpmp2_delta,
-            "gpmp2_method": self.gpmp2_method,
-        }
-
-
-class GPMP2RRTPriorConfig(ModelConfigBase):
-    def __init__(
-        self,
         sample_steps: int,
         opt_steps: int,
-        use_extra_objects: bool,
         n_dim: int,
         rrt_connect_max_step_size: float,
         rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
         gpmp2_n_interpolate: int,
-        gpmp2_num_samples: int,
         gpmp2_sigma_start: float,
         gpmp2_sigma_goal_prior: float,
         gpmp2_sigma_gp: float,
@@ -830,7 +640,6 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
         self.rrt_connect_max_radius = rrt_connect_max_radius
         self.rrt_connect_n_samples = rrt_connect_n_samples
         self.gpmp2_n_interpolate = gpmp2_n_interpolate
-        self.gpmp2_num_samples = gpmp2_num_samples
         self.gpmp2_sigma_start = gpmp2_sigma_start
         self.gpmp2_sigma_goal_prior = gpmp2_sigma_goal_prior
         self.gpmp2_sigma_gp = gpmp2_sigma_gp
@@ -838,53 +647,57 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
         self.gpmp2_step_size = gpmp2_step_size
         self.gpmp2_delta = gpmp2_delta
         self.gpmp2_method = gpmp2_method
-
+        
     def prepare(
         self,
-        dataset: TrajectoryDatasetDense,
+        dataset: TrajectoryDataset,
         tensor_args: Dict[str, Any],
-        n_samples: int,
+        n_trajectories_per_task: int,
     ) -> ClassicalPlannerWrapper:
-        sample_based_planner = RRTConnect(
-            env=dataset.env,
-            robot=dataset.generating_robot,
-            max_step_size=self.rrt_connect_max_step_size,
-            max_radius=self.rrt_connect_max_radius,
-            n_samples=self.rrt_connect_n_samples,
-            n_trajectories=n_samples,
-            use_extra_objects=self.use_extra_objects,
-            tensor_args=tensor_args,
-        )
+        sample_based_planner = None
+        if self.sample_steps is not None:
+            sample_based_planner = RRTConnect(
+                env=dataset.env,
+                robot=dataset.generating_robot,
+                tensor_args=tensor_args,
+                n_trajectories=n_trajectories_per_task,
+                max_step_size=self.rrt_connect_max_step_size,
+                max_radius=self.rrt_connect_max_radius,
+                n_samples=self.rrt_connect_n_samples,
+                use_extra_objects=self.use_extra_objects,
+            )
 
-        optimization_based_planner = GPMP2(
-            robot=dataset.generating_robot,
-            n_dim=self.n_dim,
-            n_trajectories=n_samples,
-            env=dataset.env,
-            tensor_args=tensor_args,
-            n_support_points=dataset.n_support_points,
-            dt=dataset.generating_robot.dt,
-            n_interpolate=self.gpmp2_n_interpolate,
-            num_samples=self.gpmp2_num_samples,
-            sigma_start=self.gpmp2_sigma_start,
-            sigma_gp=self.gpmp2_sigma_gp,
-            sigma_goal_prior=self.gpmp2_sigma_goal_prior,
-            sigma_collision=self.gpmp2_sigma_collision,
-            step_size=self.gpmp2_step_size,
-            delta=self.gpmp2_delta,
-            method=self.gpmp2_method,
-            use_extra_objects=self.use_extra_objects,
-        )
+        optimization_based_planner = None
+        if self.opt_steps is not None:
+            optimization_based_planner = GPMP2(
+                robot=dataset.generating_robot,
+                n_dim=dataset.generating_robot.n_dim,
+                n_trajectories=n_trajectories_per_task,
+                env=dataset.env,
+                tensor_args=tensor_args,
+                n_support_points=dataset.n_support_points,
+                dt=dataset.generating_robot.dt,
+                n_interpolate=self.gpmp2_n_interpolate,
+                sigma_start=self.gpmp2_sigma_start,
+                sigma_gp=self.gpmp2_sigma_gp,
+                sigma_goal_prior=self.gpmp2_sigma_goal_prior,
+                sigma_collision=self.gpmp2_sigma_collision,
+                step_size=self.gpmp2_step_size,
+                delta=self.gpmp2_delta,
+                method=self.gpmp2_method,
+                use_extra_objects=self.use_extra_objects,
+            )
 
         planner = HybridPlanner(
             sample_based_planner=sample_based_planner,
             optimization_based_planner=optimization_based_planner,
+            n_support_points=dataset.n_support_points,
+            dt=dataset.generating_robot.dt,
             tensor_args=tensor_args,
         )
 
         wrapper = ClassicalPlannerWrapper(
             planner=planner,
-            method="gpmp2-rrt-prior",
             sample_steps=self.sample_steps,
             opt_steps=self.opt_steps,
         )
@@ -892,7 +705,6 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "algorithm": "gpmp2_rrt_prior",
             "sample_steps": self.sample_steps,
             "opt_steps": self.opt_steps,
             "use_extra_objects": self.use_extra_objects,
@@ -901,7 +713,6 @@ class GPMP2RRTPriorConfig(ModelConfigBase):
             "rrt_connect_max_radius": self.rrt_connect_max_radius,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,
             "gpmp2_n_interpolate": self.gpmp2_n_interpolate,
-            "gpmp2_num_samples": self.gpmp2_num_samples,
             "gpmp2_sigma_start": self.gpmp2_sigma_start,
             "gpmp2_sigma_goal_prior": self.gpmp2_sigma_goal_prior,
             "gpmp2_sigma_gp": self.gpmp2_sigma_gp,

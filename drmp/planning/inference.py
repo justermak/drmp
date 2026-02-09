@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Subset
 from tqdm import tqdm
 
-from drmp.datasets.dataset import TrajectoryDatasetBase
+from drmp.dataset.dataset import TrajectoryDataset
 from drmp.planning.inference_config import ModelConfigBase, ModelWrapperBase
 from drmp.planning.metrics import (
     bootstrap_confidence_interval,
@@ -19,16 +19,16 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
-from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.visualizer import Visualizer
-from drmp.utils.yaml import save_config_to_yaml
+from drmp.torch_timer import TimerCUDA
+from drmp.utils import save_config_to_yaml
+from drmp.visualizer import Visualizer
 
 
 def run_inference_for_task(
     task_id: int,
-    dataset: TrajectoryDatasetBase,
-    data_normalized: dict,
-    n_samples: int,
+    dataset: TrajectoryDataset,
+    data: dict,
+    n_trajectories_per_task: int,
     model_wrapper: ModelWrapperBase,
     return_full_data: bool = False,
     debug: bool = False,
@@ -38,8 +38,8 @@ def run_inference_for_task(
     with TimerCUDA() as timer_model_sampling:
         trajectories_iters, trajectories_final = model_wrapper.sample(
             dataset=dataset,
-            data_normalized=data_normalized,
-            n_samples=n_samples,
+            data=data,
+            n_trajectories_per_task=n_trajectories_per_task,
             debug=debug,
         )
     task_time = timer_model_sampling.elapsed
@@ -87,7 +87,7 @@ def run_inference_for_task(
 
     stats = {
         "task_id": task_id,
-        "n_samples": n_samples,
+        "n_trajectories_per_task": n_trajectories_per_task,
         "success": success,
         "free_fraction": free_fraction,
         "collision_intensity": collision_intensity,
@@ -101,9 +101,9 @@ def run_inference_for_task(
     if not return_full_data:
         return stats
 
-    start_pos = dataset.normalizer.unnormalize(data_normalized["start_pos_normalized"])
+    start_pos = dataset.normalizer.unnormalize(data["start_pos_normalized"])
 
-    goal_pos = dataset.normalizer.unnormalize(data_normalized["goal_pos_normalized"])
+    goal_pos = dataset.normalizer.unnormalize(data["goal_pos_normalized"])
 
     full_data = {
         "start_pos": start_pos,
@@ -120,9 +120,9 @@ def run_inference_for_task(
 
 
 def get_best_trajectory(
-    dataset: TrajectoryDatasetBase,
-    data_normalized: dict,
-    n_samples: int,
+    dataset: TrajectoryDataset,
+    data: dict,
+    n_trajectories_per_task: int,
     model_wrapper: ModelWrapperBase,
     metric: str = "path-length",  # Options: "path-length", "sharpness"
 ) -> Dict[str, Any]:
@@ -130,8 +130,8 @@ def get_best_trajectory(
     env = dataset.env
     _, trajectories_final = model_wrapper.sample(
         dataset=dataset,
-        data_normalized=data_normalized,
-        n_samples=n_samples,
+        data=data,
+        n_samples=n_trajectories_per_task,
         debug=False,
     )
     if trajectories_final is None:
@@ -161,24 +161,24 @@ def get_best_trajectory(
 def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,
-    n_samples: int,
+    n_trajectories_per_task: int,
     model_wrapper: ModelWrapperBase,
     debug: bool = False,
 ) -> Dict[str, Any]:
     statistics = []
     full_data_sample = None
-    dataset: TrajectoryDatasetBase = subset.dataset
+    dataset: TrajectoryDataset = subset.dataset
 
     return_full_data = True
     for i in tqdm(range(n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
-        data_normalized = dataset[idx]
+        data = dataset[idx]
 
         task_results = run_inference_for_task(
             task_id=i,
             dataset=dataset,
-            data_normalized=data_normalized,
-            n_samples=n_samples,
+            data=data,
+            n_trajectories_per_task=n_trajectories_per_task,
             model_wrapper=model_wrapper,
             return_full_data=return_full_data,
             debug=debug,
@@ -217,7 +217,7 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     n_tasks = len(statistics)
-    n_samples = statistics[0]["n_samples"]
+    n_trajectories_per_task = statistics[0]["n_trajectories_per_task"]
     success = [r["success"] for r in statistics]
     free_fraction = [r["free_fraction"] for r in statistics]
     collision_intensity = [r["collision_intensity"] for r in statistics]
@@ -266,7 +266,7 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     stats = {
         "n_tasks": n_tasks,
-        "n_samples": n_samples,
+        "n_trajectories_per_task": n_trajectories_per_task,
         "time_center": time_center,
         "time_hw": time_hw,
         "success_rate_center": success_center,
@@ -296,9 +296,9 @@ def print_stats(results):
             continue
         print(f"-------- {split_name.upper()} SPLIT --------")
         print(f"| n_tasks | {stats['n_tasks']} |")
-        print(f"| n_samples | {stats['n_samples']} |")
+        print(f"| n_trajectories_per_task | {stats['n_trajectories_per_task']} |")
         print(
-            f"| Time to generate n_samples | {stats['time_center']:.3f} ± {stats['time_hw']:.3f} sec |"
+            f"| Time to generate n_trajectories_per_task | {stats['time_center']:.3f} ± {stats['time_hw']:.3f} sec |"
         )
         print(
             f"| Success rate | {stats['success_rate_center'] * 100:.2f} ± {stats['success_rate_hw'] * 100:.2f}% |"
@@ -329,7 +329,7 @@ def print_stats(results):
 
 def visualize_results(
     results: Dict[str, Any],
-    dataset: TrajectoryDatasetBase,
+    dataset: TrajectoryDataset,
     use_extra_objects: bool,
     generation_dir: str,
     generate_animation: bool = True,
@@ -376,7 +376,7 @@ def visualize_results(
 
 
 def create_test_subset(
-    dataset: TrajectoryDatasetBase,
+    dataset: TrajectoryDataset,
     n_tasks: int,
     threshold_start_goal_pos: float,
     use_extra_objects: bool = False,
@@ -405,14 +405,14 @@ def create_test_subset(
 
 def run_inference(
     model_config: ModelConfigBase,
-    dataset: TrajectoryDatasetBase,
+    dataset: TrajectoryDataset,
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
     test_subset: Optional[Subset],
     generations_dir: str,
     experiment_name: str,
     n_tasks: int,
-    n_samples: int,
+    n_trajectories_per_task: int,
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -421,11 +421,11 @@ def run_inference(
 
     config_dict = model_config.to_dict()
     config_dict["n_tasks"] = n_tasks
-    config_dict["n_samples"] = n_samples
+    config_dict["n_trajectories_per_task"] = n_trajectories_per_task
     save_config_to_yaml(config_dict, os.path.join(generation_dir, "config.yaml"))
 
     model_wrapper = model_config.prepare(
-        dataset=dataset, tensor_args=tensor_args, n_samples=n_samples
+        dataset=dataset, tensor_args=tensor_args, n_trajectories_per_task=n_trajectories_per_task
     )
 
     results = {}
@@ -439,7 +439,7 @@ def run_inference(
         results["train"] = run_inference_on_dataset(
             subset=train_subset,
             n_tasks=n_tasks,
-            n_samples=n_samples,
+            n_trajectories_per_task=n_trajectories_per_task,
             model_wrapper=model_wrapper,
             debug=debug,
         )
@@ -450,7 +450,7 @@ def run_inference(
         results["val"] = run_inference_on_dataset(
             subset=val_subset,
             n_tasks=n_tasks,
-            n_samples=n_samples,
+            n_trajectories_per_task=n_trajectories_per_task,
             model_wrapper=model_wrapper,
             debug=debug,
         )
@@ -461,7 +461,7 @@ def run_inference(
         results["test"] = run_inference_on_dataset(
             subset=test_subset,
             n_tasks=n_tasks,
-            n_samples=n_samples,
+            n_trajectories_per_task=n_trajectories_per_task,
             model_wrapper=model_wrapper,
             debug=debug,
         )

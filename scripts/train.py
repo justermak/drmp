@@ -5,11 +5,10 @@ import configargparse
 import torch
 
 from drmp.config import DEFAULT_TRAIN_ARGS
-from drmp.datasets.dataset import TrajectoryDatasetBSpline, TrajectoryDatasetDense
-from drmp.models.diffusion import get_models
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.model.generative_models import get_models, get_additional_inference_args
 from drmp.train import train
-from drmp.utils.torch import fix_random_seed
-from drmp.utils.yaml import load_config_from_yaml, save_config_to_yaml
+from drmp.utils import fix_random_seed, load_config_from_yaml, save_config_to_yaml
 
 MODELS = get_models()
 
@@ -28,38 +27,20 @@ def run(args):
 
     if args.checkpoint_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_name = f"{args.diffusion_model_name}__{args.dataset_name}__bs_{args.batch_size}__lr_{args.lr}__steps_{args.num_train_steps}__diffusion-steps_{args.n_diffusion_steps}__{timestamp}"
+        checkpoint_name = f"{args.model_name}__{args.dataset_name}__bs_{args.batch_size}__lr_{args.lr}__steps_{args.num_train_steps}__diffusion-steps_{args.n_diffusion_steps}__{timestamp}"
     else:
         checkpoint_name = args.checkpoint_name
 
     dataset_dir = os.path.join(args.datasets_dir, args.dataset_name)
-    dataset_config_path = os.path.join(dataset_dir, "config.yaml")
-    dataset_config = load_config_from_yaml(dataset_config_path)
-
-    dataset_init_config = {
-        "datasets_dir": args.datasets_dir,
-        "dataset_name": args.dataset_name,
-        "apply_augmentations": args.apply_augmentations,
-        "env_name": dataset_config["env_name"],
-        "robot_name": dataset_config["robot_name"],
-        "robot_margin": dataset_config["robot_margin"],
-        "generating_robot_margin": dataset_config["generating_robot_margin"],
-        "n_support_points": dataset_config["n_support_points"],
-        "duration": dataset_config["duration"],
-        "tensor_args": tensor_args,
-    }
-
-    dataset = None
-    if args.diffusion_model_name in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
-        dataset_init_config["n_control_points"] = args.n_control_points
-        dataset_init_config["spline_degree"] = args.spline_degree
-        dataset = TrajectoryDatasetBSpline(**dataset_init_config)
-    else:
-        dataset = TrajectoryDatasetDense(**dataset_init_config)
-    dataset.load_data(normalizer_name=args.normalizer_name)
+    dataset_init_config_path = os.path.join(dataset_dir, "init_config.yaml")
+    dataset_init_config = load_config_from_yaml(dataset_init_config_path)
+    dataset = TrajectoryDataset(**dataset_init_config, tensor_args=tensor_args)
 
     dataset_usage_config = {
-        "filtering": {
+        "normalizer_name": args.normalizer_name,
+        "apply_augmentations": args.apply_augmentations,
+        "n_control_points": args.n_control_points,
+        "filtering_config": {
             "filter_collision": {} if args.filter_collision else None,
             "filter_longest_trajectories": {"portion": args.filter_longest_portion}
             if args.filter_longest_portion is not None
@@ -68,51 +49,38 @@ def run(args):
             if args.filter_sharpest_portion is not None
             else None,
         },
-        "normalizer_name": args.normalizer_name,
-        "apply_augmentations": args.apply_augmentations,
     }
-    if args.diffusion_model_name in ["DiffusionSplines", "DiffusionSplinesShortcut"]:
-        dataset_usage_config["n_control_points"] = args.n_control_points
-        dataset_usage_config["spline_degree"] = args.spline_degree
-    print("\nDataset usage configuration:")
-    for key, value in dataset_usage_config.items():
-        if key != "filtering":
-            print(f"{key}: {value}")
-    print("Filtering:")
-    for filter_name, params in dataset_usage_config["filtering"].items():
-        print(f"{filter_name}: {params}")
 
-    train_subset, train_dataloader, val_subset, val_dataloader = (
-        dataset.load_train_val_split(
-            batch_size=args.batch_size,
-            usage_config=dataset_usage_config,
-        )
+    print("\nDataset usage config:\n", dataset_usage_config)
+
+    train_subset, train_dataloader, val_subset, val_dataloader = dataset.load_data(
+        dataset_dir=dataset_dir,
+        batch_size=args.batch_size,
+        **dataset_usage_config,
     )
 
     assert args.state_dim == dataset.robot.n_dim
     assert args.horizon == (
         dataset.n_support_points
-        if args.diffusion_model_name == "DiffusionDense"
-        else dataset.n_control_points
+        if args.model_name == "DiffusionDense"
+        else args.n_control_points
     )
-
-    model = MODELS[args.diffusion_model_name](
+    additional_args = get_additional_inference_args(args.model_name, args)
+    
+    model = MODELS[args.model_name](
         dataset=dataset,
         state_dim=args.state_dim,
         horizon=args.horizon,
-        unet_hidden_dim=args.hidden_dim,
-        unet_dim_mults=eval(args.dim_mults),
-        unet_kernel_size=args.kernel_size,
-        unet_resnet_block_groups=args.resnet_block_groups,
-        unet_positional_encoding=args.positional_encoding,
-        unet_positional_encoding_dim=args.positional_encoding_dim,
-        unet_attn_heads=args.attn_heads,
-        unet_attn_head_dim=args.attn_head_dim,
-        unet_context_dim=args.context_dim,
-        n_diffusion_steps=args.n_diffusion_steps,
-        predict_epsilon=args.predict_epsilon,
-        spline_degree=args.spline_degree,
-        bootstrap_fraction=args.bootstrap_fraction
+        hidden_dim=args.hidden_dim,
+        dim_mults=eval(args.dim_mults),
+        kernel_size=args.kernel_size,
+        resnet_block_groups=args.resnet_block_groups,
+        positional_encoding=args.positional_encoding,
+        positional_encoding_dim=args.positional_encoding_dim,
+        attn_heads=args.attn_heads,
+        attn_head_dim=args.attn_head_dim,
+        context_dim=args.context_dim,
+        **additional_args,
     ).to(device)
 
     # you can load a checkpoint here
@@ -123,7 +91,60 @@ def run(args):
         checkpoint_dir, "dataset_usage_config.yaml"
     )
     save_config_to_yaml(dataset_usage_config, dataset_usage_config_path)
-    print(f"\nSaved dataset_usage config to {dataset_usage_config_path}")
+
+    config = {
+        # Model
+        "model_name": args.model_name,
+        "n_diffusion_steps": args.n_diffusion_steps,
+        "predict_epsilon": args.predict_epsilon,
+        # FlowMatching
+        "bootstrap_fraction": args.bootstrap_fraction,
+        # Drift
+        "temperature": args.temperature,
+        # Inference
+        "inference_args": args.inference_args,
+        # Unet
+        "state_dim": args.state_dim,
+        "horizon": args.horizon,
+        "hidden_dim": args.hidden_dim,
+        "dim_mults": args.dim_mults,
+        "kernel_size": args.kernel_size,
+        "resnet_block_groups": args.resnet_block_groups,
+        "positional_encoding": args.positional_encoding,
+        "positional_encoding_dim": args.positional_encoding_dim,
+        "attn_heads": args.attn_heads,
+        "attn_head_dim": args.attn_head_dim,
+        "context_dim": args.context_dim,
+        # Training
+        "num_train_steps": args.num_train_steps,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "batch_size": args.batch_size,
+        "clip_grad_max_norm": args.clip_grad_max_norm,
+        "use_amp": args.use_amp,
+        "use_ema": args.use_ema,
+        "ema_decay": args.ema_decay,
+        "ema_warmup": args.ema_warmup,
+        "ema_update_interval": args.ema_update_interval,
+        # Summary
+        "log_interval": args.log_interval,
+        "checkpoint_interval": args.checkpoint_interval,
+        # Guide
+        "t_start_guide": args.t_start_guide,
+        "n_guide_steps": args.n_guide_steps,
+        "lambda_obstacles": args.lambda_obstacles,
+        "lambda_position": args.lambda_position,
+        "lambda_velocity": args.lambda_velocity,
+        "lambda_acceleration": args.lambda_acceleration,
+        "max_grad_norm": args.max_grad_norm,
+        "n_interpolate": args.n_interpolate,
+        # Other
+        "device": args.device,
+        "debug": args.debug,
+        "seed": args.seed,
+    }
+
+    save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
 
     train(
         checkpoint_name=checkpoint_name,
@@ -144,16 +165,15 @@ def run(args):
         ema_warmup=args.ema_warmup,
         ema_update_interval=args.ema_update_interval,
         use_amp=args.use_amp,
-        ddim=args.ddim,
-        shortcut_steps=args.shortcut_steps,
+        inference_args=args.inference_args,
         n_guide_steps=args.n_guide_steps,
         t_start_guide=args.t_start_guide,
-        guide_lambda_obstacles=args.guide_lambda_obstacles,
-        guide_lambda_position=args.guide_lambda_position,
-        guide_lambda_velocity=args.guide_lambda_velocity,
-        guide_lambda_acceleration=args.guide_lambda_acceleration,
-        guide_max_grad_norm=args.guide_max_grad_norm,
-        guide_n_interpolate=args.guide_n_interpolate,
+        lambda_obstacles=args.lambda_obstacles,
+        lambda_position=args.lambda_position,
+        lambda_velocity=args.lambda_velocity,
+        lambda_acceleration=args.lambda_acceleration,
+        max_grad_norm=args.max_grad_norm,
+        n_interpolate=args.n_interpolate,
         debug=args.debug,
         tensor_args=tensor_args,
     )

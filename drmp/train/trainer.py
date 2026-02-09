@@ -1,7 +1,7 @@
 import copy
 import os
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -9,8 +9,8 @@ from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.autonotebook import tqdm
 
-from drmp.datasets.dataset import TrajectoryDatasetBase
-from drmp.models.diffusion import DiffusionModelBase, DiffusionSplinesShortcut
+from drmp.dataset.dataset import TrajectoryDataset
+from drmp.model.generative_models import GenerativeModel
 from drmp.planning.costs import (
     CostJointAcceleration,
     CostJointPosition,
@@ -18,9 +18,8 @@ from drmp.planning.costs import (
     CostObstacles,
 )
 from drmp.planning.guide import Guide
+from drmp.torch_timer import TimerCUDA
 from drmp.train.logs import log
-from drmp.utils.torch_timer import TimerCUDA
-from drmp.utils.yaml import save_config_to_yaml
 
 
 class EMA:
@@ -39,7 +38,7 @@ class EMA:
 
 
 def train_step(
-    model: DiffusionModelBase,
+    model: GenerativeModel,
     train_batch_dict: Dict[str, Any],
     optimizer: torch.optim.Optimizer,
     scaler: torch.amp.GradScaler,
@@ -69,7 +68,7 @@ def train_step(
 
 
 def val_step(
-    model: DiffusionModelBase,
+    model: GenerativeModel,
     val_dataloader: DataLoader,
 ) -> Tuple[float, Dict[str, float]]:
     val_losses = defaultdict(list)
@@ -92,7 +91,7 @@ def val_step(
 
 
 def save_model_to_disk(
-    model: DiffusionModelBase,
+    model: GenerativeModel,
     epoch: int,
     step: int,
     checkpoint_dir: Optional[str] = None,
@@ -134,8 +133,8 @@ def save_losses_to_disk(
 
 
 def end_training(
-    model: DiffusionModelBase,
-    ema_model: DiffusionModelBase,
+    model: GenerativeModel,
+    ema_model: GenerativeModel,
     ema: EMA,
     epoch: int,
     step: int,
@@ -173,7 +172,7 @@ def end_training(
 
 
 def train(
-    model: DiffusionModelBase,
+    model: GenerativeModel,
     train_dataloader: DataLoader,
     train_subset: Subset,
     val_dataloader: DataLoader,
@@ -191,23 +190,24 @@ def train(
     ema_warmup: int,
     ema_update_interval: int,
     use_amp: bool,
-    ddim: bool,
-    shortcut_steps: int,
+    inference_args: Dict[str, Any],
     n_guide_steps: int,
     t_start_guide: int,
-    guide_lambda_obstacles: float,
-    guide_lambda_position: float,
-    guide_lambda_velocity: float,
-    guide_lambda_acceleration: float,
-    guide_max_grad_norm: float,
-    guide_n_interpolate: int,
+    lambda_obstacles: float,
+    lambda_position: float,
+    lambda_velocity: float,
+    lambda_acceleration: float,
+    max_grad_norm: float,
+    n_interpolate: int,
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> None:
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
 
-    optimizer = torch.optim.Adam(lr=lr, weight_decay=weight_decay, params=model.parameters())
+    optimizer = torch.optim.Adam(
+        lr=lr, weight_decay=weight_decay, params=model.parameters()
+    )
 
     scaler = torch.amp.GradScaler(device=tensor_args["device"], enabled=use_amp)
 
@@ -228,15 +228,15 @@ def train(
         ema = EMA(beta=ema_decay)
         ema_model = copy.deepcopy(model)
 
-    dataset: TrajectoryDatasetBase = train_subset.dataset
+    dataset: TrajectoryDataset = train_subset.dataset
 
     collision_cost = None
-    if guide_lambda_obstacles is not None:
+    if lambda_obstacles is not None:
         collision_cost = CostObstacles(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            lambda_obstacles=guide_lambda_obstacles,
+            lambda_obstacles=lambda_obstacles,
             use_extra_objects=False,
             tensor_args=tensor_args,
         )
@@ -245,101 +245,68 @@ def train(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            lambda_obstacles=guide_lambda_obstacles,
+            lambda_obstacles=lambda_obstacles,
             use_extra_objects=True,
             tensor_args=tensor_args,
         )
-        
+
     position_cost = None
-    if guide_lambda_position is not None:
+    if lambda_position is not None:
         position_cost = CostJointPosition(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            lambda_position=guide_lambda_position,
+            lambda_position=lambda_position,
             tensor_args=tensor_args,
         )
 
     velocity_cost = None
-    if guide_lambda_velocity is not None:
+    if lambda_velocity is not None:
         velocity_cost = CostJointVelocity(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            lambda_velocity=guide_lambda_velocity,
+            lambda_velocity=lambda_velocity,
             tensor_args=tensor_args,
         )
 
     acceleration_cost = None
-    if guide_lambda_acceleration is not None:
+    if lambda_acceleration is not None:
         acceleration_cost = CostJointAcceleration(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            lambda_acceleration=guide_lambda_acceleration,
+            lambda_acceleration=lambda_acceleration,
             tensor_args=tensor_args,
         )
-    
-    costs = [cost for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost] if cost is not None]
-    costs_extra = [cost for cost in [collision_cost_extra, position_cost, velocity_cost, acceleration_cost] if cost is not None]
+
+    costs = [
+        cost
+        for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+        if cost is not None
+    ]
+    costs_extra = [
+        cost
+        for cost in [
+            collision_cost_extra,
+            position_cost,
+            velocity_cost,
+            acceleration_cost,
+        ]
+        if cost is not None
+    ]
 
     guide = Guide(
         dataset=dataset,
         costs=costs,
-        max_grad_norm=guide_max_grad_norm,
-        n_interpolate=guide_n_interpolate,
+        max_grad_norm=max_grad_norm,
+        n_interpolate=n_interpolate,
     )
 
     guide_extra = Guide(
         dataset=dataset,
         costs=costs_extra,
-        max_grad_norm=guide_max_grad_norm,
-        n_interpolate=guide_n_interpolate,
+        max_grad_norm=max_grad_norm,
+        n_interpolate=n_interpolate,
     )
 
-    config = {
-        "checkpoints_dir": checkpoints_dir,
-        "checkpoint_name": checkpoint_name,
-        "checkpoint_dir": checkpoint_dir,
-        "lr": lr,
-        "batch_size": train_dataloader.batch_size,
-        "bootstrap"
-        "model_name": model.__class__.__name__,
-        "state_dim": model.state_dim,
-        "horizon": model.horizon,
-        "unet_hidden_dim": model.unet_hidden_dim,
-        "unet_dim_mults": str(model.unet_dim_mults),
-        "unet_kernel_size": model.unet_kernel_size,
-        "unet_resnet_block_groups": model.unet_resnet_block_groups,
-        "unet_positional_encoding": model.unet_positional_encoding,
-        "unet_positional_encoding_dim": model.unet_positional_encoding_dim,
-        "unet_attn_heads": model.unet_attn_heads,
-        "unet_attn_head_dim": model.unet_attn_head_dim,
-        "unet_context_dim": model.unet_context_dim,
-        "n_diffusion_steps": model.n_diffusion_steps,
-        "predict_epsilon": model.predict_epsilon,
-        "log_interval": log_interval,
-        "checkpoint_interval": checkpoint_interval,
-        "clip_grad_max_norm": clip_grad_max_norm,
-        "use_ema": use_ema,
-        "ema_decay": ema_decay,
-        "ema_warmup": ema_warmup,
-        "ema_update_interval": ema_update_interval,
-        "use_amp": use_amp,
-        "ddim": ddim,
-        "shortcut_steps": shortcut_steps,
-        "n_guide_steps": n_guide_steps,
-        "t_start_guide": t_start_guide,
-        "guide_lambda_obstacles": guide_lambda_obstacles,
-        "guide_lambda_position": guide_lambda_position,
-        "guide_lambda_velocity": guide_lambda_velocity,
-        "guide_lambda_acceleration": guide_lambda_acceleration,
-        "guide_max_grad_norm": guide_max_grad_norm,
-        "guide_n_interpolate": guide_n_interpolate,
-        "debug": debug,
-    }
-    
-    if isinstance(model, DiffusionSplinesShortcut):
-        config["bootstrap_factor"] = model.bootstrap_factor
-
-    save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
     )
@@ -397,8 +364,7 @@ def train(
                                 prefix="TRAIN ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
-                                ddim=ddim,
-                                shortcut_steps=shortcut_steps,
+                                inference_args=inference_args,
                                 guide=guide,
                                 guide_extra=guide_extra,
                                 t_start_guide=t_start_guide,
@@ -428,8 +394,7 @@ def train(
                                 prefix="VAL ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
-                                ddim=ddim,
-                                shortcut_steps=shortcut_steps,
+                                inference_args=inference_args,
                                 guide=guide,
                                 guide_extra=guide_extra,
                                 t_start_guide=t_start_guide,

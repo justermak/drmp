@@ -318,7 +318,7 @@ class TemporalUNet(nn.Module):
 class TemporalUNetShortcut(TemporalUNet):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         if self.positional_encoding == "random_fourier":
             positional_encodings = RandomFourierSinusoidalPosEmb(
                 self.positional_encoding_dim, is_random=True
@@ -330,8 +330,10 @@ class TemporalUNetShortcut(TemporalUNet):
         elif self.positional_encoding == "sinusoidal":
             positional_encodings = SinusoidalPosEmb(self.positional_encoding_dim)
         else:
-            raise ValueError(f"Unknown positional encoding type: {self.positional_encoding}")
-        
+            raise ValueError(
+                f"Unknown positional encoding type: {self.positional_encoding}"
+            )
+
         self.dt_mlp = nn.Sequential(
             positional_encodings,
             nn.Linear(
@@ -343,14 +345,17 @@ class TemporalUNetShortcut(TemporalUNet):
             nn.Linear(self.time_emb_dim, self.time_emb_dim),
         )
 
-
     def forward(
-        self, x: torch.Tensor, time: torch.Tensor, dt: torch.Tensor, context: torch.Tensor = None
+        self,
+        x: torch.Tensor,
+        time: torch.Tensor,
+        dt: torch.Tensor,
+        context: torch.Tensor = None,
     ) -> torch.Tensor:
         x = x.permute(0, 2, 1)
         t = self.time_mlp(time)
         dt_emb = self.dt_mlp(dt)
-        
+
         t = t + dt_emb
 
         if self.context_dim is not None:

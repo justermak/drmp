@@ -4,7 +4,7 @@ import torch
 
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils.trajectory import interpolate_trajectories
+from drmp.utils import interpolate_trajectories
 
 
 class UnaryFactor:
