@@ -86,7 +86,7 @@ def run(args):
                 args.checkpoints_dir, args.checkpoint_name, "config.yaml"
             )
         )
-        additional_args = get_additional_inference_args(saved_model_config["model_name"], args)
+        additional_args = get_additional_inference_args(saved_model_config["model_name"], saved_model_config)
         model = MODELS[saved_model_config["model_name"]](
             dataset=dataset,
             state_dim=saved_model_config["state_dim"],

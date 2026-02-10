@@ -65,7 +65,7 @@ def run(args):
         if args.model_name == "DiffusionDense"
         else args.n_control_points
     )
-    additional_args = get_additional_inference_args(args.model_name, args)
+    additional_args = get_additional_inference_args(args.model_name, vars(args))
     
     model = MODELS[args.model_name](
         dataset=dataset,

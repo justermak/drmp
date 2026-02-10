@@ -35,7 +35,7 @@ DEFAULT_TRAIN_ARGS = {
     "temperature": 0.9,
     # Inference
     "inference_args":{
-        "n_inference_steps": 4,
+        "n_inference_steps": 32,
         "eta": 0.0,
     },
     # Unet
@@ -74,7 +74,7 @@ DEFAULT_TRAIN_ARGS = {
     "max_grad_norm": 1.0,
     "n_interpolate": 10,
     # Other
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }
@@ -94,8 +94,8 @@ DEFAULT_INFERENCE_ARGS = {
     "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "DiffusionDense__EnvDense2D_2000_50__bs_128__lr_0.0001__steps_500000__diffusion-steps_32__20260207_210215",
-    "n_inference_steps": 4, # set to None for DDPM, DDIM or shortcut otherwise 
+    "checkpoint_name": "DiffusionShortcut__EnvDense2D_2000_50__bs_128__lr_0.0001__steps_500000__diffusion-steps_32__20260210_012516",
+    "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
     # MPD guide

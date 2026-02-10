@@ -23,13 +23,13 @@ def get_models():
 def get_additional_inference_args(model_name, args):
     additional_args = {}
     if model_name in ("Diffusion", "DiffusionShortcut"):
-        additional_args["n_diffusion_steps"] = args.n_diffusion_steps
-        additional_args["predict_epsilon"] = args.predict_epsilon
+        additional_args["n_diffusion_steps"] = args["n_diffusion_steps"]
+        additional_args["predict_epsilon"] = args["predict_epsilon"]
     if model_name in ("DiffusionShortcut", "FlowMatchingShortcut"):
-        additional_args["n_diffusion_steps"] = args.n_diffusion_steps
-        additional_args["bootstrap_fraction"] = args.bootstrap_fraction
+        additional_args["n_diffusion_steps"] = args["n_diffusion_steps"]
+        additional_args["bootstrap_fraction"] = args["bootstrap_fraction"]
     if model_name == "Drift":
-        additional_args["temperature"] = args.temperature
+        additional_args["temperature"] = args["temperature"]
     return additional_args
 
 def cosine_beta_schedule(n_diffusion_steps, s=0.008, a_min=0, a_max=0.999):

@@ -43,7 +43,6 @@ def run(args):
         rrt_connect_max_radius=args.rrt_connect_max_radius,
         rrt_connect_n_samples=args.rrt_connect_n_samples,
         gpmp2_n_interpolate=args.gpmp2_n_interpolate,
-        gpmp2_n_samples=args.gpmp2_n_samples,
         gpmp2_sigma_start=args.gpmp2_sigma_start,
         gpmp2_sigma_goal_prior=args.gpmp2_sigma_goal_prior,
         gpmp2_sigma_gp=args.gpmp2_sigma_gp,

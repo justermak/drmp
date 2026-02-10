@@ -72,7 +72,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         if self.model_name == "Diffusion":
             additional_options["n_inference_steps"] = self.n_inference_steps
             additional_options["eta"] = self.eta
-        if self.model_name == "FlowMatchingShortcut":
+        if self.model_name in ("DiffusionShortcut", "FlowMatchingShortcut"):
             additional_options["n_inference_steps"] = self.n_inference_steps
         trajectories_iters_normalized = self.model.run_inference(
             n_samples=n_trajectories_per_task,
