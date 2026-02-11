@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     for key, value in DEFAULT_DATA_GENERATION_ARGS.items():
         arg_name = f"--{key}"
-        arg_type = type(value if value is not None else str)
+        arg_type = type(value) if value is not None else str
 
         if isinstance(value, bool):
             parser.add_argument(arg_name, action="store_true", default=value)

@@ -100,6 +100,8 @@ def run(args):
         "predict_noise": args.predict_noise,
         # FlowMatching
         "bootstrap_fraction": args.bootstrap_fraction,
+        "dt_sampling_strategy": args.dt_sampling_strategy,
+        "t_sampling_strategy": args.t_sampling_strategy,
         # Drift
         "temperature": args.temperature,
         # Inference

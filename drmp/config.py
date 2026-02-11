@@ -32,7 +32,7 @@ DEFAULT_TRAIN_ARGS = {
     "predict_noise": True,
     # Shortcut
     "bootstrap_fraction": 0.125,
-    "dt_sampling_strategy": "uniform",  # "uniform", "weighted"
+    "dt_sampling_strategy": "weighted",  # "uniform", "weighted"
     "t_sampling_strategy": "sparse",  # "sparse", "dense"
     # Drift
     "temperature": 1.0,
@@ -55,7 +55,7 @@ DEFAULT_TRAIN_ARGS = {
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 500000,
+    "num_train_steps": 300000,
     "lr": 1e-4,
     "weight_decay": 0,
     "batch_size": 128,
@@ -78,7 +78,7 @@ DEFAULT_TRAIN_ARGS = {
     "max_grad_norm": 1.0,
     "n_interpolate": 10,
     # Other
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }

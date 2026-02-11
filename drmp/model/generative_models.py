@@ -302,6 +302,7 @@ class Diffusion(GenerativeModel):
                 x_recon = model_prediction
                 
             x_recon = torch.clamp(x_recon, -1.0, 1.0)
+            
             x_t = (
                 self.extract(self.posterior_mean_coef1, t, x_t.shape)
                 * x_recon
@@ -527,10 +528,10 @@ class DiffusionShortcut(Diffusion):
             pred_x0 = (x - sqrt_one_minus_alpha_bar_t * model_prediction) / sqrt_alpha_bar_t
         else:
             pred_x0 = model_prediction
-            
-        noise = (x - sqrt_alpha_bar_t * pred_x0) / sqrt_one_minus_alpha_bar_t
 
         pred_x0 = torch.clamp(pred_x0, -1.0, 1.0)
+            
+        noise = (x - sqrt_alpha_bar_t * pred_x0) / sqrt_one_minus_alpha_bar_t
             
         sqrt_alpha_bar_prev = torch.sqrt(alpha_bar_prev).view(-1, 1, 1)
         sqrt_one_minus_alpha_bar_prev = torch.sqrt(1. - alpha_bar_prev).view(-1, 1, 1)
