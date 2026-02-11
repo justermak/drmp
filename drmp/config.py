@@ -27,17 +27,17 @@ DEFAULT_TRAIN_ARGS = {
     # Generative model
     "model_name": "DiffusionShortcut",  # "Diffusion", "DiffusionShortcut", "FlowMatchingShortcut", "Drift"
     "cfg_fraction": None,
+    "cfg_scale": 1.0,
     # Diffusion and/or FlowMatching
     "n_diffusion_steps": 32,
     "predict_noise": True,
     # Shortcut
-    "bootstrap_fraction": 0.125,
-    "dt_sampling_strategy": "weighted",  # "uniform", "weighted"
+    "bootstrap_fraction": 0.25,
+    "dt_sampling_strategy": "uniform",  # "uniform", "weighted"
     # Drift
     "temperature": 1.0,
     # Inference
     "inference_args":{
-        "cfg_scale": 1.0,
         "n_inference_steps": 32,
         "eta": 0.0,
     },
@@ -57,7 +57,7 @@ DEFAULT_TRAIN_ARGS = {
     "num_train_steps": 300000,
     "lr": 1e-4,
     "weight_decay": 0,
-    "batch_size": 128,
+    "batch_size": 256,
     "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
@@ -77,7 +77,7 @@ DEFAULT_TRAIN_ARGS = {
     "max_grad_norm": 1.0,
     "n_interpolate": 10,
     # Other
-    "device": "cuda:6",
+    "device": "cuda",
     "debug": False,
     "seed": 42,
 }
@@ -98,7 +98,6 @@ DEFAULT_INFERENCE_ARGS = {
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "weighted_sparse",
-    "cfg_scale": 1.0,
     "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,

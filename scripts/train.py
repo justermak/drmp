@@ -67,21 +67,25 @@ def run(args):
     )
     
     additional_args = get_additional_init_args(args.model_name, vars(args))
+    model_config = {
+        "state_dim": args.state_dim,
+        "horizon": args.horizon,
+        "hidden_dim": args.hidden_dim,
+        "dim_mults": eval(args.dim_mults),
+        "kernel_size": args.kernel_size,
+        "resnet_block_groups": args.resnet_block_groups,
+        "positional_encoding": args.positional_encoding,
+        "positional_encoding_dim": args.positional_encoding_dim,
+        "attn_heads": args.attn_heads,
+        "attn_head_dim": args.attn_head_dim,
+        "context_dim": args.context_dim,
+        "cfg_fraction": args.cfg_fraction,
+        "cfg_scale": args.cfg_scale,
+        **additional_args,
+    }
     model = MODELS[args.model_name](
         dataset=dataset,
-        state_dim=args.state_dim,
-        horizon=args.horizon,
-        hidden_dim=args.hidden_dim,
-        dim_mults=eval(args.dim_mults),
-        kernel_size=args.kernel_size,
-        resnet_block_groups=args.resnet_block_groups,
-        positional_encoding=args.positional_encoding,
-        positional_encoding_dim=args.positional_encoding_dim,
-        attn_heads=args.attn_heads,
-        attn_head_dim=args.attn_head_dim,
-        context_dim=args.context_dim,
-        cfg_fraction=args.cfg_fraction,
-        **additional_args,
+        **model_config
     ).to(device)
 
     # you can load a checkpoint here
@@ -92,7 +96,8 @@ def run(args):
         checkpoint_dir, "dataset_usage_config.yaml"
     )
     save_config_to_yaml(dataset_usage_config, dataset_usage_config_path)
-    save_config_to_yaml(vars(args), os.path.join(checkpoint_dir, "config.yaml"))
+    save_config_to_yaml(model_config, os.path.join(checkpoint_dir, "init_config.yaml"))
+    save_config_to_yaml(vars(args), os.path.join(checkpoint_dir, "info_config.yaml"))
 
     train(
         checkpoint_name=checkpoint_name,

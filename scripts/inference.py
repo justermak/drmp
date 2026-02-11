@@ -81,30 +81,22 @@ def run(args):
     model_config = None
     if args.algorithm == "generative-model":
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
-        saved_model_config = load_config_from_yaml(
+        model_init_config = load_config_from_yaml(
             os.path.join(
-                args.checkpoints_dir, args.checkpoint_name, "config.yaml"
+                args.checkpoints_dir, args.checkpoint_name, "init_config.yaml"
             )
         )
+        model_info_config = load_config_from_yaml(
+            os.path.join(
+                args.checkpoints_dir, args.checkpoint_name, "info_config.yaml"
+            )        
+        )
         
-        additional_args = get_additional_init_args(saved_model_config["model_name"], saved_model_config)
-        model = MODELS[saved_model_config["model_name"]](
+        model_name = model_init_config["model_name"]
+        del model_init_config["model_name"]
+        model = MODELS[model_name](
             dataset=dataset,
-            state_dim=saved_model_config["state_dim"],
-            horizon=saved_model_config["horizon"],
-            hidden_dim=saved_model_config["hidden_dim"],
-            dim_mults=eval(saved_model_config["dim_mults"]),
-            kernel_size=saved_model_config["kernel_size"],
-            resnet_block_groups=saved_model_config["resnet_block_groups"],
-            positional_encoding=saved_model_config["positional_encoding"],
-            positional_encoding_dim=saved_model_config[
-                "positional_encoding_dim"
-            ],
-            attn_heads=saved_model_config["attn_heads"],
-            attn_head_dim=saved_model_config["attn_head_dim"],
-            context_dim=saved_model_config["context_dim"],
-            cfg_fraction=saved_model_config["cfg_fraction"],
-            **additional_args,
+            **model_init_config
         ).to(device)
 
         model.load_state_dict(
@@ -112,7 +104,7 @@ def run(args):
                 os.path.join(
                     checkpoint_dir,
                     "ema_model_current_state_dict.pth"
-                    if saved_model_config["use_ema"]
+                    if model_info_config["use_ema"]
                     else "model_current_state_dict.pth",
                 ),
                 map_location=tensor_args["device"],
@@ -121,10 +113,10 @@ def run(args):
         model.eval()
         model = torch.compile(model)
         
-        additional_args = get_additional_inference_args(saved_model_config["model_name"], vars(args))
+        additional_args = get_additional_inference_args(model_name, vars(args))
         model_config = GenerativeModelConfig(
             model=model,
-            model_name=saved_model_config["model_name"],
+            model_name=model_name,
             use_extra_objects=args.use_extra_objects,
             t_start_guide=args.t_start_guide,
             n_guide_steps=args.n_guide_steps,
@@ -134,7 +126,6 @@ def run(args):
             lambda_acceleration=args.lambda_acceleration,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
-            cfg_scale=args.cfg_scale,
             additional_args=additional_args,
         )
 

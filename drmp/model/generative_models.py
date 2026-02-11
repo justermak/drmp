@@ -69,13 +69,14 @@ class GenerativeModel(nn.Module, ABC):
         attn_head_dim: int,
         context_dim: int,
         cfg_fraction: float,
+        cfg_scale: float,
     ):
         super().__init__()
         self.dataset = dataset
         self.horizon = horizon
         self.state_dim = state_dim
         self.hidden_dim = hidden_dim
-        self.dim_mults = dim_mults
+        self.dim_mults = dim_mults if isinstance(dim_mults, tuple) else eval(dim_mults)
         self.kernel_size = kernel_size
         self.resnet_block_groups = resnet_block_groups
         self.positional_encoding = positional_encoding
@@ -84,6 +85,7 @@ class GenerativeModel(nn.Module, ABC):
         self.attn_head_dim = attn_head_dim
         self.context_dim = context_dim
         self.cfg_fraction = cfg_fraction
+        self.cfg_scale = cfg_scale
 
         self.model = TemporalUNet(
             input_dim=state_dim,
@@ -107,6 +109,15 @@ class GenerativeModel(nn.Module, ABC):
             dim=-1,
         )
         return context
+    
+    def get_model_prediction(self, x_t: torch.Tensor, context: torch.Tensor, use_cfg: bool = True, **conditioning) -> torch.Tensor:
+        if use_cfg and self.cfg_scale != 1.0:
+            model_output_cond = self.model(x_t, **conditioning, context=context)
+            model_output_uncond = self.model(x_t, **conditioning, context=torch.zeros_like(context))
+            model_output = model_output_uncond + self.cfg_scale * (model_output_cond - model_output_uncond)
+        else:
+            model_output = self.model(x_t, **conditioning, context=context)
+        return model_output
         
     @abstractmethod
     def compute_loss(self, input_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -143,6 +154,7 @@ class Diffusion(GenerativeModel):
         attn_head_dim: int,
         context_dim: int,
         cfg_fraction: float,
+        cfg_scale: float,
         n_diffusion_steps: int,
         predict_noise: bool,
     ):
@@ -160,6 +172,7 @@ class Diffusion(GenerativeModel):
             attn_head_dim=attn_head_dim,
             context_dim=context_dim,
             cfg_fraction=cfg_fraction,
+            cfg_scale=cfg_scale,
         )
         self.n_diffusion_steps = n_diffusion_steps
         self.predict_noise = predict_noise
@@ -219,15 +232,6 @@ class Diffusion(GenerativeModel):
 
         return sample
     
-    def get_model_prediction(self, x_t: torch.Tensor, t: torch.Tensor, context: torch.Tensor, cfg_scale: float) -> torch.Tensor:
-        if cfg_scale != 1.0:
-            model_output_cond = self.model(x_t, t, context)
-            model_output_uncond = self.model(x_t, t, torch.zeros_like(context))
-            model_output = model_output_uncond + cfg_scale * (model_output_cond - model_output_uncond)
-        else:
-            model_output = self.model(x_t, t, context)
-        return model_output
-    
     def compute_loss(
         self, input_dict: Dict[str, torch.Tensor]
     ) -> Dict[str, torch.Tensor]:
@@ -252,7 +256,7 @@ class Diffusion(GenerativeModel):
             x_0=x, t=t, noise=noise
         )
 
-        x_recon = self.model(x_noisy, t, context)
+        x_recon = self.get_model_prediction(x_noisy, context, t=t)
 
         if self.predict_noise:
             loss = F.mse_loss(x_recon, noise)
@@ -272,7 +276,6 @@ class Diffusion(GenerativeModel):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         debug: bool = False,
     ) -> torch.Tensor:
         device = self.betas.device
@@ -286,7 +289,7 @@ class Diffusion(GenerativeModel):
         for time in reversed(range(self.n_diffusion_steps)):
             t = torch.full((n_samples,), time, device=device, dtype=torch.long)
 
-            model_prediction = self.get_model_prediction(x_t, t, context, cfg_scale)
+            model_prediction = self.get_model_prediction(x_t, context, t=t)
 
             if self.predict_noise:
                 x_recon = (
@@ -336,7 +339,6 @@ class Diffusion(GenerativeModel):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         n_inference_steps: int,
         eta: float,
         debug: bool = False,
@@ -359,7 +361,7 @@ class Diffusion(GenerativeModel):
 
             t = torch.full((n_samples,), t_idx, device=device, dtype=torch.long)
             
-            model_prediction = self.get_model_prediction(x_t, t, context, cfg_scale)
+            model_prediction = self.get_model_prediction(x_t, context, t=t)
 
             alpha_bar = self.extract(self.alphas_cumprod, t, x_t.shape)
             
@@ -420,7 +422,6 @@ class Diffusion(GenerativeModel):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         n_inference_steps: int,
         eta: float,
         debug: bool = False,
@@ -434,7 +435,6 @@ class Diffusion(GenerativeModel):
                 t_start_guide=t_start_guide,
                 guide=guide,
                 n_guide_steps=n_guide_steps,
-                cfg_scale=cfg_scale,
                 debug=debug,
             )
         else:
@@ -444,7 +444,6 @@ class Diffusion(GenerativeModel):
                 t_start_guide=t_start_guide,
                 guide=guide,
                 n_guide_steps=n_guide_steps,
-                cfg_scale=cfg_scale,
                 n_inference_steps=n_inference_steps,
                 eta=eta,
                 debug=debug,
@@ -469,6 +468,7 @@ class DiffusionShortcut(Diffusion):
         attn_head_dim: int,
         context_dim: int,
         cfg_fraction: float,
+        cfg_scale: float,
         n_diffusion_steps: int,
         predict_noise: bool,
         bootstrap_fraction: float,
@@ -490,6 +490,7 @@ class DiffusionShortcut(Diffusion):
             n_diffusion_steps=n_diffusion_steps,
             predict_noise=predict_noise,
             cfg_fraction=cfg_fraction,
+            cfg_scale=cfg_scale,
         )
         self.bootstrap_fraction = bootstrap_fraction
         self.dt_sampling_strategy = dt_sampling_strategy
@@ -513,7 +514,7 @@ class DiffusionShortcut(Diffusion):
         vals = torch.where(t < 0, torch.ones_like(vals), vals)
         return vals
 
-    def ddim_step(self, x, t, dt, model_prediction, predict_noise=True):
+    def ddim_step(self, x, t, dt, model_prediction):
         alpha_bar_t = self.get_alpha_bar(t)
         t_prev = t - dt
         alpha_bar_prev = self.get_alpha_bar(t_prev)
@@ -521,7 +522,7 @@ class DiffusionShortcut(Diffusion):
         sqrt_alpha_bar_t = torch.sqrt(alpha_bar_t).view(-1, 1, 1)
         sqrt_one_minus_alpha_bar_t = torch.sqrt(1. - alpha_bar_t).view(-1, 1, 1)
         
-        if predict_noise:
+        if self.predict_noise:
             pred_x0 = (x - sqrt_one_minus_alpha_bar_t * model_prediction) / sqrt_alpha_bar_t
         else:
             pred_x0 = model_prediction
@@ -552,7 +553,7 @@ class DiffusionShortcut(Diffusion):
 
         if n_base > 0:
             x_0_base = x_0[n_bootstrap:]
-            c_base = context[n_bootstrap:]
+            context_base = context[n_bootstrap:]
 
             t = torch.randint(
                 0, self.n_diffusion_steps, (n_base,), device=device
@@ -561,7 +562,7 @@ class DiffusionShortcut(Diffusion):
             x_t = self.q_sample(x_0=x_0_base, t=t, noise=noise)
 
             dt = torch.ones_like(t)
-            model_output = self.model(x_t, t, dt, c_base)
+            model_output = self.get_model_prediction(x_t, context_base, t=t, dt=dt)
 
             if self.predict_noise:
                 loss_base = F.mse_loss(model_output, noise)
@@ -572,8 +573,8 @@ class DiffusionShortcut(Diffusion):
             total_loss += loss_base * (n_base / batch_size)
 
         if n_bootstrap > 0:
-            x_0_boot = x_0[:n_bootstrap]
-            c_boot = context[:n_bootstrap]
+            x_0_bootstrap = x_0[:n_bootstrap]
+            context_bootstrap = context[:n_bootstrap]
 
             max_log2 = int(np.log2(self.n_diffusion_steps) + 1e-8)
 
@@ -596,31 +597,22 @@ class DiffusionShortcut(Diffusion):
             compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1 
             t = compressed * dt - 1
             
-            
-            noise = torch.randn_like(x_0_boot)
-            x_t = self.q_sample(x_0=x_0_boot, t=t, noise=noise)
-
-            pred_1step_out = self.model(x_t, t, dt, c_boot)
-            x_next_1step = self.ddim_step(
-                x_t, t, dt, pred_1step_out, predict_noise=self.predict_noise
-            )
-            
+            noise = torch.randn_like(x_0_bootstrap)
+            x_t = self.q_sample(x_0=x_0_bootstrap, t=t, noise=noise)
             dt_half = dt // 2
-            
-            pred_half_1_out = self.model(x_t, t, dt_half, c_boot)
-            x_mid = self.ddim_step(
-                x_t, t, dt_half, pred_half_1_out, predict_noise=self.predict_noise
-            )
-            
-            t_mid = t - dt_half
-            
-            pred_half_2_out = self.model(x_mid, t_mid, dt_half, c_boot)
-            x_next_2step = self.ddim_step(
-                 x_mid, t_mid, dt_half, pred_half_2_out, predict_noise=self.predict_noise
-            )
 
-            target = x_next_2step.detach()
-            loss_boot = F.mse_loss(x_next_1step, target)
+            with torch.no_grad():
+                pred_mid = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt_half)
+                x_mid = self.ddim_step(x_t, t, dt_half, pred_mid)
+                x_mid = torch.clamp(x_mid, -1.0, 1.0)
+                pred_target = self.get_model_prediction(x_mid, context_bootstrap, t=t - dt_half, dt=dt_half)
+                x_target = self.ddim_step(x_mid, t - dt_half, dt_half, pred_target)
+                x_target = torch.clamp(x_target, -1.0, 1.0)
+                
+            pred = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt)
+            x_pred = self.ddim_step(x_t, t, dt, pred)
+                
+            loss_boot = F.mse_loss(x_pred, x_target)
             loss_dict["loss_bootstrap"] = loss_boot
             total_loss += loss_boot * (n_bootstrap / batch_size)
 
@@ -636,7 +628,6 @@ class DiffusionShortcut(Diffusion):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         n_inference_steps: int,
         debug: bool = False,
         **kwargs,
@@ -657,13 +648,8 @@ class DiffusionShortcut(Diffusion):
         while current_t >= 0:
             t_tensor = torch.full((n_samples,), current_t, device=device, dtype=torch.long)
             dt_tensor = torch.full((n_samples,), step_size, device=device, dtype=torch.long)
-            
-            model_out = self.model(trajectories, t_tensor, dt_tensor, context)
-            
-            trajectories = self.ddim_step(
-                trajectories, t_tensor, dt_tensor, model_out, predict_noise=self.predict_noise
-            )
-
+            model_out = self.get_model_prediction(trajectories, context=context, t=t_tensor, dt=dt_tensor)
+            trajectories = self.ddim_step(trajectories, t_tensor, dt_tensor, model_out)
             current_t -= step_size
             if guide is not None and t_start_guide is not None and current_t < t_start_guide:
                 for _ in range(n_guide_steps):
@@ -688,6 +674,7 @@ class FlowMatchingShortcut(GenerativeModel):
         attn_head_dim: int,
         context_dim: int,
         cfg_fraction: float,
+        cfg_scale: float,
         n_diffusion_steps: int,
         bootstrap_fraction: float,
         dt_sampling_strategy: str,
@@ -706,6 +693,7 @@ class FlowMatchingShortcut(GenerativeModel):
             attn_head_dim=attn_head_dim,
             context_dim=context_dim,
             cfg_fraction=cfg_fraction,
+            cfg_scale=cfg_scale,
         )
 
         self.model = TemporalUNetShortcut(
@@ -745,7 +733,7 @@ class FlowMatchingShortcut(GenerativeModel):
         if n_base > 0:
             x_1_base = x_1[n_bootstrap:]
             x_0_base = x_0[n_bootstrap:]
-            c_base = context[n_bootstrap:]
+            context_base = context[n_bootstrap:]
 
             t_base = torch.rand(n_base, device=device)
             t_base_exp = t_base.view(-1, 1, 1)
@@ -758,7 +746,7 @@ class FlowMatchingShortcut(GenerativeModel):
 
             dt_base = torch.full((n_base,), self.min_dt, device=device)
 
-            v_pred_base = self.model(x_t_base, t_base, dt_base, c_base)
+            v_pred_base = self.get_model_prediction(x_t_base, context_base, t=t_base, dt=dt_base)
 
             loss_base = F.mse_loss(v_pred_base, v_target_base)
             loss_dict["loss_base"] = loss_base
@@ -767,7 +755,7 @@ class FlowMatchingShortcut(GenerativeModel):
         if n_bootstrap > 0:
             x_0_bootstrap = x_0[:n_bootstrap]
             x_1_bootstrap = x_1[:n_bootstrap]
-            c_bootstrap = context[:n_bootstrap]
+            context_bootstrap = context[:n_bootstrap]
 
             max_log2 = int(np.log2(self.n_diffusion_steps) + 1e-8)
 
@@ -785,32 +773,31 @@ class FlowMatchingShortcut(GenerativeModel):
                  raise ValueError(f"Unknown dt_sampling_strategy: {self.dt_sampling_strategy}")
 
             dt_int = 2 ** k_exponents
-            dt_bootstrap = dt_int.float() / self.n_diffusion_steps
+            dt = dt_int / self.n_diffusion_steps
             max_compressed = self.n_diffusion_steps // dt_int
             compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1
             t_int = compressed * dt_int - 1
+            t = t_int / self.n_diffusion_steps
+            t_exp = t.view(-1, 1, 1)
             
-            
-            t_bootstrap = t_int.float() / self.n_diffusion_steps
-
-            t_bootstrap_exp = t_bootstrap.view(-1, 1, 1)
-            x_t_bootstrap = (
-                1 - (1 - self.eps) * t_bootstrap_exp
-            ) * x_0_bootstrap + t_bootstrap_exp * x_1_bootstrap
+            x_t = (
+                1 - (1 - self.eps) * t_exp
+            ) * x_0_bootstrap + t_exp * x_1_bootstrap
+            dt_half = dt / 2.0
 
             with torch.no_grad():
-                dt_half = dt_bootstrap / 2.0
-                v_b1 = self.model(x_t_bootstrap, t_bootstrap, dt_half, c_bootstrap)
-                x_mid = x_t_bootstrap + dt_half.view(-1, 1, 1) * v_b1
+                v_b1 = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt_half)
+                x_mid = x_t + dt_half.view(-1, 1, 1) * v_b1
                 x_mid = torch.clamp(x_mid, -1, 1)
-                v_b2 = self.model(x_mid, t_bootstrap + dt_half, dt_half, c_bootstrap)
-                v_target_bootstrap = (v_b1 + v_b2) / 2.0
+                v_b2 = self.get_model_prediction(x_mid, context_bootstrap, t=t + dt_half, dt=dt_half)
+                v_target = (v_b1 + v_b2) / 2.0
+                v_target = torch.clamp(v_target, -2.0, 2.0)
 
-            v_pred_bootstrap = self.model(
-                x_t_bootstrap, t_bootstrap, dt_bootstrap, c_bootstrap
+            v_pred = self.get_model_prediction(
+                x_t, context_bootstrap, t=t, dt=dt
             )
 
-            loss_bootstrap = F.mse_loss(v_pred_bootstrap, v_target_bootstrap)
+            loss_bootstrap = F.mse_loss(v_pred, v_target)
             loss_dict["loss_bootstrap"] = loss_bootstrap
 
             total_loss += loss_bootstrap * (n_bootstrap / batch_size)
@@ -826,7 +813,6 @@ class FlowMatchingShortcut(GenerativeModel):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         n_inference_steps: int,
         debug: bool = False,
         **kwargs,
@@ -844,7 +830,7 @@ class FlowMatchingShortcut(GenerativeModel):
         current_time = 0.0
         for _ in range(n_inference_steps):
             t = torch.full((n_samples,), current_time, device=device)
-            v_pred = self.model(trajectories, t, dt, context)
+            v_pred = self.get_model_prediction(trajectories, context=context, t=t, dt=dt)
             trajectories = trajectories + dt_val * v_pred
 
             current_time += dt_val
@@ -877,6 +863,7 @@ class Drift(GenerativeModel):
         attn_head_dim: int,
         context_dim: int,
         cfg_fraction: float,
+        cfg_scale: float,
         temperature: float,
     ):
         super().__init__(
@@ -893,6 +880,7 @@ class Drift(GenerativeModel):
             attn_head_dim=attn_head_dim,
             context_dim=context_dim,
             cfg_fraction=cfg_fraction,
+            cfg_scale=cfg_scale,
         )
         self.temperature = temperature
         
@@ -953,16 +941,15 @@ class Drift(GenerativeModel):
         guide: Guide,
         n_guide_steps: int,
         t_start_guide: float,
-        cfg_scale: float,
         debug: bool = False,
     ) -> torch.Tensor:
         context = context.repeat(n_samples, 1)
         device = context.device
 
-        z = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
+        noise = torch.randn((n_samples, self.horizon, self.state_dim), device=device)
         t = torch.zeros((n_samples,), device=device).long()
 
-        trajectories = self.model(z, t, context)
+        trajectories = self.model(noise, t, context)
 
         if guide is not None and t_start_guide is not None and t_start_guide >= 0:
             for _ in range(n_guide_steps):

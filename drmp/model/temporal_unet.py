@@ -270,10 +270,10 @@ class TemporalUNet(nn.Module):
         self.final_conv = nn.Conv1d(hidden_dim, input_dim, 1)
 
     def forward(
-        self, x: torch.Tensor, time: torch.Tensor, context: torch.Tensor = None
+        self, x: torch.Tensor, t: torch.Tensor, context: torch.Tensor = None
     ) -> torch.Tensor:
         x = x.permute(0, 2, 1)
-        t = self.time_mlp(time)
+        t = self.time_mlp(t)
 
         if self.context_dim is not None:
             if context is None:
@@ -348,12 +348,12 @@ class TemporalUNetShortcut(TemporalUNet):
     def forward(
         self,
         x: torch.Tensor,
-        time: torch.Tensor,
+        t: torch.Tensor,
         dt: torch.Tensor,
         context: torch.Tensor = None,
     ) -> torch.Tensor:
         x = x.permute(0, 2, 1)
-        t = self.time_mlp(time)
+        t = self.time_mlp(t)
         dt_emb = self.dt_mlp(dt)
 
         t = t + dt_emb
