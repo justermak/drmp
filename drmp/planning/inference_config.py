@@ -46,6 +46,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         guide: Guide,
         t_start_guide: float,
         n_guide_steps: int,
+        cfg_scale: float,
         additional_args: Dict[str, Any],
     ):
         super().__init__(use_extra_objects)
@@ -54,6 +55,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         self.guide = guide
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
+        self.cfg_scale = cfg_scale
         self.additional_args = additional_args
         
     def sample(
@@ -73,6 +75,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
             guide=self.guide,
             n_guide_steps=self.n_guide_steps,
             t_start_guide=self.t_start_guide,
+            cfg_scale=self.cfg_scale,
             debug=debug,
             **self.additional_args,
         )
@@ -310,6 +313,7 @@ class GenerativeModelConfig(ModelConfigBase):
         lambda_acceleration: float,
         max_grad_norm: float,
         n_interpolate: int,
+        cfg_scale : float,
         additional_args: Dict[str, Any],
     ):
         super().__init__(use_extra_objects=use_extra_objects)
@@ -323,6 +327,7 @@ class GenerativeModelConfig(ModelConfigBase):
         self.lambda_acceleration = lambda_acceleration
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
+        self.cfg_scale = cfg_scale
         self.additional_args = additional_args
 
     def prepare(
@@ -396,6 +401,7 @@ class GenerativeModelConfig(ModelConfigBase):
             guide=guide,
             t_start_guide=self.t_start_guide,
             n_guide_steps=self.n_guide_steps,
+            cfg_scale=self.cfg_scale,
             additional_args=self.additional_args,
         )
 

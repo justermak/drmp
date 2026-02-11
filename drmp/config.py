@@ -33,7 +33,6 @@ DEFAULT_TRAIN_ARGS = {
     # Shortcut
     "bootstrap_fraction": 0.125,
     "dt_sampling_strategy": "weighted",  # "uniform", "weighted"
-    "t_sampling_strategy": "sparse",  # "sparse", "dense"
     # Drift
     "temperature": 1.0,
     # Inference
@@ -98,7 +97,7 @@ DEFAULT_INFERENCE_ARGS = {
     "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "DiffusionShortcut__EnvDense2D_2000_50__bs_128__lr_0.0001__steps_500000__diffusion-steps_32__20260210_012516",
+    "checkpoint_name": "weighted_sparse",
     "cfg_scale": 1.0,
     "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
     # DDIM

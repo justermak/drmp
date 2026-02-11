@@ -20,7 +20,6 @@ from drmp.planning.metrics import (
     compute_waypoints_variance,
 )
 from drmp.torch_timer import TimerCUDA
-from drmp.utils import save_config_to_yaml
 from drmp.visualizer import Visualizer
 
 
@@ -331,7 +330,7 @@ def visualize_results(
     results: Dict[str, Any],
     dataset: TrajectoryDataset,
     use_extra_objects: bool,
-    generation_dir: str,
+    results_dir: str,
     generate_animation: bool = True,
     name_prefix: str = "task0",
 ):
@@ -349,7 +348,7 @@ def visualize_results(
         best_traj_idx=best_traj_idx,
         start_pos=start_pos,
         goal_pos=goal_pos,
-        save_path=os.path.join(generation_dir, f"{name_prefix}-trajectories.png"),
+        save_path=os.path.join(results_dir, f"{name_prefix}-trajectories.png"),
     )
 
     if not generate_animation:
@@ -360,7 +359,7 @@ def visualize_results(
         best_traj_idx=best_traj_idx,
         start_pos=start_pos,
         goal_pos=goal_pos,
-        save_path=os.path.join(generation_dir, f"{name_prefix}-robot-motion.mp4"),
+        save_path=os.path.join(results_dir, f"{name_prefix}-robot-motion.mp4"),
         n_frames=min(60, trajectories_final.shape[1]),
     )
 
@@ -370,7 +369,7 @@ def visualize_results(
             best_traj_idx=best_traj_idx,
             start_pos=start_pos,
             goal_pos=goal_pos,
-            save_path=os.path.join(generation_dir, f"{name_prefix}-opt-iters.mp4"),
+            save_path=os.path.join(results_dir, f"{name_prefix}-opt-iters.mp4"),
             n_frames=min(60, len(trajectories_iters)),
         )
 
@@ -409,21 +408,12 @@ def run_inference(
     train_subset: Optional[Subset],
     val_subset: Optional[Subset],
     test_subset: Optional[Subset],
-    generations_dir: str,
-    experiment_name: str,
+    results_dir: str,
     n_tasks: int,
     n_trajectories_per_task: int,
     debug: bool,
     tensor_args: Dict[str, Any],
 ) -> Dict[str, Any]:
-    generation_dir = os.path.join(generations_dir, experiment_name)
-    os.makedirs(generation_dir, exist_ok=True)
-
-    config_dict = model_config.to_dict()
-    config_dict["n_tasks"] = n_tasks
-    config_dict["n_trajectories_per_task"] = n_trajectories_per_task
-    save_config_to_yaml(config_dict, os.path.join(generation_dir, "config.yaml"))
-
     model_wrapper = model_config.prepare(
         dataset=dataset, tensor_args=tensor_args, n_trajectories_per_task=n_trajectories_per_task
     )
@@ -471,7 +461,7 @@ def run_inference(
 
     if debug:
         print("Saving data...")
-        with open(os.path.join(generation_dir, "results_data_dict.pickle"), "wb") as f:
+        with open(os.path.join(results_dir, "results_data_dict.pickle"), "wb") as f:
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         vis_results = None
@@ -489,7 +479,7 @@ def run_inference(
                 results=vis_results,
                 dataset=dataset,
                 use_extra_objects=model_config.use_extra_objects,
-                generation_dir=generation_dir,
+                results_dir=results_dir,
                 generate_animation=False,
             )
 

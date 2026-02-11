@@ -14,7 +14,7 @@ from drmp.planning.inference_config import (
     MPDConfig,
     MPDSplinesConfig,
 )
-from drmp.utils import fix_random_seed, load_config_from_yaml
+from drmp.utils import fix_random_seed, load_config_from_yaml, save_config_to_yaml
 
 MODELS = get_models()
 
@@ -103,6 +103,7 @@ def run(args):
             attn_heads=saved_model_config["attn_heads"],
             attn_head_dim=saved_model_config["attn_head_dim"],
             context_dim=saved_model_config["context_dim"],
+            cfg_fraction=saved_model_config["cfg_fraction"],
             **additional_args,
         ).to(device)
 
@@ -133,7 +134,8 @@ def run(args):
             lambda_acceleration=args.lambda_acceleration,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
-            additional_options=additional_args,
+            cfg_scale=args.cfg_scale,
+            additional_args=additional_args,
         )
 
     elif args.algorithm == "mpd-splines":
@@ -220,6 +222,13 @@ def run(args):
         raise ValueError(
             f"Unknown algorithm: {args.algorithm}. Valid options: generative-model, mpd, mpd-splines, classical"
         )
+        
+    results_dir = os.path.join(args.generations_dir, experiment_name)
+    os.makedirs(results_dir, exist_ok=True)
+
+    config_dict = model_config.to_dict()
+    config_dict.update(vars(args))
+    save_config_to_yaml(config_dict, os.path.join(results_dir, "config.yaml"))
 
     run_inference(
         model_config=model_config,
@@ -227,8 +236,7 @@ def run(args):
         train_subset=train_subset if "train" in splits else None,
         val_subset=val_subset if "val" in splits else None,
         test_subset=test_subset,
-        generations_dir=args.generations_dir,
-        experiment_name=experiment_name,
+        results_dir=results_dir,
         n_tasks=args.n_tasks,
         n_trajectories_per_task=args.n_trajectories_per_task,
         debug=args.debug,

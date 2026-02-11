@@ -92,62 +92,7 @@ def run(args):
         checkpoint_dir, "dataset_usage_config.yaml"
     )
     save_config_to_yaml(dataset_usage_config, dataset_usage_config_path)
-
-    config = {
-        # Model
-        "model_name": args.model_name,
-        "n_diffusion_steps": args.n_diffusion_steps,
-        "predict_noise": args.predict_noise,
-        # FlowMatching
-        "bootstrap_fraction": args.bootstrap_fraction,
-        "dt_sampling_strategy": args.dt_sampling_strategy,
-        "t_sampling_strategy": args.t_sampling_strategy,
-        # Drift
-        "temperature": args.temperature,
-        # Inference
-        "inference_args": args.inference_args,
-        # Unet
-        "state_dim": args.state_dim,
-        "horizon": args.horizon,
-        "hidden_dim": args.hidden_dim,
-        "dim_mults": args.dim_mults,
-        "kernel_size": args.kernel_size,
-        "resnet_block_groups": args.resnet_block_groups,
-        "positional_encoding": args.positional_encoding,
-        "positional_encoding_dim": args.positional_encoding_dim,
-        "attn_heads": args.attn_heads,
-        "attn_head_dim": args.attn_head_dim,
-        "context_dim": args.context_dim,
-        # Training
-        "num_train_steps": args.num_train_steps,
-        "lr": args.lr,
-        "weight_decay": args.weight_decay,
-        "batch_size": args.batch_size,
-        "clip_grad_max_norm": args.clip_grad_max_norm,
-        "use_amp": args.use_amp,
-        "use_ema": args.use_ema,
-        "ema_decay": args.ema_decay,
-        "ema_warmup": args.ema_warmup,
-        "ema_update_interval": args.ema_update_interval,
-        # Summary
-        "log_interval": args.log_interval,
-        "checkpoint_interval": args.checkpoint_interval,
-        # Guide
-        "t_start_guide": args.t_start_guide,
-        "n_guide_steps": args.n_guide_steps,
-        "lambda_obstacles": args.lambda_obstacles,
-        "lambda_position": args.lambda_position,
-        "lambda_velocity": args.lambda_velocity,
-        "lambda_acceleration": args.lambda_acceleration,
-        "max_grad_norm": args.max_grad_norm,
-        "n_interpolate": args.n_interpolate,
-        # Other
-        "device": args.device,
-        "debug": args.debug,
-        "seed": args.seed,
-    }
-
-    save_config_to_yaml(config, os.path.join(checkpoint_dir, "config.yaml"))
+    save_config_to_yaml(vars(args), os.path.join(checkpoint_dir, "config.yaml"))
 
     train(
         checkpoint_name=checkpoint_name,

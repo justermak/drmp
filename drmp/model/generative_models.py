@@ -29,7 +29,6 @@ def get_additional_init_args(model_name, args):
         additional_args["n_diffusion_steps"] = args["n_diffusion_steps"]
         additional_args["bootstrap_fraction"] = args["bootstrap_fraction"]
         additional_args["dt_sampling_strategy"] = args["dt_sampling_strategy"]
-        additional_args["t_sampling_strategy"] = args["t_sampling_strategy"]
     if model_name == "Drift":
         additional_args["temperature"] = args["temperature"]
     return additional_args
@@ -69,7 +68,7 @@ class GenerativeModel(nn.Module, ABC):
         attn_heads: int,
         attn_head_dim: int,
         context_dim: int,
-        cfg_fraction: float = None,
+        cfg_fraction: float,
     ):
         super().__init__()
         self.dataset = dataset
@@ -474,7 +473,6 @@ class DiffusionShortcut(Diffusion):
         predict_noise: bool,
         bootstrap_fraction: float,
         dt_sampling_strategy: str,
-        t_sampling_strategy: str,
     ):
         super().__init__(
             dataset=dataset,
@@ -495,7 +493,6 @@ class DiffusionShortcut(Diffusion):
         )
         self.bootstrap_fraction = bootstrap_fraction
         self.dt_sampling_strategy = dt_sampling_strategy
-        self.t_sampling_strategy = t_sampling_strategy
         
         self.model = TemporalUNetShortcut(
             input_dim=state_dim,
@@ -595,15 +592,10 @@ class DiffusionShortcut(Diffusion):
 
             dt = 2 ** k_exponents
             
-            if self.t_sampling_strategy == "sparse":
-                max_compressed = self.n_diffusion_steps // dt
-                compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1 
-                t = compressed * dt - 1
-            elif self.t_sampling_strategy == "dense":
-                ranges = self.n_diffusion_steps - dt + 1
-                t = (torch.rand((n_bootstrap,), device=device) * ranges).long() + dt - 1
-            else:
-                raise ValueError(f"Unknown t_sampling_strategy: {self.t_sampling_strategy}")
+            max_compressed = self.n_diffusion_steps // dt
+            compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1 
+            t = compressed * dt - 1
+            
             
             noise = torch.randn_like(x_0_boot)
             x_t = self.q_sample(x_0=x_0_boot, t=t, noise=noise)
@@ -699,7 +691,6 @@ class FlowMatchingShortcut(GenerativeModel):
         n_diffusion_steps: int,
         bootstrap_fraction: float,
         dt_sampling_strategy: str,
-        t_sampling_strategy: str,
     ):
         super().__init__(
             dataset=dataset,
@@ -732,7 +723,6 @@ class FlowMatchingShortcut(GenerativeModel):
         self.n_diffusion_steps = n_diffusion_steps
         self.bootstrap_fraction = bootstrap_fraction
         self.dt_sampling_strategy = dt_sampling_strategy
-        self.t_sampling_strategy = t_sampling_strategy
         self.min_dt = 1.0 / self.n_diffusion_steps
         self.eps = 1e-5
 
@@ -796,16 +786,10 @@ class FlowMatchingShortcut(GenerativeModel):
 
             dt_int = 2 ** k_exponents
             dt_bootstrap = dt_int.float() / self.n_diffusion_steps
+            max_compressed = self.n_diffusion_steps // dt_int
+            compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1
+            t_int = compressed * dt_int - 1
             
-            if self.t_sampling_strategy == "sparse":
-                max_compressed = self.n_diffusion_steps // dt_int
-                compressed = (torch.rand((n_bootstrap,), device=device) * max_compressed).long() + 1
-                t_int = compressed * dt_int - 1
-            elif self.t_sampling_strategy == "dense":
-                ranges = self.n_diffusion_steps - dt_int
-                t_int = (torch.rand((n_bootstrap,), device=device) * ranges + dt_int).long()
-            else:
-                raise ValueError(f"Unknown t_sampling_strategy: {self.t_sampling_strategy}")
             
             t_bootstrap = t_int.float() / self.n_diffusion_steps
 
@@ -816,12 +800,10 @@ class FlowMatchingShortcut(GenerativeModel):
 
             with torch.no_grad():
                 dt_half = dt_bootstrap / 2.0
-
                 v_b1 = self.model(x_t_bootstrap, t_bootstrap, dt_half, c_bootstrap)
                 x_mid = x_t_bootstrap + dt_half.view(-1, 1, 1) * v_b1
-
+                x_mid = torch.clamp(x_mid, -1, 1)
                 v_b2 = self.model(x_mid, t_bootstrap + dt_half, dt_half, c_bootstrap)
-
                 v_target_bootstrap = (v_b1 + v_b2) / 2.0
 
             v_pred_bootstrap = self.model(
