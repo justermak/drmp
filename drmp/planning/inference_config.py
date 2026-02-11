@@ -4,7 +4,7 @@ from typing import Any, Dict
 import torch
 
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import GenerativeModel
+from drmp.model.generative_models import GenerativeModel, get_additional_inference_args
 from drmp.planning.costs import (
     CostCollision,
     CostComposite,
@@ -46,8 +46,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         guide: Guide,
         t_start_guide: float,
         n_guide_steps: int,
-        n_inference_steps: int,
-        eta: float,
+        additional_args: Dict[str, Any],
     ):
         super().__init__(use_extra_objects)
         self.model = model
@@ -55,8 +54,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         self.guide = guide
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
-        self.n_inference_steps = n_inference_steps
-        self.eta = eta
+        self.additional_args = additional_args
         
     def sample(
         self,
@@ -68,12 +66,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         context = self.model.build_context(data)
         start_pos = data["start_pos"]
         goal_pos = data["goal_pos"]
-        additional_options = {}
-        if self.model_name == "Diffusion":
-            additional_options["n_inference_steps"] = self.n_inference_steps
-            additional_options["eta"] = self.eta
-        if self.model_name in ("DiffusionShortcut", "FlowMatchingShortcut"):
-            additional_options["n_inference_steps"] = self.n_inference_steps
+        
         trajectories_iters_normalized = self.model.run_inference(
             n_samples=n_trajectories_per_task,
             context=context,
@@ -81,7 +74,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
             n_guide_steps=self.n_guide_steps,
             t_start_guide=self.t_start_guide,
             debug=debug,
-            **additional_options,
+            **self.additional_args,
         )
 
         trajectories_iters = dataset.normalizer.unnormalize(
@@ -317,8 +310,7 @@ class GenerativeModelConfig(ModelConfigBase):
         lambda_acceleration: float,
         max_grad_norm: float,
         n_interpolate: int,
-        n_inference_steps: int,
-        eta: float,
+        additional_args: Dict[str, Any],
     ):
         super().__init__(use_extra_objects=use_extra_objects)
         self.model = model
@@ -331,8 +323,7 @@ class GenerativeModelConfig(ModelConfigBase):
         self.lambda_acceleration = lambda_acceleration
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
-        self.n_inference_steps = n_inference_steps
-        self.eta = eta
+        self.additional_args = additional_args
 
     def prepare(
         self,
@@ -405,8 +396,7 @@ class GenerativeModelConfig(ModelConfigBase):
             guide=guide,
             t_start_guide=self.t_start_guide,
             n_guide_steps=self.n_guide_steps,
-            n_inference_steps=self.n_inference_steps,
-            eta=self.eta,
+            additional_args=self.additional_args,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -420,7 +410,7 @@ class GenerativeModelConfig(ModelConfigBase):
             "n_interpolate": self.n_interpolate,
             "t_start_guide": self.t_start_guide,
             "n_guide_steps": self.n_guide_steps,
-            "n_inference_steps": self.n_inference_steps,
+            "additional_args": self.additional_args,
         }
 
 

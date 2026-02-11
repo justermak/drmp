@@ -6,7 +6,7 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import get_models, get_additional_inference_args
+from drmp.model.generative_models import get_additional_init_args, get_models, get_additional_inference_args
 from drmp.planning.inference import create_test_subset, run_inference
 from drmp.planning.inference_config import (
     ClassicalConfig,
@@ -86,7 +86,8 @@ def run(args):
                 args.checkpoints_dir, args.checkpoint_name, "config.yaml"
             )
         )
-        additional_args = get_additional_inference_args(saved_model_config["model_name"], saved_model_config)
+        
+        additional_args = get_additional_init_args(saved_model_config["model_name"], saved_model_config)
         model = MODELS[saved_model_config["model_name"]](
             dataset=dataset,
             state_dim=saved_model_config["state_dim"],
@@ -118,7 +119,8 @@ def run(args):
         )
         model.eval()
         model = torch.compile(model)
-
+        
+        additional_args = get_additional_inference_args(saved_model_config["model_name"], vars(args))
         model_config = GenerativeModelConfig(
             model=model,
             model_name=saved_model_config["model_name"],
@@ -131,8 +133,7 @@ def run(args):
             lambda_acceleration=args.lambda_acceleration,
             max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
-            n_inference_steps=args.n_inference_steps,
-            eta=args.eta,
+            additional_options=additional_args,
         )
 
     elif args.algorithm == "mpd-splines":

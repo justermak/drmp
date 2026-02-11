@@ -113,6 +113,7 @@ class TrajectoryDataset(Dataset):
         self.normalizer_name = normalizer_name
         self.filtering_config = filtering_config
 
+        print("Loading trajectories from disk...")
         files = [
             f
             for f in os.listdir(dataset_dir)

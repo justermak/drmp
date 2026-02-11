@@ -48,7 +48,7 @@ def train_step(
     with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
         train_losses = model.compute_loss(train_batch_dict)
 
-    train_loss = sum(train_losses.values())
+    train_loss = train_losses["loss"]
     train_losses_log = {k: v.mean().item() for k, v in train_losses.items()}
 
     optimizer.zero_grad()
@@ -79,7 +79,7 @@ def val_step(
         if step_val == 0:
             val_losses_log = {k: [] for k in val_losses.keys()}
 
-        val_loss = sum(val_losses.values())
+        val_loss = val_losses["loss"]
         val_loss_list.append(val_loss.item())
         for k, v in val_losses.items():
             val_losses_log[k].append(v.item())

@@ -6,7 +6,7 @@ import torch
 
 from drmp.config import DEFAULT_TRAIN_ARGS
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import get_models, get_additional_inference_args
+from drmp.model.generative_models import get_additional_init_args, get_models
 from drmp.train import train
 from drmp.utils import fix_random_seed, load_config_from_yaml, save_config_to_yaml
 
@@ -65,8 +65,8 @@ def run(args):
         if args.model_name == "DiffusionDense"
         else args.n_control_points
     )
-    additional_args = get_additional_inference_args(args.model_name, vars(args))
     
+    additional_args = get_additional_init_args(args.model_name, vars(args))
     model = MODELS[args.model_name](
         dataset=dataset,
         state_dim=args.state_dim,
@@ -80,6 +80,7 @@ def run(args):
         attn_heads=args.attn_heads,
         attn_head_dim=args.attn_head_dim,
         context_dim=args.context_dim,
+        cfg_fraction=args.cfg_fraction,
         **additional_args,
     ).to(device)
 
@@ -96,7 +97,7 @@ def run(args):
         # Model
         "model_name": args.model_name,
         "n_diffusion_steps": args.n_diffusion_steps,
-        "predict_epsilon": args.predict_epsilon,
+        "predict_noise": args.predict_noise,
         # FlowMatching
         "bootstrap_fraction": args.bootstrap_fraction,
         # Drift
