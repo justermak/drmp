@@ -92,8 +92,7 @@ def run(args):
             )        
         )
         
-        model_name = model_init_config["model_name"]
-        del model_init_config["model_name"]
+        model_name = model_info_config["model_name"]
         model = MODELS[model_name](
             dataset=dataset,
             **model_init_config

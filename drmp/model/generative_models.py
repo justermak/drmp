@@ -303,7 +303,7 @@ class Diffusion(GenerativeModel):
             else:
                 x_recon = model_prediction
                 
-            x_recon = torch.clamp(x_recon, -1.0, 1.0)
+            x_recon = torch.clamp(x_recon, -4.0, 4.0)
             
             x_t = (
                 self.extract(self.posterior_mean_coef1, t, x_t.shape)
@@ -381,7 +381,7 @@ class Diffusion(GenerativeModel):
             else:
                 pred_x0 = model_prediction
 
-            pred_x0 = torch.clamp(pred_x0, -1.0, 1.0)
+            pred_x0 = torch.clamp(pred_x0, -4.0, 4.0)
 
             noise = (
                 x_t - sqrt_alpha_bar * pred_x0
@@ -527,7 +527,7 @@ class DiffusionShortcut(Diffusion):
         else:
             pred_x0 = model_prediction
 
-        pred_x0 = torch.clamp(pred_x0, -1.0, 1.0)
+        pred_x0 = torch.clamp(pred_x0, -4.0, 4.0)
             
         noise = (x - sqrt_alpha_bar_t * pred_x0) / sqrt_one_minus_alpha_bar_t
             
@@ -604,10 +604,10 @@ class DiffusionShortcut(Diffusion):
             with torch.no_grad():
                 pred_mid = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt_half)
                 x_mid = self.ddim_step(x_t, t, dt_half, pred_mid)
-                x_mid = torch.clamp(x_mid, -1.0, 1.0)
+                x_mid = torch.clamp(x_mid, -4.0, 4.0)
                 pred_target = self.get_model_prediction(x_mid, context_bootstrap, t=t - dt_half, dt=dt_half)
                 x_target = self.ddim_step(x_mid, t - dt_half, dt_half, pred_target)
-                x_target = torch.clamp(x_target, -1.0, 1.0)
+                x_target = torch.clamp(x_target, -4.0, 4.0)
                 
             pred = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt)
             x_pred = self.ddim_step(x_t, t, dt, pred)
@@ -788,10 +788,10 @@ class FlowMatchingShortcut(GenerativeModel):
             with torch.no_grad():
                 v_b1 = self.get_model_prediction(x_t, context_bootstrap, t=t, dt=dt_half)
                 x_mid = x_t + dt_half.view(-1, 1, 1) * v_b1
-                x_mid = torch.clamp(x_mid, -1, 1)
+                x_mid = torch.clamp(x_mid, -4.0, 4.0)
                 v_b2 = self.get_model_prediction(x_mid, context_bootstrap, t=t + dt_half, dt=dt_half)
                 v_target = (v_b1 + v_b2) / 2.0
-                v_target = torch.clamp(v_target, -2.0, 2.0)
+                v_target = torch.clamp(v_target, -4.0, 4.0)
 
             v_pred = self.get_model_prediction(
                 x_t, context_bootstrap, t=t, dt=dt
