@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
 import torch
@@ -7,8 +7,6 @@ import torch
 from drmp.torch_timer import TimerCUDA
 from drmp.universe.grid_map_sdf import GridMapSDF
 from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectField
-from drmp.universe.robot import RobotBase
-from drmp.utils import interpolate_trajectories
 
 
 def get_envs():
@@ -80,9 +78,6 @@ class EnvBase(ABC):
                     self.obj_field_extra,
                     tensor_args=self.tensor_args,
                 )
-                print(
-                    f"Precomputing the SDF grid and gradients took: {t.elapsed:.3f} sec"
-                )
 
         self.q_distribution = torch.distributions.uniform.Uniform(
             self.limits[0], self.limits[1]
@@ -90,136 +85,6 @@ class EnvBase(ABC):
 
     def random_q(self, shape) -> torch.Tensor:
         return self.q_distribution.sample(shape)
-
-    def get_collision_mask(
-        self,
-        robot: RobotBase,
-        qs: torch.Tensor,
-        on_fixed: bool = True,
-        on_extra: bool = False,
-    ) -> torch.Tensor:
-        qs = robot.get_position(qs)
-        collision_mask_fixed = torch.zeros(
-            qs.shape[:-1], dtype=torch.bool, device=self.tensor_args["device"]
-        )
-        collision_mask_extra = torch.zeros(
-            qs.shape[:-1], dtype=torch.bool, device=self.tensor_args["device"]
-        )
-        if on_fixed:
-            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(qs)
-            collision_mask_fixed = (sdf_fixed < robot.margin).any(dim=-1)
-        if on_extra:
-            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(qs)
-            collision_mask_extra = (sdf_extra < robot.margin).any(dim=-1)
-
-        collision_mask = collision_mask_fixed | collision_mask_extra
-        return collision_mask
-
-    def compute_cost(
-        self,
-        trajectories: torch.Tensor,
-        robot: RobotBase,
-        on_fixed: bool = True,
-        on_extra: bool = False,
-    ) -> torch.Tensor:
-        trajectories_pos = robot.get_position(trajectories)
-        total_cost = torch.zeros(trajectories_pos.shape[:-1], **self.tensor_args)
-        if on_fixed:
-            sdf_fixed = self.grid_map_sdf_fixed.compute_approx_signed_distance(
-                trajectories_pos
-            )
-            cost_fixed = torch.relu(robot.margin - sdf_fixed).sum(dim=-1)
-            total_cost += cost_fixed
-        if on_extra:
-            sdf_extra = self.grid_map_sdf_extra.compute_approx_signed_distance(
-                trajectories_pos
-            )
-            cost_extra = torch.relu(robot.margin - sdf_extra).sum(dim=-1)
-            total_cost += cost_extra
-
-        return total_cost
-
-    def random_collision_free_q(
-        self,
-        robot: RobotBase,
-        n_samples: int,
-        use_extra_objects: bool = False,
-        batch_size=100000,
-        max_tries=1000,
-    ) -> torch.Tensor:
-        samples = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
-        cur = 0
-        for i in range(max_tries):
-            qs = self.random_q((batch_size,))
-            collision_mask = self.get_collision_mask(
-                robot=robot, qs=qs, on_extra=use_extra_objects
-            ).squeeze()
-            n = torch.sum(~collision_mask).item()
-            n = min(n, n_samples - cur)
-            samples[cur : cur + n] = qs[~collision_mask][:n]
-            cur += n
-            if cur >= n_samples:
-                break
-
-        return samples.squeeze(), cur >= n_samples
-
-    def random_collision_free_start_goal(
-        self,
-        robot: RobotBase,
-        n_samples: int,
-        threshold_start_goal_pos: float,
-        use_extra_objects: bool = False,
-        batch_size: int = 100000,
-        max_tries: int = 1000,
-    ) -> Tuple[torch.Tensor, torch.Tensor, bool]:
-        samples_start = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
-        samples_goal = torch.zeros((n_samples, robot.n_dim), **self.tensor_args)
-        cur = 0
-        for _ in range(max_tries):
-            qs, success = self.random_collision_free_q(
-                robot=robot,
-                n_samples=n_samples * 2,
-                use_extra_objects=use_extra_objects,
-                batch_size=batch_size,
-                max_tries=max_tries,
-            )
-            if not success:
-                return None, None, False
-            start_state_pos, goal_state_pos = qs[:n_samples], qs[n_samples:]
-            threshold_mask = (
-                torch.linalg.norm(start_state_pos - goal_state_pos, dim=-1)
-                > threshold_start_goal_pos
-            )
-            n = torch.sum(threshold_mask).item()
-            n = min(n, n_samples - cur)
-            samples_start[cur : cur + n] = start_state_pos[threshold_mask][:n]
-            samples_goal[cur : cur + n] = goal_state_pos[threshold_mask][:n]
-            cur += n
-            if cur >= n_samples:
-                break
-
-        return samples_start, samples_goal, cur >= n_samples
-
-    def get_trajectories_collision_and_free(
-        self,
-        trajectories: torch.Tensor,
-        robot: RobotBase,
-        n_interpolate: int = 5,
-        on_fixed: bool = True,
-        on_extra: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        trajectories_interpolated = interpolate_trajectories(
-            trajectories=trajectories, n_interpolate=n_interpolate
-        )
-        points_collision_mask = self.get_collision_mask(
-            robot, trajectories_interpolated, on_fixed=on_fixed, on_extra=on_extra
-        )
-        trajectories_collision_mask = points_collision_mask.any(dim=-1)
-        trajectories_collision = trajectories[trajectories_collision_mask]
-        trajectories_free = trajectories[~trajectories_collision_mask]
-
-        return trajectories_collision, trajectories_free, points_collision_mask
-
 
 class EnvEmpty2D(EnvBase):
     def __init__(

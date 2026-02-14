@@ -181,9 +181,9 @@ class Visualizer:
             fig, ax = plt.subplots()
         B, N, S = trajectories.shape
         if points_collision_mask is None:
-            _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
+            _, _, points_collision_mask = self.robot.get_trajectories_collision_and_free(
+                env=self.env,
                 trajectories=trajectories,
-                robot=self.robot,
                 on_extra=self.use_extra_objects,
             )
         trajectories_collision_mask = points_collision_mask.any(dim=-1)
@@ -226,8 +226,8 @@ class Visualizer:
     ):
         B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, N - 1, n_frames)).astype(int)
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
-            trajectories=trajectories, robot=self.robot, on_extra=self.use_extra_objects
+        _, _, points_collision_mask = self.robot.get_trajectories_collision_and_free(
+            env=self.env, trajectories=trajectories, on_extra=self.use_extra_objects
         )
 
         fig, ax = plt.subplots()
@@ -270,8 +270,8 @@ class Visualizer:
         I, B, N, S = trajectories.shape
         frame_indices = np.round(np.linspace(0, I - 1, n_frames)).astype(int)
 
-        _, _, points_collision_mask = self.env.get_trajectories_collision_and_free(
-            robot=self.robot,
+        _, _, points_collision_mask = self.robot.get_trajectories_collision_and_free(
+            env=self.env,
             trajectories=trajectories.reshape(-1, N, S),
             on_extra=self.use_extra_objects,
         )

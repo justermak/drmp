@@ -53,17 +53,17 @@ class FieldFactor:
         trajectories_interpolated = interpolate_trajectories(
             trajectories, n_interpolate=n_interpolate
         )
-        error_interpolated = env.compute_cost(
+        error_interpolated = robot.compute_cost(
+            env=env,
             trajectories=trajectories_interpolated[:, 1:, :],
-            robot=robot,
             on_extra=self.use_extra_objects,
         )
         error = (
             error_interpolated
             if return_full_error
-            else env.compute_cost(
+            else robot.compute_cost(
+                env=env,
                 trajectories=trajectories[:, 1:, :],
-                robot=robot,
                 on_extra=self.use_extra_objects,
             )
         )

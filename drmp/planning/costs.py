@@ -48,9 +48,9 @@ class CostObstacles(Cost):
             trajectories, n_interpolate=n_interpolate
         )
         cost = (
-            self.env.compute_cost(
+            self.robot.compute_cost(
+                env=self.env,
                 trajectories=trajectories_interpolated,
-                robot=self.robot,
                 on_extra=self.use_extra_objects,
             ).sum(-1)
             * self.lambda_obstacles
@@ -310,6 +310,8 @@ class CostGPTrajectory(FactorCost):
         )
 
     def __call__(self, trajectories: torch.Tensor):
+        if trajectories.shape[-1] == self.robot.n_dim:
+            trajectories = torch.cat([trajectories, torch.zeros_like(trajectories)], dim=-1)
         err_gp = self.gp_prior.get_error(trajectories, calc_jacobian=False)
         w_mat = self.gp_prior.Q_inv[0]
         w_mat = w_mat.reshape(1, 1, self.dim, self.dim)

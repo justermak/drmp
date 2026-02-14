@@ -89,8 +89,8 @@ def filter_collision(
 
         task_trajectories = trajectories[task_start:task_end]
 
-        _, _, points_collision_mask = env.get_trajectories_collision_and_free(
-            robot=robot, trajectories=task_trajectories
+        _, _, points_collision_mask = robot.get_trajectories_collision_and_free(
+            env=env, trajectories=task_trajectories
         )
 
         trajectories_collision_mask = points_collision_mask.any(dim=-1)

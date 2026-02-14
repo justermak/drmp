@@ -4,7 +4,7 @@ from typing import Any, Dict
 import torch
 
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import GenerativeModel, get_additional_inference_args
+from drmp.model.generative_models import GenerativeModel
 from drmp.planning.costs import (
     CostCollision,
     CostComposite,
@@ -141,7 +141,7 @@ class MPDModelWrapper(ModelWrapperBase):
 
         trajectories_iters_normalized = self.model.run_inference(
             context=None,
-            hard_conditions=hard_conditions,
+            hard_conds=hard_conditions,
             n_samples=n_trajectories_per_task,
             start_guide_steps_fraction=self.start_guide_steps_fraction,
             guide=self.guide,
@@ -212,7 +212,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
         control_points_iters = self.model.run_inference(
             guide=self.guide,
             context_d=context,
-            hard_conditions=hard_conditions,
+            hard_conds=hard_conditions,
             n_samples=n_trajectories_per_task,
             horizon=horizon,
             return_chain=True,
@@ -258,8 +258,8 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         goal_pos = data["goal_pos"]
 
         qs = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
-        collision_mask = dataset.env.get_collision_mask(
-            robot=self.planner.robot, qs=qs, on_extra=self.use_extra_objects
+        collision_mask = dataset.robot.get_collision_mask(
+            env=dataset.env, qs=qs, on_extra=self.use_extra_objects
         )
         if collision_mask.any():
             return None, None
@@ -476,7 +476,7 @@ class MPDConfig(ModelConfigBase):
 
             guide = Guide(
                 dataset=dataset,
-                cost=cost,
+                costs=[cost],
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
             )

@@ -61,8 +61,8 @@ def _log_trajectories_metrics(
         trajectories[..., -1, :] = goal_pos.unsqueeze(0)
 
     trajectories_collision, trajectories_free, trajectories_collision_mask = (
-        dataset.env.get_trajectories_collision_and_free(
-            trajectories=trajectories, robot=dataset.robot, on_extra=use_extra_objects
+        dataset.robot.get_trajectories_collision_and_free(
+            env=dataset.env, trajectories=trajectories, on_extra=use_extra_objects
         )
     )
 

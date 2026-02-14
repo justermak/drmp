@@ -107,13 +107,15 @@ class TrajectoryDataset(Dataset):
         normalizer_name: str = "TrivialNormalizer",
         filtering_config: Dict[str, Any] = {},
         batch_size: int = 1,
+        debug: bool = False,
     ) -> Tuple[Subset, DataLoader, Subset, DataLoader]:
         self.apply_augmentations = apply_augmentations
         self.n_control_points = n_control_points
         self.normalizer_name = normalizer_name
         self.filtering_config = filtering_config
 
-        print("Loading trajectories from disk...")
+        if debug:
+            print("Loading trajectories from disk...")
         files = [
             f
             for f in os.listdir(dataset_dir)
@@ -326,8 +328,8 @@ class TrajectoryDataset(Dataset):
 
             fix_random_seed(seed + task_id)
 
-            start_pos, goal_pos, success = env.random_collision_free_start_goal(
-                robot=generating_robot,
+            start_pos, goal_pos, success = generating_robot.random_collision_free_start_goal(
+                env=env,
                 n_samples=1,
                 threshold_start_goal_pos=threshold_start_goal_pos,
             )
@@ -346,8 +348,8 @@ class TrajectoryDataset(Dataset):
                 debug=debug,
             )
 
-            _, trajectories_free, _ = env.get_trajectories_collision_and_free(
-                robot=robot, trajectories=trajectories
+            _, trajectories_free, _ = robot.get_trajectories_collision_and_free(
+                env=env, trajectories=trajectories
             )
             n_free = len(trajectories_free)
             n_collision = len(trajectories) - n_free
@@ -400,7 +402,7 @@ class TrajectoryDataset(Dataset):
         gpmp2_delta: float,
         gpmp2_method: str,
         val_portion: float,
-        max_processes: int,
+        n_processes: int,
         seed: int,
         debug: bool,
     ) -> None:
@@ -434,7 +436,7 @@ class TrajectoryDataset(Dataset):
             "gpmp2_delta": gpmp2_delta,
             "gpmp2_method": gpmp2_method,
             "val_portion": val_portion,
-            "max_processes": max_processes,
+            "n_processes": n_processes,
             "seed": seed,
         }
 
@@ -514,7 +516,7 @@ class TrajectoryDataset(Dataset):
         print(
             f"Starting trajectory generation for {n_tasks} tasks ({len(tasks_to_run)} new, {n_skipped_tasks} existing)"
         )
-        print(f"Using {max_processes} processes")
+        print(f"Using {n_processes} processes")
         print(f"{'=' * 80}\n")
 
         ctx = mp.get_context("spawn")
@@ -527,8 +529,8 @@ class TrajectoryDataset(Dataset):
         ) as pbar:
             pbar.update(n_skipped_tasks)
 
-            if max_processes > 1:
-                with ctx.Pool(processes=max_processes) as pool:
+            if n_processes > 1:
+                with ctx.Pool(processes=n_processes) as pool:
                     for res in pool.imap_unordered(
                         self._worker_process_task, tasks_to_run
                     ):

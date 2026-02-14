@@ -56,6 +56,7 @@ def run(args):
     train_subset, train_dataloader, val_subset, val_dataloader = dataset.load_data(
         dataset_dir=dataset_dir,
         batch_size=args.batch_size,
+        debug=args.debug,
         **dataset_usage_config,
     )
 

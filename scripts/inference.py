@@ -63,7 +63,7 @@ def run(args):
             )
         )
 
-    train_subset, _, val_subset, _ = dataset.load_data(dataset_dir=dataset_dir, **dataset_usage_config)
+    train_subset, _, val_subset, _ = dataset.load_data(dataset_dir=dataset_dir, debug=args.debug, **dataset_usage_config)
 
     splits = eval(args.splits)
 
@@ -102,9 +102,9 @@ def run(args):
             torch.load(
                 os.path.join(
                     checkpoint_dir,
-                    "ema_model_current_state_dict.pth"
+                    args.checkpoint_iter or "ema_model_current_state_dict.pth"
                     if model_info_config["use_ema"]
-                    else "model_current_state_dict.pth",
+                    else args.checkpoint_iter or "model_current_state_dict.pth",
                 ),
                 map_location=tensor_args["device"],
             )

@@ -86,10 +86,10 @@ DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
     "n_tasks": 300,
-    "n_trajectories_per_task": 100,
+    "n_trajectories_per_task": 1,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "classical"
+    "algorithm": "classical",  # Options: "generative-model", "mpd", "mpd-splines", "classical"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
@@ -98,6 +98,7 @@ DEFAULT_INFERENCE_ARGS = {
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "diffusion_pred_x",
+    "checkpoint_iter": None,
     "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
@@ -157,10 +158,9 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_n_interpolate": 5,
     "mpd_splines_ddim": True,
     # Classical algorithm
-    "classical_max_processes": 4,
     "classical_n_dof": N_DIM,
     "classical_sample_steps": 10000, # set to None for straight lines instead of RRT-Connect
-    "classical_opt_steps": 300, # set to None to skip GPMP2
+    "classical_opt_steps": None, # set to None to skip GPMP2
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
@@ -213,7 +213,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Other
-    "max_processes": 1,
+    "n_processes": 1,
     "val_portion": 0.1,
     "device": "cuda",
     "debug": True,

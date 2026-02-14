@@ -1,3 +1,4 @@
+from typing import Tuple
 import numpy as np
 import torch
 from scipy import stats
@@ -5,7 +6,7 @@ from scipy import stats
 from drmp.universe.robot import RobotBase
 
 
-def compute_path_length(trajectories: torch.Tensor, robot: RobotBase):
+def compute_path_length(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
@@ -16,7 +17,7 @@ def compute_path_length(trajectories: torch.Tensor, robot: RobotBase):
     return path_length
 
 
-def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase):
+def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)
@@ -28,7 +29,7 @@ def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase):
     return integrated_squared_jerk
 
 
-def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase):
+def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] < 3:
         return torch.tensor(0.0)
@@ -50,7 +51,7 @@ def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase):
 
 def compute_free_fraction(
     trajectories_free: torch.Tensor, trajectories_collision: torch.Tensor
-):
+) -> float:
     assert trajectories_free.ndim == 3
     assert trajectories_collision.ndim == 3
     cnt_free = trajectories_free.shape[0]
@@ -59,20 +60,20 @@ def compute_free_fraction(
     return fraction
 
 
-def compute_collision_intensity(trajectories_collision_mask: torch.Tensor):
+def compute_collision_intensity(trajectories_collision_mask: torch.Tensor) -> float:
     assert trajectories_collision_mask.ndim == 2
     intensity = trajectories_collision_mask.sum() / trajectories_collision_mask.numel()
     return intensity
 
 
-def compute_success(trajectories_free: torch.Tensor):
+def compute_success(trajectories_free: torch.Tensor) -> float:
     assert trajectories_free.ndim == 3
     return float(trajectories_free.nelement() > 0)
 
 
 def bootstrap_confidence_interval(
     data: list, confidence_level: float = 0.95, n_resamples: int = 10000
-):
+) -> Tuple[float, float]:
     if len(data) <= 1:
         return None, None
 

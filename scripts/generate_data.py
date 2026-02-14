@@ -50,7 +50,7 @@ def run(args):
         gpmp2_step_size=args.gpmp2_step_size,
         gpmp2_delta=args.gpmp2_delta,
         gpmp2_method=args.gpmp2_method,
-        max_processes=args.max_processes,
+        n_processes=args.n_processes,
         seed=args.seed,
         debug=args.debug,
     )

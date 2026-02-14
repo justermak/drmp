@@ -56,8 +56,8 @@ class RRTConnect(ClassicalPlanner):
         self.nodes_trees_2_parents = [[None] for _ in range(self.n_trajectories_with_luft)]
 
     def _initialize_samples(self) -> bool:
-        samples, success = self.env.random_collision_free_q(
-            robot=self.robot,
+        samples, success = self.robot.random_collision_free_q(
+            env=self.env,
             n_samples=self.n_samples,
             use_extra_objects=self.use_extra_objects,
         )
@@ -106,8 +106,8 @@ class RRTConnect(ClassicalPlanner):
         return extension
 
     def cut(self, sequences: torch.Tensor) -> torch.Tensor:
-        in_collision = self.env.get_collision_mask(
-            self.robot, sequences, on_extra=self.use_extra_objects
+        in_collision = self.robot.get_collision_mask(
+            env=self.env, qs=sequences, on_extra=self.use_extra_objects
         )
         in_collision = torch.cat(
             (in_collision, torch.ones_like(in_collision[:, :1], dtype=torch.bool)),

@@ -48,9 +48,9 @@ def run_inference_for_task(
         trajectories_final_collision,
         trajectories_final_free,
         points_final_collision_mask,
-    ) = env.get_trajectories_collision_and_free(
+    ) = robot.get_trajectories_collision_and_free(
+        env=env,
         trajectories=trajectories_final,
-        robot=robot,
         on_extra=model_wrapper.use_extra_objects,
     )
 
@@ -380,8 +380,8 @@ def create_test_subset(
     threshold_start_goal_pos: float,
     use_extra_objects: bool = False,
 ) -> Optional[Subset]:
-    start_pos, goal_pos, success = dataset.env.random_collision_free_start_goal(
-        robot=dataset.robot,
+    start_pos, goal_pos, success = dataset.robot.random_collision_free_start_goal(
+        env=dataset.env,
         n_samples=n_tasks,
         threshold_start_goal_pos=threshold_start_goal_pos,
         use_extra_objects=use_extra_objects,
