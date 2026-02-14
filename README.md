@@ -1,4 +1,5 @@
-# Project on exproling applications of diffusion models to robot motion planning
+# DRMP (Diffusion robot motion planning)
+Project on exproling applications of generative models (especially diffusion) to robot motion planning
 
 ### Installation
 
@@ -9,16 +10,23 @@ uv pip install -e .
 
 ```
 ---
-### Current results
+## Experiments
 
-Reimplemented MPD https://arxiv.org/abs/2308.01557, optimized infrastructure
+Setup: All classical algorithms are just ran on both versions of the environment. Learning base algorithms are trained only on the base environment and tested on both versions. Since they don't take the environment as an input, runing them on the environment with extra obstacles tests their ability to generate diverse tragectories that can be optimized 
 
----
-## Baseline models evaluation on random data
+### EnvDense2D
 
-### No extra objects
+Map size: $[-1; 1]^2$
 
-| Metric | diffusion-original | gpmp2-rrt-prior | rrt-connect | gpmp2-uninformative |
+Robot: Sphere2D (circle of radius 0.1)
+
+Objects: 30 circles + smoothed squares
+
+Extra objects: 7 circles + smoothed squares
+
+### Base
+
+| Metric | MPD | gpmp2-rrt-prior | rrt-connect | gpmp2-uninformative |
 | --- | --- | --- | --- | --- |
 | n_tasks | 100 | 76 | 100 | 76 |
 | n_samples | 100 | 100 | 100 | 100 |
@@ -33,7 +41,7 @@ Reimplemented MPD https://arxiv.org/abs/2308.01557, optimized infrastructure
 
 ### Extra objects
 
-| Metric | diffusion-original | gpmp2-rrt-prior | rrt-connect | gpmp2-uninformative |
+| Metric | MPD | gpmp2-rrt-prior | rrt-connect | gpmp2-uninformative |
 | --- | --- | --- | --- | --- |
 | n_tasks | 1000 | 76 | 100 | 76 |
 | n_samples | 100 | 100 | 100 | 100 |

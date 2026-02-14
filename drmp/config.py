@@ -30,9 +30,9 @@ DEFAULT_TRAIN_ARGS = {
     "cfg_scale": 1.0,
     # Diffusion and/or FlowMatching
     "n_diffusion_steps": 32,
-    "predict_noise": True,
+    "predict_noise": False,
     # Shortcut
-    "bootstrap_fraction": 0.25,
+    "bootstrap_fraction": 0.5,
     "dt_sampling_strategy": "weighted",  # "uniform", "weighted"
     # Drift
     "temperature": 1.0,
@@ -54,10 +54,10 @@ DEFAULT_TRAIN_ARGS = {
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 300000,
+    "num_train_steps": 2000000,
     "lr": 1e-4,
     "weight_decay": 0,
-    "batch_size": 256,
+    "batch_size": 1024,
     "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
@@ -66,7 +66,7 @@ DEFAULT_TRAIN_ARGS = {
     "ema_update_interval": 10,
     # Summary
     "log_interval": 2000,
-    "checkpoint_interval": 50000,
+    "checkpoint_interval": 100000,
     # Guide
     "t_start_guide": 0,
     "n_guide_steps": 2,
@@ -85,7 +85,7 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 100,
+    "n_tasks": 300,
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
@@ -97,8 +97,8 @@ DEFAULT_INFERENCE_ARGS = {
     "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "flowmatching_weighted",
-    "n_inference_steps": 2, # None for DDPM, otherwise DDIM or shortcut
+    "checkpoint_name": "diffusion_pred_x",
+    "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
     # MPD guide
