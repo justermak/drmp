@@ -159,8 +159,8 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
-    "classical_sample_steps": 10000, # set to None for straight lines instead of RRT-Connect
-    "classical_opt_steps": None, # set to None to skip GPMP2
+    "classical_sample_steps": None, # 10000, # set to None for straight lines instead of RRT-Connect
+    "classical_opt_steps": 300, # set to None to skip GPMP2
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,

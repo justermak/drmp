@@ -18,12 +18,22 @@ class HybridPlanner(ClassicalPlanner):
         dt: float,
         tensor_args: Dict[str, Any],
     ):
-        super().__init__(
-            env=sample_based_planner.env,
-            robot=sample_based_planner.robot,
-            use_extra_objects=sample_based_planner.use_extra_objects,
-            tensor_args=tensor_args,
-        )
+        if sample_based_planner is not None:
+            super().__init__(
+                env=sample_based_planner.env,
+                robot=sample_based_planner.robot,
+                use_extra_objects=sample_based_planner.use_extra_objects,
+                tensor_args=tensor_args,
+            )
+        elif optimization_based_planner is not None:
+            super().__init__(
+                env=optimization_based_planner.env,
+                robot=optimization_based_planner.robot,
+                use_extra_objects=optimization_based_planner.use_extra_objects,
+                tensor_args=tensor_args,
+            )
+        else:
+            raise ValueError("At least one of sample_based_planner or optimization_based_planner must be provided.")
         self.sample_based_planner = sample_based_planner
         self.optimization_based_planner = optimization_based_planner
         self.n_support_points = n_support_points
@@ -49,14 +59,7 @@ class HybridPlanner(ClassicalPlanner):
                     )
                 else:
                     trajectories = [
-                        create_straight_line_trajectory(
-                            start_pos=self.start_pos,
-                            goal_pos=self.goal_pos,
-                            n_support_points=self.n_support_points,
-                            dt=self.dt,
-                            tensor_args=self.tensor_args,
-                        )
-                        for _ in range(self.n_trajectories)
+                        None for _ in range(self.n_trajectories)
                     ]
                 if debug:
                     print(
