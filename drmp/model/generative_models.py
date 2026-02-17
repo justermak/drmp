@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from drmp.dataset.dataset import TrajectoryDataset
 from drmp.model.temporal_unet import TemporalUNet, TemporalUNetShortcut
-from drmp.planning.guide import Guide
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.visualizer import Visualizer
 
 
@@ -128,7 +128,7 @@ class GenerativeModel(nn.Module, ABC):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         cfg_scale: float,
@@ -273,7 +273,7 @@ class Diffusion(GenerativeModel):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         debug: bool = False,
@@ -318,8 +318,7 @@ class Diffusion(GenerativeModel):
             std = torch.exp(0.5 * log_variance)
 
             if guide is not None and t_start_guide is not None and time <= t_start_guide:
-                for _ in range(n_guide_steps):
-                    x_t = x_t + guide(x_t)
+                x_t = guide.optimize(x_t, n_optimization_steps=n_guide_steps)
 
             noise = torch.randn_like(x_t)
             noise[t == 0] = 0
@@ -336,7 +335,7 @@ class Diffusion(GenerativeModel):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         n_inference_steps: int,
@@ -401,8 +400,7 @@ class Diffusion(GenerativeModel):
                 and t_start_guide is not None
                 and prev_t_idx < t_start_guide
             ):
-                for _ in range(n_guide_steps):
-                    x_prev = x_prev + guide(x_prev)
+                x_prev = guide.optimize(x_prev, n_optimization_steps=n_guide_steps)
 
             if eta > 0:
                 noise = torch.randn_like(x_prev)
@@ -419,7 +417,7 @@ class Diffusion(GenerativeModel):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         n_inference_steps: int,
@@ -432,8 +430,8 @@ class Diffusion(GenerativeModel):
             trajectories_chain_normalized = self.ddpm_sample(
                 n_samples=n_samples,
                 context=context,
-                t_start_guide=t_start_guide,
                 guide=guide,
+                t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
                 debug=debug,
             )
@@ -441,8 +439,8 @@ class Diffusion(GenerativeModel):
             trajectories_chain_normalized = self.ddim_sample(
                 n_samples=n_samples,
                 context=context,
-                t_start_guide=t_start_guide,
                 guide=guide,
+                t_start_guide=t_start_guide,
                 n_guide_steps=n_guide_steps,
                 n_inference_steps=n_inference_steps,
                 eta=eta,
@@ -625,7 +623,7 @@ class DiffusionShortcut(Diffusion):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         n_inference_steps: int,
@@ -652,8 +650,7 @@ class DiffusionShortcut(Diffusion):
             trajectories = self.ddim_step(trajectories, t_tensor, dt_tensor, model_out)
             current_t -= step_size
             if guide is not None and t_start_guide is not None and current_t < t_start_guide:
-                for _ in range(n_guide_steps):
-                    trajectories = trajectories + guide(trajectories)
+                trajectories = guide.optimize(trajectories, n_optimization_steps=n_guide_steps)
             
         return trajectories.unsqueeze(0)
 
@@ -810,7 +807,7 @@ class FlowMatchingShortcut(GenerativeModel):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         n_inference_steps: int,
@@ -839,8 +836,7 @@ class FlowMatchingShortcut(GenerativeModel):
                 guide is not None and t_start_guide is not None
                 and 1 - current_time < t_start_guide / self.n_diffusion_steps + 1e-8
             ):
-                for _ in range(n_guide_steps):
-                    trajectories = trajectories + guide(trajectories)
+                trajectories = guide.optimize(trajectories, n_optimization_steps=n_guide_steps)
 
         trajectories_chain_normalized = trajectories.unsqueeze(0)
 
@@ -938,7 +934,7 @@ class Drift(GenerativeModel):
         self,
         n_samples: int,
         context: torch.Tensor,
-        guide: Guide,
+        guide: GradientOptimization,
         n_guide_steps: int,
         t_start_guide: float,
         debug: bool = False,
@@ -952,8 +948,7 @@ class Drift(GenerativeModel):
         trajectories = self.model(noise, t, context)
 
         if guide is not None and t_start_guide is not None and t_start_guide >= 0:
-            for _ in range(n_guide_steps):
-                trajectories = trajectories + guide(trajectories)
+            trajectories = guide.optimize(trajectories, n_optimization_steps=n_guide_steps)
 
         trajectories_chain_normalized = trajectories.unsqueeze(0)
 

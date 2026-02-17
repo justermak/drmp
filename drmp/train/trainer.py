@@ -3,6 +3,7 @@ import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -17,7 +18,6 @@ from drmp.planning.costs import (
     CostJointVelocity,
     CostObstacles,
 )
-from drmp.planning.guide import Guide
 from drmp.torch_timer import TimerCUDA
 from drmp.train.logs import log
 
@@ -293,18 +293,30 @@ def train(
         if cost is not None
     ]
 
-    guide = Guide(
-        dataset=dataset,
+    guide = GradientOptimization(
+        env=dataset.env,
+        robot=dataset.robot,
+        normalizer=dataset.normalizer,
+        n_support_points=dataset.n_support_points,
+        n_control_points=dataset.n_control_points,
         costs=costs,
         max_grad_norm=max_grad_norm,
         n_interpolate=n_interpolate,
+        tensor_args=tensor_args,
+        use_extra_objects=False,
     )
 
-    guide_extra = Guide(
-        dataset=dataset,
+    guide_extra = GradientOptimization(
+        env=dataset.env,
+        robot=dataset.robot,
+        normalizer=dataset.normalizer,
+        n_support_points=dataset.n_support_points,
+        n_control_points=dataset.n_control_points,
         costs=costs_extra,
         max_grad_norm=max_grad_norm,
         n_interpolate=n_interpolate,
+        tensor_args=tensor_args,
+        use_extra_objects=True,
     )
 
     save_model_to_disk(

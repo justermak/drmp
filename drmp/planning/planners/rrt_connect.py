@@ -154,17 +154,16 @@ class RRTConnect(ClassicalPlanner):
         return path
 
     def optimize(
-        self, sample_steps: int, print_freq: int = 50, debug: bool = True
+        self, n_sampling_steps: int, print_freq: int = 50, debug: bool = True
     ) -> Optional[torch.Tensor]:
-        self.sample_steps = sample_steps
-
+        self.n_sampling_steps = n_sampling_steps
         step = 0
         n_success = 0
         paths = []
         idxs = set(range(self.n_trajectories_with_luft))
         idxs_list = list(idxs)
         with TimerCUDA() as t:
-            while step < sample_steps:
+            while step < n_sampling_steps:
                 if debug and step % print_freq == 0:
                     self.print_info(step, t.elapsed, n_success)
 
@@ -231,6 +230,8 @@ class RRTConnect(ClassicalPlanner):
                         paths.append(torch.cat(path1[::-1] + path2[1:], dim=0))
                         n_success += 1
                         idxs.remove(i)
+                        if n_success >= self.n_trajectories:
+                            break
                         
                 idxs_list = list(idxs)
                 if n_success >= self.n_trajectories:
@@ -241,14 +242,14 @@ class RRTConnect(ClassicalPlanner):
         trajectories = self.purge_duplicates_from_trajectories(paths)
         return trajectories
 
-    def print_info(self, step, elapsed_time, success):
+    def print_info(self, step, elapsed_time, success) -> None:
         total_nodes = sum(
             len(self.nodes_trees_1_pos[i]) + len(self.nodes_trees_2_pos[i])
             for i in range(self.n_trajectories_with_luft)
         )
-        pad = len(str(self.sample_steps))
+        pad = len(str(self.n_sampling_steps))
         print(
-            f"| Step: {step:>{pad}}/{self.sample_steps:>{pad}} "
+            f"| Step: {step:>{pad}}/{self.n_sampling_steps:>{pad}} "
             f"| Time: {elapsed_time:.3f} s"
             f"| Nodes: {total_nodes} "
             f"| Success: {success}/{self.n_trajectories}"
@@ -258,7 +259,7 @@ class RRTConnect(ClassicalPlanner):
         self,
         traj_idx: int = 0,
         save_path: str = "rrt_trees.png",
-    ):
+    ) -> None:
         """Visualize the RRT trees for a specific trajectory."""
         try:
             import matplotlib.pyplot as plt

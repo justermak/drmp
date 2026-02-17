@@ -4,7 +4,7 @@ from typing import Any, Dict, Tuple
 import torch
 
 from drmp.utils import (
-    get_trajectories_derivative_from_bsplines,
+    fit_bsplines_to_trajectories,
     get_trajectories_from_bsplines,
     interpolate_trajectories,
 )
@@ -34,8 +34,16 @@ class RobotBase(ABC):
     @abstractmethod
     def get_position_interpolated(
         self,
-        trajectories: torch.Tensor,
+        control_points: torch.Tensor,
         n_support_points: int,
+    ) -> torch.Tensor:
+        pass
+    
+    @abstractmethod
+    def fit_bsplines_to_position(
+        self,
+        trajectories: torch.Tensor,
+        n_control_points: int,
     ) -> torch.Tensor:
         pass
 
@@ -44,15 +52,6 @@ class RobotBase(ABC):
         self,
         trajectories: torch.Tensor,
         mode: str = None,
-    ) -> torch.Tensor:
-        pass
-
-    @abstractmethod
-    def get_velocity_interpolated(
-        self,
-        trajectories: torch.Tensor,
-        n_support_points: int,
-        trajectories_pos: torch.Tensor = None,
     ) -> torch.Tensor:
         pass
 
@@ -142,15 +141,29 @@ class RobotSphere2D(RobotBase):
 
     def get_position_interpolated(
         self,
-        trajectories: torch.Tensor,
+        control_points: torch.Tensor,
         n_support_points: int,
     ) -> torch.Tensor:
+        control_points_pos = self.get_position(control_points)
         trajectories_pos = get_trajectories_from_bsplines(
-            control_points=trajectories[..., : self.n_dim],
+            control_points=control_points_pos,
             n_support_points=n_support_points,
             degree=self.spline_degree,
         )
         return trajectories_pos
+    
+    def fit_bsplines_to_position(
+        self,
+        trajectories: torch.Tensor,
+        n_control_points: int,
+    ) -> torch.Tensor:
+        trajectories_pos = self.get_position(trajectories)
+        control_points_pos = fit_bsplines_to_trajectories(
+            trajectories=trajectories_pos,
+            n_control_points=n_control_points,
+            degree=self.spline_degree,
+        )
+        return control_points_pos
 
     def get_velocity(
         self,
@@ -196,26 +209,6 @@ class RobotSphere2D(RobotBase):
             trajectories_vel = trajectories[..., self.n_dim : 2 * self.n_dim]
         else:
             trajectories_vel = torch.zeros_like(trajectories[..., : self.n_dim])
-        return trajectories_vel
-
-    def get_velocity_interpolated(
-        self,
-        trajectories: torch.Tensor,
-        n_support_points: int,
-        trajectories_pos: torch.Tensor = None,
-    ) -> torch.Tensor:
-        trajectories_pos = (
-            trajectories_pos
-            if trajectories_pos is not None
-            else self.get_position_interpolated(
-                trajectories, n_support_points=n_support_points
-            )
-        )
-        trajectories_vel = get_trajectories_derivative_from_bsplines(
-            control_points=trajectories_pos,
-            n_support_points=n_support_points,
-            degree=self.spline_degree,
-        ) / (self.dt * (n_support_points - 1))
         return trajectories_vel
 
     def get_acceleration(

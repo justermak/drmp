@@ -85,11 +85,11 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 300,
-    "n_trajectories_per_task": 1,
+    "n_tasks": 5,
+    "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "classical",  # Options: "generative-model", "mpd", "mpd-splines", "classical"
+    "algorithm": "rrt-gpmp2",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
@@ -97,9 +97,9 @@ DEFAULT_INFERENCE_ARGS = {
     "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "diffusion_pred_x",
+    "checkpoint_name": "",
     "checkpoint_iter": None,
-    "n_inference_steps": 1, # None for DDPM, otherwise DDIM or shortcut
+    "n_inference_steps": 8, # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
     # MPD guide
@@ -159,8 +159,8 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
-    "classical_sample_steps": None, # 10000, # set to None for straight lines instead of RRT-Connect
-    "classical_opt_steps": 300, # set to None to skip GPMP2
+    "classical_n_sampling_steps": 10000, # set to None for straight lines instead of samping based planner
+    "classical_n_optimization_steps": 800, # set to None to skip optimization based planner
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
@@ -175,6 +175,16 @@ DEFAULT_INFERENCE_ARGS = {
     "gpmp2_step_size": 1e-1,
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
+    # Gradient optimization parameters
+    "grad_lambda_obstacles": 5e-3,
+    "grad_lambda_position": 3e-6,
+    "grad_lambda_velocity": 3e-7,
+    "grad_lambda_acceleration": 7e-7,
+    "grad_max_grad_norm": 1.0,
+    "grad_n_interpolate": 10,
+    # RRT-Grad-Splines parameters
+    "rrt_grad_splines_n_control_points": 24,
+    "rrt_grad_splines_spline_degree": 3,
     # Other
     "device": "cuda",
     "debug": True,
@@ -197,8 +207,9 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "n_trajectories_per_task": 50,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
-    "sample_steps": 10000,
-    "opt_steps": 300,
+    "n_sampling_steps": 10000,
+    "n_optimization_steps": 300,
+    "use_gpmp2": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
     "rrt_connect_max_radius": 0.3,
@@ -212,6 +223,13 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_step_size": 1e-1,
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
+    # Gradient optimization parameters
+    "grad_lambda_obstacles": 5e-3,
+    "grad_lambda_position": 3e-6,
+    "grad_lambda_velocity": 3e-7,
+    "grad_lambda_acceleration": 7e-7,
+    "grad_max_grad_norm": 1.0,
+    "grad_n_interpolate": 10,
     # Other
     "n_processes": 1,
     "val_portion": 0.1,

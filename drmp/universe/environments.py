@@ -11,8 +11,10 @@ from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectFiel
 
 def get_envs():
     return {
+        "EnvEmpty2D": EnvEmpty2D,
         "EnvSimple2D": EnvSimple2D,
         "EnvDense2D": EnvDense2D,
+        "EnvDenseNarrowPassage2D": EnvDenseNarrowPassage2D,
     }
 
 
@@ -383,6 +385,151 @@ class EnvDense2D(EnvBase):
                             [0.05, 0.075],
                             [0.05, 0.125],
                             [0.075, 0.05],
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                ),
+            ]
+        )
+
+        super().__init__(
+            limits=torch.tensor(limits_np, **tensor_args),
+            obj_field_fixed=obj_field_fixed,
+            obj_field_extra=obj_field_extra,
+            sdf_cell_size=0.005,
+            tensor_args=tensor_args,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
+        )
+
+
+class EnvDenseNarrowPassage2D(EnvBase):
+    def __init__(
+        self,
+        tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
+    ):
+        limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
+        boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
+            limits_np
+        )
+
+        obj_field_fixed = ObjectField(
+            [
+                MultiSphereField(
+                    centers = np.array(
+                        [
+                            [0.3313474655151367, 0.6288051009178162],
+                            [-0.36961784958839417, -0.12315540760755539],
+                            [-0.8740217089653015, -0.4034936726093292],
+                            [0.808782160282135, 0.5287870168685913],
+                            [0.6775968670845032, 0.8817358016967773],
+                            [-0.3608766794204712, 0.8313458561897278],
+                            [0.7156378626823425, -0.6923345923423767],
+                            [0.35, 0],
+                        ]
+                    ),
+                    radii = np.array(
+                        [
+                            0.125,
+                            0.125,
+                            0.125,
+                            0.125,
+                            0.125,
+                            0.125,
+                            0.125,
+                            0.125,
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                ),
+                MultiBoxField(
+                    centers=np.array(
+                        [
+                             [0.607781708240509, 0.19512386620044708],
+                            [-0.3352295458316803, -0.6887519359588623],
+                            [-0.6572632193565369, 0.41827881932258606],
+                            [-0.664594292640686, 0.016457155346870422],
+                            [0.8165988922119141, -0.19856023788452148],
+                            [-0.8222246170043945, -0.6448580026626587],
+                            [-0.8946458101272583, 0.8962447643280029],
+                            [-0.23994405567646027, 0.6021060943603516],
+                            [0.305103600025177, -0.3661990463733673],
+                            [0.0, 0.5 + 0.05],
+                            [0.0, -0.5 - 0.05],
+                            *boundary_centers,
+                        ]
+                    ),
+                    half_sizes=np.array(
+                        [
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.20000000298023224, 0.20000000298023224],
+                            [0.2, 1.0 - 0.05 / 2],
+                            [0.2, 1.0 - 0.05 / 2],
+                            *boundary_half_sizes,
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                ),
+            ]
+        )
+
+        obj_field_extra = ObjectField(
+            [
+                MultiSphereField(
+                    np.array(
+                        [
+                            [-0.45, 0.2],
+                            [-0.5, -0.4],
+                            [0.6, -0.4],
+                            [0.35, 0.35],
+                            [0.4, -0.7],
+                            [-0.65, 0.7],
+                            [-0.225, 0.35],
+                            [0.6, -0.1],
+                        ]
+                    ),
+                    np.array(
+                        [
+                            0.1,
+                            0.1,
+                            0.1,
+                            0.1,
+                            0.1,
+                            0.075,
+                            0.075,
+                            0.05,
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                ),
+                MultiBoxField(
+                    np.array(
+                        [
+                            [0.2, -0.9],
+                            [0.9, 0.1],
+                            [0.35, 0.35],
+                            [-0.6, -0.85],
+                            [-0.70, -0.25],
+                            [-0.9, 0.25],
+                        ]
+                    ),
+                    np.array(
+                        [
+                            [0.125, 0.125],
+                            [0.125, 0.125],
+                            [0.1, 0.15],
+                            [0.15, 0.15],
+                            [0.1, 0.1],
+                            [0.125, 0.125],
                         ]
                     ),
                     tensor_args=tensor_args,

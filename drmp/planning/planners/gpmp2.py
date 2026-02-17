@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import torch
 
@@ -21,7 +21,6 @@ def build_gpmp2_cost_composite(
     n_support_points: int,
     start_pos: torch.Tensor,
     goal_pos: torch.Tensor,
-    n_trajectories: int,
     sigma_start: float,
     sigma_goal_prior: float,
     sigma_gp: float,
@@ -49,7 +48,6 @@ def build_gpmp2_cost_composite(
         robot=robot,
         n_support_points=n_support_points,
         goal_state=goal_state,
-        n_trajectories=n_trajectories,
         sigma_goal_prior=sigma_goal_prior,
         tensor_args=tensor_args,
     )
@@ -81,7 +79,6 @@ class GPMP2(ClassicalPlanner):
         env: EnvBase,
         n_dim: int,
         n_support_points: int,
-        n_trajectories: int,
         dt: float,
         n_interpolate: int,
         sigma_start: float,
@@ -104,7 +101,6 @@ class GPMP2(ClassicalPlanner):
         self.dim = 2 * self.n_dim
         self.n_support_points = n_support_points
         self.N = self.dim * self.n_support_points
-        self.n_trajectories = n_trajectories
         self.dt = dt
         self.delta = delta
         self.method = method
@@ -115,8 +111,6 @@ class GPMP2(ClassicalPlanner):
         self.sigma_goal_prior = sigma_goal_prior
         self.sigma_collision = sigma_collision
         self.step_size = step_size
-
-        self._trajectories: torch.Tensor = None
 
     def _build_start_goal_cost(self, start_pos: torch.Tensor, goal_pos: torch.Tensor):
         self.start_pos = start_pos
@@ -129,7 +123,6 @@ class GPMP2(ClassicalPlanner):
             n_support_points=self.n_support_points,
             start_pos=start_pos,
             goal_pos=goal_pos,
-            n_trajectories=self.n_trajectories,
             use_extra_objects=self.use_extra_objects,
             sigma_start=self.sigma_start,
             sigma_gp=self.sigma_gp,
@@ -142,34 +135,26 @@ class GPMP2(ClassicalPlanner):
         self.start_pos = start_pos.to(**self.tensor_args)
         self.goal_pos = goal_pos.to(**self.tensor_args)
         self._build_start_goal_cost(self.start_pos, self.goal_pos)
-        self._trajectories = None
 
-    def reset_trajectories(self, initial_trajectories: torch.Tensor):
-        self._trajectories = initial_trajectories
-
-    def get_trajectories(self):
-        trajectories = self._trajectories.clone()
-        return trajectories
-
-    def optimize(self, opt_steps: int = 1, print_freq: int = 100, debug: bool = True):
-        self.opt_steps = opt_steps
+    def optimize(self, trajectories: torch.Tensor, n_optimization_steps: int = 1, print_freq: int = None, debug: bool = False) -> torch.Tensor:
+        self.n_optimization_steps = n_optimization_steps
         b, K = None, None
         with TimerCUDA() as t_opt:
-            for opt_step in range(opt_steps):
-                b, K = self._step()
-                if debug and opt_step % print_freq == 0:
-                    self.print_info(opt_step + 1, t_opt.elapsed, self.get_costs(b, K))
+            for step in range(n_optimization_steps):
+                trajectories, b, K = self._step(trajectories)
+                if debug and print_freq and step % print_freq == 0:
+                    self.print_info(step + 1, t_opt.elapsed, self.get_costs(b, K))
 
             if debug:
-                self.print_info(opt_steps, t_opt.elapsed, self.get_costs(b, K))
+                self.print_info(n_optimization_steps, t_opt.elapsed, self.get_costs(b, K))
 
-        trajectories = self.get_trajectories()
         return trajectories
 
-    def _step(self):
+    def _step(self, trajectories: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         A, b, K = self.cost.get_linear_system(
-            trajectories=self._trajectories, n_interpolate=self.n_interpolate
+            trajectories=trajectories, n_interpolate=self.n_interpolate
         )
+        trajectories = trajectories.detach()
 
         J_t_J, g = self._get_grad_terms(
             A,
@@ -184,17 +169,11 @@ class GPMP2(ClassicalPlanner):
             method=self.method,
         )
 
-        d_theta = d_theta.view(
-            self.n_trajectories,
-            self.n_support_points,
-            self.dim,
-        )
+        d_theta = d_theta.view(*trajectories.shape)
 
-        self._trajectories = (
-            self._trajectories + self.step_size * d_theta
-        ).detach()
+        trajectories = trajectories + self.step_size * d_theta
 
-        return b, K
+        return trajectories, b, K
 
     def _get_grad_terms(
         self,
@@ -202,7 +181,7 @@ class GPMP2(ClassicalPlanner):
         b: torch.Tensor,
         K: torch.Tensor,
         delta: float = 0.0,
-    ):
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         I = torch.eye(self.N, self.N, device=self.tensor_args["device"], dtype=A.dtype)
         A_t_K = A.transpose(-2, -1) @ K
         A_t_A = A_t_K @ A
@@ -218,7 +197,7 @@ class GPMP2(ClassicalPlanner):
         A: torch.Tensor,
         b: torch.Tensor,
         method: str,
-    ):
+    ) -> torch.Tensor:
         if method == "inverse":
             res = torch.linalg.solve(A, b)
         elif method == "cholesky":
@@ -233,21 +212,19 @@ class GPMP2(ClassicalPlanner):
 
         return res
 
-    def get_costs(self, errors: torch.Tensor, w_mat: torch.Tensor):
+    def get_costs(self, errors: torch.Tensor, w_mat: torch.Tensor) -> torch.Tensor:
         if errors is None or w_mat is None:
             return None
         costs = errors.transpose(1, 2) @ w_mat.unsqueeze(0) @ errors
-        return costs.reshape(
-            self.n_trajectories,
-        )
+        return costs.reshape(-1)
 
-    def print_info(self, step: int, t: float, costs: torch.Tensor):
-        pad = len(str(self.opt_steps))
+    def print_info(self, step: int, t: float, costs: torch.Tensor) -> None:
+        pad = len(str(self.n_optimization_steps))
         mean_cost = costs.mean().item() if costs is not None else float("nan")
         min_cost = costs.min().item() if costs is not None else float("nan")
         max_cost = costs.max().item() if costs is not None else float("nan")
         print(
-            f"Step: {step:>{pad}}/{self.opt_steps:>{pad}} "
+            f"Step: {step:>{pad}}/{self.n_optimization_steps:>{pad}} "
             f"| Time: {t:.3f}s "
             f"| Cost (mean/min/max): {mean_cost:.3e}/{min_cost:.3e}/{max_cost:.3e}"
         )

@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 import numpy as np
 import torch
 from typing import Dict, Any
@@ -6,8 +7,7 @@ from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import GenerativeModel, FlowMatchingShortcut
-from drmp.planning.guide import Guide
+from drmp.model.generative_models import GenerativeModel
 from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
@@ -16,7 +16,6 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
-from drmp.utils import get_trajectories_from_bsplines
 from drmp.visualizer import Visualizer
 
 
@@ -51,10 +50,9 @@ def _log_trajectories_metrics(
     if dataset.n_control_points is not None:
         trajectories[..., :2, :] = start_pos.unsqueeze(0)
         trajectories[..., -2:, :] = goal_pos.unsqueeze(0)
-        trajectories = get_trajectories_from_bsplines(
-            control_points=trajectories,
+        trajectories = dataset.robot.get_position_interpolated(
+            trajectories=trajectories,
             n_support_points=dataset.n_support_points,
-            degree=dataset.robot.spline_degree,
         )
     else:
         trajectories[..., 0, :] = start_pos.unsqueeze(0)
@@ -119,8 +117,8 @@ def log(
     subset: Subset,
     prefix: str,
     tensorboard_writer: SummaryWriter,
-    guide: Guide,
-    guide_extra: Guide,
+    guide: GradientOptimization,
+    guide_extra: GradientOptimization,
     inference_args: Dict[str, Any],
     t_start_guide: float,
     n_guide_steps: int,

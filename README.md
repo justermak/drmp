@@ -53,3 +53,52 @@ Extra objects: 7 circles + smoothed squares
 | Sharpness | 0.7123 ± 0.0151 | 0.3937 ± 0.0186 | 17074.7402 ± 3398.0365 | 386.6198 ± 68.1822 |
 | Path length | 2.5409 ± 0.0226 | 2.4286 ± 0.0732 | 3.4323 ± 0.0814 | 1.8251 ± 0.0336 |
 | Waypoints variance | 0.1742 ± 0.0038 | 0.1984 ± 0.0090 | 0.0000 ± 0.0000 | 0.0000 ± 0.0000 |
+
+RRT_connect cp
+| n_tasks | 300 |
+| n_trajectories_per_task | 100 |
+| Time to generate n_trajectories_per_task | 38.113 ± 2.669 sec |
+| Success rate | 88.83 ± 3.50% |
+| Free fraction | 64.58 ± 3.84% |
+| Collision intensity | 3.62 ± 0.79% |
+| Best path length | 2.2372 ± 0.0465 |
+| Sharpness | 14132.7982 ± 1174.7089 |
+| Path length | 2.8576 ± 0.0514 |
+| Waypoints variance | 0.1991 ± 0.0070 |
+
+
+exact
+| n_tasks | 300 |
+| n_trajectories_per_task | 100 |
+| Time to generate n_trajectories_per_task | 37.157 ± 3.208 sec |
+| Success rate | 64.17 ± 5.50% |
+| Free fraction | 2.62 ± 0.43% |
+| Collision intensity | 8.00 ± 0.80% |
+| Best path length | 3.1429 ± 0.1014 |
+| Sharpness | 74302.9881 ± 11933.7084 |
+| Path length | 3.4818 ± 0.0937 |
+| Waypoints variance | 0.1057 ± 0.0142 |
+
+RRT-Connect + GPMP2 cp
+| n_tasks | 300 |
+| n_trajectories_per_task | 100 |
+| Time to generate n_trajectories_per_task | 41.748 ± 2.593 sec |
+| Success rate | 100.00 ± 0.00% |
+| Free fraction | 87.94 ± 2.36% |
+| Collision intensity | 0.21 ± 0.06% |
+| Best path length | 1.9473 ± 0.0286 |
+| Sharpness | 201.9304 ± 21.7101 |
+| Path length | 2.3085 ± 0.0359 |
+| Waypoints variance | 0.1910 ± 0.0041 |
+
+exact
+| n_tasks | 300 |
+| n_trajectories_per_task | 100 |
+| Time to generate n_trajectories_per_task | 40.858 ± 3.201 sec |
+| Success rate | 100.00 ± 0.00% |
+| Free fraction | 84.99 ± 2.57% |
+| Collision intensity | 0.26 ± 0.06% |
+| Best path length | 1.9658 ± 0.0288 |
+| Sharpness | 306.3921 ± 24.4043 |
+| Path length | 2.3748 ± 0.0354 |
+| Waypoints variance | 0.2028 ± 0.0045 |

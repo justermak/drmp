@@ -173,8 +173,7 @@ class CostComposite(FactorCost):
         return cost_total
 
     def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
-        trajectories.requires_grad = True
-
+        trajectories.requires_grad_(True)
         batch_size = trajectories.shape[0]
         As, bs, Ks = [], [], []
         optim_dim = 0
@@ -397,13 +396,11 @@ class CostGoalPrior(FactorCost):
         robot: RobotBase,
         n_support_points: int,
         goal_state: torch.Tensor,
-        n_trajectories: int,
         sigma_goal_prior: float,
         tensor_args: Dict[str, Any],
     ):
         super().__init__(robot, n_support_points, tensor_args=tensor_args)
         self.goal_state = goal_state
-        self.n_trajectories = n_trajectories
         self.sigma_goal_prior = sigma_goal_prior
 
         self.goal_prior = UnaryFactor(
@@ -417,7 +414,7 @@ class CostGoalPrior(FactorCost):
 
     def get_linear_system(self, trajectories: torch.Tensor, n_interpolate: int):
         A = torch.zeros(
-            self.n_trajectories,
+            trajectories.shape[0],
             self.dim,
             self.dim * self.n_support_points,
             **self.tensor_args,

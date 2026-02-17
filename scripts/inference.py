@@ -6,7 +6,7 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import get_additional_init_args, get_models, get_additional_inference_args
+from drmp.model.generative_models import get_models, get_additional_inference_args
 from drmp.planning.inference import create_test_subset, run_inference
 from drmp.planning.inference_config import (
     ClassicalConfig,
@@ -51,9 +51,9 @@ def run(args):
     dataset_usage_config = {
         "apply_augmentations": False,
         "normalizer_name": "TrivialNormalizer",
-        "n_control_points": None
-        if args.algorithm != "mpd-splines"
-        else args.mpd_splines_n_control_points,
+        "n_control_points": args.mpd_splines_n_control_points
+        if args.algorithm == "mpd-splines"
+        else (args.rrt_grad_splines_n_control_points if args.algorithm == "rrt-grad-splines" else None),
         "filtering_config": {},
     }
     if args.algorithm == "generative-model":
@@ -190,11 +190,14 @@ def run(args):
             ddim=args.mpd_ddim,
         )
 
-    elif args.algorithm == "classical":
+    elif args.algorithm in ["rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"]:
         model_config = ClassicalConfig(
             use_extra_objects=args.use_extra_objects,
-            sample_steps=args.classical_sample_steps,
-            opt_steps=args.classical_opt_steps,
+            dataset=dataset,
+            sampling_based_planner_name="rrt" if args.algorithm in ["rrt", "rrt-grad", "rrt-grad-splines", "rrt-gpmp2"] else None,
+            optimization_based_planner_name="gpmp2" if args.algorithm in ["gpmp2", "rrt-gpmp2"] else ("grad" if args.algorithm in ["grad", "rrt-grad", "rrt-grad-splines"] else None),
+            n_sampling_steps=args.classical_n_sampling_steps,
+            n_optimization_steps=args.classical_n_optimization_steps,
             n_dim=args.classical_n_dof,
             rrt_connect_max_step_size=args.rrt_connect_max_step_size,
             rrt_connect_max_radius=args.rrt_connect_max_radius,
@@ -207,6 +210,12 @@ def run(args):
             gpmp2_step_size=args.gpmp2_step_size,
             gpmp2_delta=args.gpmp2_delta,
             gpmp2_method=args.gpmp2_method,
+            grad_lambda_obstacles=args.grad_lambda_obstacles,
+            grad_lambda_position=args.grad_lambda_position,
+            grad_lambda_velocity=args.grad_lambda_velocity,
+            grad_lambda_acceleration=args.grad_lambda_acceleration,
+            grad_max_grad_norm=args.grad_max_grad_norm,
+            grad_n_interpolate=args.grad_n_interpolate,
         )
 
     else:

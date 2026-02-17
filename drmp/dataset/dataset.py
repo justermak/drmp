@@ -1,21 +1,22 @@
 import os
 import traceback
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, Set, Tuple
 
+from drmp.planning.costs import CostObstacles, CostJointAcceleration, CostJointPosition, CostJointVelocity
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm.autonotebook import tqdm
 
 from drmp.dataset.filtering import get_filter_functions
-from drmp.dataset.normalization import NormalizerBase, get_normalizers
+from drmp.dataset.transform import NormalizerBase, TrivialNormalizer, get_normalizers
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.universe.environments import EnvBase, get_envs
 from drmp.universe.robot import RobotBase, get_robots
 from drmp.utils import (
-    fit_bsplines_to_trajectories,
     fix_random_seed,
     save_config_to_yaml,
 )
@@ -162,10 +163,9 @@ class TrajectoryDataset(Dataset):
         self.normalizer: NormalizerBase = NORMALIZERS[self.normalizer_name]()
         if self.n_control_points is not None:
             print("Fitting B-Splines to trajectories...")
-            self.control_points = fit_bsplines_to_trajectories(
+            self.control_points = self.robot.fit_bsplines_to_position(
                 trajectories=self.trajectories,
                 n_control_points=self.n_control_points,
-                degree=self.robot.spline_degree,
             )
             self.normalizer.fit(self.control_points)
             self.control_points_normalized = self.normalizer.normalize(
@@ -236,6 +236,7 @@ class TrajectoryDataset(Dataset):
         }
 
         return data
+    
 
     @staticmethod
     def _worker_process_task(args) -> Tuple[int, int, int, str]:
@@ -249,12 +250,12 @@ class TrajectoryDataset(Dataset):
             n_support_points,
             duration,
             spline_degree,
-            tensor_args,
             n_trajectories_per_task,
             threshold_start_goal_pos,
-            sample_steps,
-            opt_steps,
-            seed,
+            n_sampling_steps,
+            n_optimization_steps,
+            use_gpmp2,
+            n_control_points,
             rrt_connect_max_step_size,
             rrt_connect_max_radius,
             rrt_connect_n_samples,
@@ -266,9 +267,17 @@ class TrajectoryDataset(Dataset):
             gpmp2_step_size,
             gpmp2_delta,
             gpmp2_method,
-            debug,
+            grad_lambda_obstacles,
+            grad_lambda_position,
+            grad_lambda_velocity,
+            grad_lambda_acceleration,
+            grad_max_grad_norm,
+            grad_n_interpolate,
             grid_map_sdf_fixed,
             grid_map_sdf_extra,
+            tensor_args,
+            seed,
+            debug,
         ) = args
 
         try:
@@ -289,6 +298,7 @@ class TrajectoryDataset(Dataset):
                 spline_degree=spline_degree,
                 tensor_args=tensor_args,
             )
+            normalizer = TrivialNormalizer()
 
             sample_based_planner = RRTConnect(
                 env=env,
@@ -299,30 +309,88 @@ class TrajectoryDataset(Dataset):
                 n_samples=rrt_connect_n_samples,
                 n_trajectories_per_task=n_trajectories_per_task,
             )
+            if use_gpmp2:
+                optimization_based_planner = GPMP2(
+                    robot=generating_robot,
+                    n_dof=robot.n_dim,
+                    env=env,
+                    tensor_args=tensor_args,
+                    n_support_points=n_support_points,
+                    dt=generating_robot.dt,
+                    n_interpolate=gpmp2_n_interpolate,
+                    sigma_start=gpmp2_sigma_start,
+                    sigma_gp=gpmp2_sigma_gp,
+                    sigma_goal_prior=gpmp2_sigma_goal_prior,
+                    sigma_collision=gpmp2_sigma_collision,
+                    step_size=gpmp2_step_size,
+                    delta=gpmp2_delta,
+                    method=gpmp2_method,
+                )
+            else:
+                collision_cost = None
+                if grad_lambda_obstacles is not None:
+                    collision_cost = CostObstacles(
+                        robot=robot,
+                        env=env,
+                        n_support_points=n_support_points,
+                        lambda_obstacles=grad_lambda_obstacles,
+                        use_extra_objects=False,
+                        tensor_args=tensor_args,
+                    )
 
-            optimization_based_planner = GPMP2(
-                robot=generating_robot,
-                n_dof=robot.n_dim,
-                n_trajectories_per_task=n_trajectories_per_task,
-                env=env,
-                tensor_args=tensor_args,
-                n_support_points=n_support_points,
-                dt=generating_robot.dt,
-                n_interpolate=gpmp2_n_interpolate,
-                sigma_start=gpmp2_sigma_start,
-                sigma_gp=gpmp2_sigma_gp,
-                sigma_goal_prior=gpmp2_sigma_goal_prior,
-                sigma_collision=gpmp2_sigma_collision,
-                step_size=gpmp2_step_size,
-                delta=gpmp2_delta,
-                method=gpmp2_method,
-            )
+                position_cost = None
+                if grad_lambda_position is not None:
+                    position_cost = CostJointPosition(
+                        robot=robot,
+                        n_support_points=n_support_points,
+                        lambda_position=grad_lambda_position,
+                        tensor_args=tensor_args,
+                    )
+
+                velocity_cost = None
+                if grad_lambda_velocity is not None:
+                    velocity_cost = CostJointVelocity(
+                        robot=robot,
+                        n_support_points=n_support_points,
+                        lambda_velocity=grad_lambda_velocity,
+                        tensor_args=tensor_args,
+                    )
+
+                acceleration_cost = None
+                if grad_lambda_acceleration is not None:
+                    acceleration_cost = CostJointAcceleration(
+                        robot=robot,
+                        n_support_points=n_support_points,
+                        lambda_acceleration=grad_lambda_acceleration,
+                        tensor_args=tensor_args,
+                    )
+
+                costs = [
+                    cost
+                    for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+                    if cost is not None
+                ]
+                
+                optimization_based_planner = GradientOptimization(
+                    env=env,
+                    robot=generating_robot,
+                    normalizer=normalizer,
+                    n_support_points=n_support_points,
+                    n_control_points=None,
+                    costs=costs,
+                    max_grad_norm=grad_max_grad_norm,
+                    n_interpolate=grad_n_interpolate,
+                    tensor_args=tensor_args,
+                    use_extra_objects=False,
+                )
 
             planner = HybridPlanner(
                 sample_based_planner=sample_based_planner,
                 optimization_based_planner=optimization_based_planner,
+                n_trajectories=n_trajectories_per_task,
                 n_support_points=n_support_points,
                 dt=generating_robot.dt,
+                n_control_points=n_control_points,
                 tensor_args=tensor_args,
             )
 
@@ -343,8 +411,8 @@ class TrajectoryDataset(Dataset):
             planner.reset(start_pos, goal_pos)
 
             trajectories = planner.optimize(
-                sample_steps=sample_steps,
-                opt_steps=opt_steps,
+                n_sampling_steps=n_sampling_steps,
+                n_optimization_steps=n_optimization_steps,
                 debug=debug,
             )
 
@@ -388,8 +456,10 @@ class TrajectoryDataset(Dataset):
         n_tasks: int,
         n_trajectories_per_task: int,
         threshold_start_goal_pos: float,
-        sample_steps: int,
-        opt_steps: int,
+        n_sampling_steps: int,
+        n_optimization_steps: int,
+        use_gpmp2: bool,
+        n_control_points: int,
         rrt_connect_max_step_size: float,
         rrt_connect_max_radius: float,
         rrt_connect_n_samples: int,
@@ -401,6 +471,12 @@ class TrajectoryDataset(Dataset):
         gpmp2_step_size: float,
         gpmp2_delta: float,
         gpmp2_method: str,
+        grad_lambda_obstacles: float,
+        grad_lambda_position: float,
+        grad_lambda_velocity: float,
+        grad_lambda_acceleration: float,
+        grad_max_grad_norm: float,
+        grad_n_interpolate: int,
         val_portion: float,
         n_processes: int,
         seed: int,
@@ -422,8 +498,10 @@ class TrajectoryDataset(Dataset):
             "n_tasks": n_tasks,
             "n_trajectories_per_task": n_trajectories_per_task,
             "threshold_start_goal_pos": threshold_start_goal_pos,
-            "sample_steps": sample_steps,
-            "opt_steps": opt_steps,
+            "n_sampling_steps": n_sampling_steps,
+            "n_optimization_steps": n_optimization_steps,
+            "use_gpmp2": use_gpmp2,
+            "n_control_points": n_control_points,
             "rrt_connect_max_step_size": rrt_connect_max_step_size,
             "rrt_connect_max_radius": rrt_connect_max_radius,
             "rrt_connect_n_samples": rrt_connect_n_samples,
@@ -435,6 +513,12 @@ class TrajectoryDataset(Dataset):
             "gpmp2_step_size": gpmp2_step_size,
             "gpmp2_delta": gpmp2_delta,
             "gpmp2_method": gpmp2_method,
+            "grad_lambda_obstacles": grad_lambda_obstacles,
+            "grad_lambda_position": grad_lambda_position,
+            "grad_lambda_velocity": grad_lambda_velocity,
+            "grad_lambda_acceleration": grad_lambda_acceleration,
+            "grad_max_grad_norm": grad_max_grad_norm,
+            "grad_n_interpolate": grad_n_interpolate,
             "val_portion": val_portion,
             "n_processes": n_processes,
             "seed": seed,
@@ -489,12 +573,12 @@ class TrajectoryDataset(Dataset):
                 self.n_support_points,
                 self.duration,
                 self.spline_degree,
-                self.tensor_args,
                 n_trajectories_per_task,
                 threshold_start_goal_pos,
-                sample_steps,
-                opt_steps,
-                seed,
+                n_sampling_steps,
+                n_optimization_steps,
+                use_gpmp2,
+                n_control_points,
                 rrt_connect_max_step_size,
                 rrt_connect_max_radius,
                 rrt_connect_n_samples,
@@ -506,9 +590,17 @@ class TrajectoryDataset(Dataset):
                 gpmp2_step_size,
                 gpmp2_delta,
                 gpmp2_method,
-                debug,
+                grad_lambda_obstacles,
+                grad_lambda_position,
+                grad_lambda_velocity,
+                grad_lambda_acceleration,
+                grad_max_grad_norm,
+                grad_n_interpolate,
                 grid_map_sdf_fixed,
                 grid_map_sdf_extra,
+                self.tensor_args,
+                seed,
+                debug,
             )
             tasks_to_run.append(task_args)
 

@@ -4,6 +4,7 @@ import torch
 
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.torch_timer import TimerCUDA
 from drmp.utils import create_straight_line_trajectory, smoothen_trajectory
@@ -12,17 +13,19 @@ from drmp.utils import create_straight_line_trajectory, smoothen_trajectory
 class HybridPlanner(ClassicalPlanner):
     def __init__(
         self,
-        sample_based_planner: RRTConnect,
-        optimization_based_planner: GPMP2,
+        sampling_based_planner: RRTConnect,
+        optimization_based_planner: GPMP2 | GradientOptimization,
+        n_trajectories: int,
         n_support_points: int,
         dt: float,
+        n_control_points: int,
         tensor_args: Dict[str, Any],
     ):
-        if sample_based_planner is not None:
+        if sampling_based_planner is not None:
             super().__init__(
-                env=sample_based_planner.env,
-                robot=sample_based_planner.robot,
-                use_extra_objects=sample_based_planner.use_extra_objects,
+                env=sampling_based_planner.env,
+                robot=sampling_based_planner.robot,
+                use_extra_objects=sampling_based_planner.use_extra_objects,
                 tensor_args=tensor_args,
             )
         elif optimization_based_planner is not None:
@@ -33,29 +36,31 @@ class HybridPlanner(ClassicalPlanner):
                 tensor_args=tensor_args,
             )
         else:
-            raise ValueError("At least one of sample_based_planner or optimization_based_planner must be provided.")
-        self.sample_based_planner = sample_based_planner
+            raise ValueError("At least one of sampling_based_planner or optimization_based_planner must be provided.")
+        self.sampling_based_planner = sampling_based_planner
         self.optimization_based_planner = optimization_based_planner
         self.n_support_points = n_support_points
         self.dt = dt
-        self.n_trajectories = optimization_based_planner.n_trajectories if optimization_based_planner is not None else sample_based_planner.n_trajectories
+        self.n_trajectories = n_trajectories
+        self.n_control_points = n_control_points
+        if self.sampling_based_planner is not None:
+            self.sampling_based_planner.n_trajectories = n_trajectories
+
 
     def optimize(
         self,
-        sample_steps: int,
-        opt_steps: int,
+        n_sampling_steps: int,
+        n_optimization_steps: int,
         print_freq: int = 200,
         debug: bool = False,
-        **kwargs,
     ) -> torch.Tensor:
         with TimerCUDA() as t_hybrid:
-            with TimerCUDA() as t_sample_based:
-                if self.sample_based_planner is not None:
-                    trajectories = self.sample_based_planner.optimize(
-                        sample_steps=sample_steps,
+            with TimerCUDA() as t_sampling_based:
+                if self.sampling_based_planner is not None:
+                    trajectories = self.sampling_based_planner.optimize(
+                        n_sampling_steps=n_sampling_steps,
                         print_freq=print_freq,
                         debug=debug,
-                        **kwargs,
                     )
                 else:
                     trajectories = [
@@ -63,7 +68,7 @@ class HybridPlanner(ClassicalPlanner):
                     ]
                 if debug:
                     print(
-                        f"Sample-based Planner -- Optimization time: {t_sample_based.elapsed:.3f} sec"
+                        f"Sample-based Planner -- Optimization time: {t_sampling_based.elapsed:.3f} sec"
                     )
                 
             with TimerCUDA() as t_smoothen:
@@ -72,6 +77,7 @@ class HybridPlanner(ClassicalPlanner):
                         traj,
                         n_support_points=self.n_support_points,
                         dt=self.dt,
+                        type='control_points',
                     )
                     if traj is not None
                     else create_straight_line_trajectory(
@@ -89,14 +95,25 @@ class HybridPlanner(ClassicalPlanner):
                     )
 
             initial_trajectories = torch.stack(trajectories_smooth)
+            
+            if self.n_control_points is not None:
+                with TimerCUDA() as t_fit_bsplines:
+                    initial_trajectories = self.robot.fit_bsplines_to_position(
+                        trajectories=initial_trajectories,
+                        n_control_points=self.n_control_points,
+                    )
+                    if debug:
+                        print(
+                            f"Fitting B-Splines -- Time: {t_fit_bsplines.elapsed:.3f} sec"
+                        )
 
             with TimerCUDA() as t_opt_based:
                 if self.optimization_based_planner is not None:
-                    self.optimization_based_planner.reset_trajectories(
-                        initial_trajectories=initial_trajectories
-                    )
                     trajectories = self.optimization_based_planner.optimize(
-                        opt_steps=opt_steps, print_freq=print_freq // 2, debug=debug
+                        trajectories=initial_trajectories,
+                        n_optimization_steps=n_optimization_steps, 
+                        print_freq=print_freq // 10, 
+                        debug=debug
                     )
                 else:
                     trajectories = initial_trajectories
@@ -104,6 +121,17 @@ class HybridPlanner(ClassicalPlanner):
                     print(
                         f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
                     )
+            
+            if self.n_control_points is not None:
+                with TimerCUDA() as t_fit_position:
+                    trajectories = self.robot.get_position_interpolated(
+                        control_points=trajectories,
+                        n_support_points=self.n_support_points,
+                    )
+                    if debug:
+                        print(
+                            f"Getting Position from B-Splines -- Time: {t_fit_position.elapsed:.3f} sec"
+                        )
 
             if debug:
                 print(
@@ -115,7 +143,7 @@ class HybridPlanner(ClassicalPlanner):
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
         self.start_pos = start_pos
         self.goal_pos = goal_pos
-        if self.sample_based_planner is not None:
-            self.sample_based_planner.reset(start_pos, goal_pos)
+        if self.sampling_based_planner is not None:
+            self.sampling_based_planner.reset(start_pos, goal_pos)
         if self.optimization_based_planner is not None:
             self.optimization_based_planner.reset(start_pos, goal_pos)

@@ -1,3 +1,4 @@
+import json
 import os
 import pickle
 from copy import copy
@@ -169,7 +170,8 @@ def run_inference_on_dataset(
     dataset: TrajectoryDataset = subset.dataset
 
     return_full_data = True
-    for i in tqdm(range(n_tasks), desc="Processing tasks"):
+    cur = 0
+    for i in tqdm(range(2 * n_tasks), desc="Processing tasks"):
         idx = np.random.choice(subset.indices)
         data = dataset[idx]
 
@@ -184,12 +186,15 @@ def run_inference_on_dataset(
         )
 
         if task_results is not None:
+            cur += 1
             if return_full_data:
                 statistics.append(task_results["stats"])
                 full_data_sample = task_results["full_data"]
                 return_full_data = False
             else:
                 statistics.append(task_results)
+        if cur >= n_tasks:
+            break
 
     result = {"statistics": statistics}
 
@@ -266,22 +271,22 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     stats = {
         "n_tasks": n_tasks,
         "n_trajectories_per_task": n_trajectories_per_task,
-        "time_center": time_center,
-        "time_hw": time_hw,
-        "success_rate_center": success_center,
-        "success_rate_hw": success_hw,
-        "free_fraction_center": free_fraction_center,
-        "free_fraction_hw": free_fraction_hw,
-        "collision_intensity_center": collision_intensity_center,
-        "collision_intensity_hw": collision_intensity_hw,
-        "path_length_best_center": path_length_best_center,
+        "time_center": float(time_center),
+        "time_hw": float(time_hw),
+        "success_rate_center": float(success_center),
+        "success_rate_hw": float(success_hw),
+        "free_fraction_center": float(free_fraction_center),
+        "free_fraction_hw": float(free_fraction_hw),
+        "collision_intensity_center": float(collision_intensity_center),
+        "collision_intensity_hw": float(collision_intensity_hw),
+        "path_length_best_center": float(path_length_best_center) if path_length_best_center is not None else None,
         "path_length_best_hw": path_length_best_hw,
-        "sharpness_center": sharpness_center,
-        "sharpness_hw": sharpness_hw,
-        "path_length_center": path_length_center,
-        "path_length_hw": path_length_hw,
-        "waypoints_variance_center": waypoints_variance_center,
-        "waypoints_variance_hw": waypoints_variance_hw,
+        "sharpness_center": float(sharpness_center) if sharpness_center is not None else None,
+        "sharpness_hw": float(sharpness_hw) if sharpness_hw is not None else None,
+        "path_length_center": float(path_length_center) if path_length_center is not None else None,
+        "path_length_hw": float(path_length_hw) if path_length_hw is not None else None,
+        "waypoints_variance_center": float(waypoints_variance_center) if waypoints_variance_center is not None else None,
+        "waypoints_variance_hw": float(waypoints_variance_hw) if waypoints_variance_hw is not None else None,
     }
     return stats
 
@@ -419,6 +424,7 @@ def run_inference(
     )
 
     results = {}
+    results_json = {}
 
     print("=" * 80)
     print(f"Starting trajectory generation for {n_tasks} tasks per split")
@@ -433,7 +439,7 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results["train_stats"] = compute_stats(results["train"])
+        results_json["train_stats"] = compute_stats(results["train"])
     if val_subset is not None:
         print("=" * 80)
         print("Processing VAL split...")
@@ -444,7 +450,7 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results["val_stats"] = compute_stats(results["val"])
+        results_json["val_stats"] = compute_stats(results["val"])
     if test_subset is not None:
         print("=" * 80)
         print("Processing TEST split...")
@@ -455,14 +461,17 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results["test_stats"] = compute_stats(results["test"])
+        results_json["test_stats"] = compute_stats(results["test"])
 
     print_stats(results)
 
     if debug:
         print("Saving data...")
-        with open(os.path.join(results_dir, "results_data_dict.pickle"), "wb") as f:
+        with open(os.path.join(results_dir, "results.pickle"), "wb") as f:
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        with open(os.path.join(results_dir, "stats.json"), "w") as f:
+            json.dump(results_json, f, indent=4)
 
         vis_results = None
         if "test" in results and results["test"].get("start_pos_sample") is not None:

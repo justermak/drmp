@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+from scipy.interpolate import make_interp_spline
 
 
 def fix_random_seed(seed):
@@ -57,8 +58,10 @@ def _get_knots(
 
 @cache
 def _compute_bspline_basis(
-    t: torch.Tensor, knots: torch.Tensor, degree: int, n_control_points: int
+    n_support_points: int, n_control_points: int, degree: int, device: torch.device, dtype: torch.dtype
 ) -> torch.Tensor:
+    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
+    t = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
     n_t = t.shape[0]
     device = t.device
     dtype = t.dtype
@@ -109,9 +112,7 @@ def fit_bsplines_to_trajectories(
     dtype = trajectories.dtype
     n_support_points = trajectories.shape[-2]
 
-    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
-    t_eval = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
-    basis = _compute_bspline_basis(t_eval, knots, degree, n_control_points)
+    basis = _compute_bspline_basis(n_support_points=n_support_points, n_control_points=n_control_points, degree=degree, device=device, dtype=dtype)
     n_fixed = degree - 1
 
     basis_start = basis[:, :n_fixed]
@@ -147,54 +148,62 @@ def get_trajectories_from_bsplines(
     dtype = control_points.dtype
     n_control_points = control_points.shape[-2]
 
-    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
-    t_eval = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
-    basis = _compute_bspline_basis(t_eval, knots, degree, n_control_points)
+    basis = _compute_bspline_basis(n_support_points=n_support_points, n_control_points=n_control_points, degree=degree, device=device, dtype=dtype)
     trajectories = torch.einsum("sc,...cd->...sd", basis, control_points)
 
     return trajectories
-
-
-def get_trajectories_derivative_from_bsplines(
-    control_points: torch.Tensor,
-    n_support_points: int,
-    degree: int,
-) -> torch.Tensor:
-    device = control_points.device
-    dtype = control_points.dtype
-    n_control_points = control_points.shape[-2]
-
-    knots = _get_knots(n_control_points, degree, device=device, dtype=dtype)
-
-    new_control_points = (
-        (control_points[..., 1:, :] - control_points[..., :-1, :]) * degree
-    ) / (
-        knots[degree + 1 : n_control_points + degree] - knots[1:n_control_points]
-    ).unsqueeze(-1)
-
-    return get_trajectories_from_bsplines(
-        new_control_points, n_support_points, degree - 1
-    )
 
 
 def smoothen_trajectory(
     trajectory: torch.Tensor,
     n_support_points: int,
     dt: float,
+    type: str = 'control_points',
 ) -> torch.Tensor:
     assert trajectory.ndim == 2, "trajectory must be of shape (n_points, n_dims)"
-    trajectory_augmented = torch.cat(
-        [trajectory[:1, :], trajectory, trajectory[-1:, :]], dim=0
-    )
-    pos = get_trajectories_from_bsplines(
-        control_points=trajectory_augmented,
-        n_support_points=n_support_points,
-        degree=3,
-    )
-    vel = torch.zeros_like(pos)
-    avg_vel = (pos[-1] - pos[0]) / ((n_support_points - 2) * dt)
-    vel[1:-1, :] = avg_vel
-    trajectory_smooth = torch.cat((pos, vel), dim=-1)
+    
+    if type in ['spline_uniform', 'spline_distance_weighted']:
+        device = trajectory.device
+        dtype = trajectory.dtype
+        trajectory_np = trajectory.detach().cpu().numpy()
+        
+        n_points, n_dims = trajectory_np.shape
+        
+        if type == 'spline_uniform':
+            t_input = np.linspace(0, 1, n_points)
+        else:
+            diffs = np.diff(trajectory_np, axis=0)
+            dists = np.linalg.norm(diffs, axis=1)
+            cumulative_dists = np.cumsum(np.concatenate(([0], dists)))
+            t_input = cumulative_dists / cumulative_dists[-1]
+                
+        t_output = np.linspace(0, 1, n_support_points)
+
+        spline = make_interp_spline(t_input, trajectory_np, k=3, axis=0)
+        
+        pos_smooth = spline(t_output)
+        vel_smooth = spline(t_output, nu=1) / ((n_support_points - 1) * dt)
+
+        pos_tensor = torch.tensor(pos_smooth, device=device, dtype=dtype)
+        vel_tensor = torch.tensor(vel_smooth, device=device, dtype=dtype)
+        
+        trajectory_smooth = torch.cat((pos_tensor, vel_tensor), dim=-1)
+    
+    elif type == 'control_points':
+        trajectory_augmented = torch.cat(
+            [trajectory[:1, :], trajectory, trajectory[-1:, :]], dim=0
+        )
+        pos = get_trajectories_from_bsplines(
+            control_points=trajectory_augmented,
+            n_support_points=n_support_points,
+            degree=3,
+        )
+        vel = torch.zeros_like(pos)
+        avg_vel = (pos[-1] - pos[0]) / ((n_support_points - 2) * dt)
+        vel[1:-1, :] = avg_vel
+        trajectory_smooth = torch.cat((pos, vel), dim=-1)
+    else:
+        raise ValueError(f"Unknown smoothing type: {type}")
 
     return trajectory_smooth
 
