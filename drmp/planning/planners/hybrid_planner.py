@@ -112,7 +112,7 @@ class HybridPlanner(ClassicalPlanner):
                     trajectories = self.optimization_based_planner.optimize(
                         trajectories=initial_trajectories,
                         n_optimization_steps=n_optimization_steps, 
-                        print_freq=print_freq // 10, 
+                        print_freq=print_freq // 2, 
                         debug=debug
                     )
                 else:

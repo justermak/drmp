@@ -300,21 +300,21 @@ class TrajectoryDataset(Dataset):
             )
             normalizer = TrivialNormalizer()
 
-            sample_based_planner = RRTConnect(
+            sampling_based_planner = RRTConnect(
                 env=env,
                 robot=generating_robot,
-                tensor_args=tensor_args,
+                n_trajectories=n_trajectories_per_task,
                 max_step_size=rrt_connect_max_step_size,
                 max_radius=rrt_connect_max_radius,
                 n_samples=rrt_connect_n_samples,
-                n_trajectories_per_task=n_trajectories_per_task,
+                use_extra_objects=False,
+                tensor_args=tensor_args,
             )
             if use_gpmp2:
                 optimization_based_planner = GPMP2(
-                    robot=generating_robot,
-                    n_dof=robot.n_dim,
                     env=env,
-                    tensor_args=tensor_args,
+                    robot=generating_robot,
+                    n_dim=robot.n_dim,
                     n_support_points=n_support_points,
                     dt=generating_robot.dt,
                     n_interpolate=gpmp2_n_interpolate,
@@ -325,6 +325,8 @@ class TrajectoryDataset(Dataset):
                     step_size=gpmp2_step_size,
                     delta=gpmp2_delta,
                     method=gpmp2_method,
+                    use_extra_objects=False,
+                    tensor_args=tensor_args,
                 )
             else:
                 collision_cost = None
@@ -385,7 +387,7 @@ class TrajectoryDataset(Dataset):
                 )
 
             planner = HybridPlanner(
-                sample_based_planner=sample_based_planner,
+                sampling_based_planner=sampling_based_planner,
                 optimization_based_planner=optimization_based_planner,
                 n_trajectories=n_trajectories_per_task,
                 n_support_points=n_support_points,
@@ -421,7 +423,8 @@ class TrajectoryDataset(Dataset):
             )
             n_free = len(trajectories_free)
             n_collision = len(trajectories) - n_free
-
+            
+            print("Saving data...")
             torch.save(
                 trajectories.cpu(),
                 os.path.join(dataset_dir, f"trajectories_{task_id}.pt"),
@@ -432,6 +435,7 @@ class TrajectoryDataset(Dataset):
                     env=env, robot=robot, use_extra_objects=False
                 )
                 try:
+                    print("Saving visualization...")
                     planning_visualizer.render_scene(
                         trajectories=trajectories,
                         start_pos=start_pos,

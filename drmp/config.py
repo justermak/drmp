@@ -85,7 +85,7 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 5,
+    "n_tasks": 300,
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
@@ -94,7 +94,7 @@ DEFAULT_INFERENCE_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": True,
+    "use_extra_objects": False,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "",
@@ -160,7 +160,7 @@ DEFAULT_INFERENCE_ARGS = {
     # Classical algorithm
     "classical_n_dof": N_DIM,
     "classical_n_sampling_steps": 10000, # set to None for straight lines instead of samping based planner
-    "classical_n_optimization_steps": 800, # set to None to skip optimization based planner
+    "classical_n_optimization_steps": 300, # set to None to skip optimization based planner
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
@@ -194,8 +194,8 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_2000_50",
-    "env_name": "EnvDense2D",
+    "dataset_name": "EnvDenseNarrowPassage2D_2000_50",
+    "env_name": "EnvDenseNarrowPassage2D",
     "robot_name": "Sphere2D",
     "robot_margin": 0.01,
     "generating_robot_margin": 0.02,
@@ -210,6 +210,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "n_sampling_steps": 10000,
     "n_optimization_steps": 300,
     "use_gpmp2": True,
+    "n_control_points": None,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,
     "rrt_connect_max_radius": 0.3,
@@ -232,7 +233,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "grad_n_interpolate": 10,
     # Other
     "n_processes": 1,
-    "val_portion": 0.1,
+    "val_portion": 0.05,
     "device": "cuda",
     "debug": True,
     "seed": 42,

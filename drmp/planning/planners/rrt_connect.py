@@ -13,12 +13,12 @@ class RRTConnect(ClassicalPlanner):
         self,
         env: EnvBase,
         robot: RobotBase,
+        n_trajectories: int,
         max_step_size: float,
         max_radius: float,
         n_samples: int,
+        use_extra_objects: bool,
         tensor_args: Dict[str, Any],
-        n_trajectories: int = 1,
-        use_extra_objects: bool = False,
         eps: float = 1e-6,
     ):
         super().__init__(

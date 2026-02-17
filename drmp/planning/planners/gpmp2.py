@@ -75,8 +75,8 @@ def build_gpmp2_cost_composite(
 class GPMP2(ClassicalPlanner):
     def __init__(
         self,
-        robot: RobotBase,
         env: EnvBase,
+        robot: RobotBase,
         n_dim: int,
         n_support_points: int,
         dt: float,
@@ -88,8 +88,8 @@ class GPMP2(ClassicalPlanner):
         step_size: float,
         delta: float,
         method: str,
+        use_extra_objects: bool,
         tensor_args: Dict[str, Any],
-        use_extra_objects: bool = False,
     ):
         super().__init__(
             env=env,

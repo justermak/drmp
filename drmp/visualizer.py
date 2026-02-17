@@ -207,10 +207,8 @@ class Visualizer:
             self._render_start_goal_pos(ax, start_pos, goal_pos)
 
         if save_path is not None:
-            print("Saving figure...")
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
-            print(f"Figure saved to {save_path}")
 
         return fig, ax
 

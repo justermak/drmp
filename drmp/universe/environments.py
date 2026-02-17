@@ -92,6 +92,8 @@ class EnvEmpty2D(EnvBase):
     def __init__(
         self,
         tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
     ):
         # Create workspace boundary boxes
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
@@ -125,6 +127,8 @@ class EnvEmpty2D(EnvBase):
             obj_field_extra=obj_field_extra,
             sdf_cell_size=0.005,
             tensor_args=tensor_args,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
         )
 
 
@@ -132,6 +136,8 @@ class EnvSimple2D(EnvBase):
     def __init__(
         self,
         tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
     ):
         # Create workspace boundary boxes
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
@@ -246,6 +252,8 @@ class EnvSimple2D(EnvBase):
             obj_field_fixed=obj_field_fixed,
             obj_field_extra=obj_field_extra,
             sdf_cell_size=0.005,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
             tensor_args=tensor_args,
         )
 
@@ -463,17 +471,17 @@ class EnvDenseNarrowPassage2D(EnvBase):
                     ),
                     half_sizes=np.array(
                         [
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.20000000298023224, 0.20000000298023224],
-                            [0.2, 1.0 - 0.05 / 2],
-                            [0.2, 1.0 - 0.05 / 2],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.1],
+                            [0.1, 0.5 - 0.05 / 4],
+                            [0.1, 0.5 - 0.05 / 4],
                             *boundary_half_sizes,
                         ]
                     ),

@@ -478,11 +478,16 @@ class MPDConfig(ModelConfigBase):
             )
 
             guide = GradientOptimization(
-                dataset=dataset,
+                env=dataset.env,
+                robot=dataset.generating_robot,
+                normalizer=dataset.normalizer,
+                n_support_points=dataset.n_support_points,
+                n_control_points=dataset.n_control_points,
                 costs=[cost],
                 max_grad_norm=self.max_grad_norm,
                 n_interpolate=self.n_interpolate,
                 tensor_args=tensor_args,
+                use_extra_objects=self.use_extra_objects,
             )
 
         return MPDModelWrapper(
@@ -673,21 +678,20 @@ class ClassicalConfig(ModelConfigBase):
             sampling_based_planner = RRTConnect(
                 env=dataset.env,
                 robot=dataset.generating_robot,
-                tensor_args=tensor_args,
                 n_trajectories=n_trajectories_per_task,
                 max_step_size=self.rrt_connect_max_step_size,
                 max_radius=self.rrt_connect_max_radius,
                 n_samples=self.rrt_connect_n_samples,
                 use_extra_objects=self.use_extra_objects,
+                tensor_args=tensor_args,
             )
 
         optimization_based_planner = None
         if self.optimization_based_planner_name == "gpmp2":
             optimization_based_planner = GPMP2(
+                env=dataset.env,
                 robot=dataset.generating_robot,
                 n_dim=dataset.generating_robot.n_dim,
-                env=dataset.env,
-                tensor_args=tensor_args,
                 n_support_points=dataset.n_support_points,
                 dt=dataset.generating_robot.dt,
                 n_interpolate=self.gpmp2_n_interpolate,
@@ -699,6 +703,7 @@ class ClassicalConfig(ModelConfigBase):
                 delta=self.gpmp2_delta,
                 method=self.gpmp2_method,
                 use_extra_objects=self.use_extra_objects,
+                tensor_args=tensor_args,
             )
         elif self.optimization_based_planner_name == "grad":
             collision_cost = None

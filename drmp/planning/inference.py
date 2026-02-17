@@ -317,13 +317,13 @@ def print_stats(results):
             print(
                 f"| Best path length | {stats['path_length_best_center']:.4f} ± {stats['path_length_best_hw']:.4f} |"
             )
-        if stats["sharpness_center"] is not None:
-            print(
-                f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |"
-            )
         if stats["path_length_center"] is not None:
             print(
                 f"| Path length | {stats['path_length_center']:.4f} ± {stats['path_length_hw']:.4f} |"
+            )
+        if stats["sharpness_center"] is not None:
+            print(
+                f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |"
             )
         if stats["waypoints_variance_center"] is not None:
             print(
@@ -424,7 +424,7 @@ def run_inference(
     )
 
     results = {}
-    results_json = {}
+    stats = {}
 
     print("=" * 80)
     print(f"Starting trajectory generation for {n_tasks} tasks per split")
@@ -439,7 +439,7 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results_json["train_stats"] = compute_stats(results["train"])
+        stats["train_stats"] = compute_stats(results["train"])
     if val_subset is not None:
         print("=" * 80)
         print("Processing VAL split...")
@@ -450,7 +450,7 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results_json["val_stats"] = compute_stats(results["val"])
+        stats["val_stats"] = compute_stats(results["val"])
     if test_subset is not None:
         print("=" * 80)
         print("Processing TEST split...")
@@ -461,9 +461,9 @@ def run_inference(
             model_wrapper=model_wrapper,
             debug=debug,
         )
-        results_json["test_stats"] = compute_stats(results["test"])
+        stats["test_stats"] = compute_stats(results["test"])
 
-    print_stats(results)
+    print_stats(stats)
 
     if debug:
         print("Saving data...")
@@ -471,7 +471,7 @@ def run_inference(
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         with open(os.path.join(results_dir, "stats.json"), "w") as f:
-            json.dump(results_json, f, indent=4)
+            json.dump(stats, f, indent=4)
 
         vis_results = None
         if "test" in results and results["test"].get("start_pos_sample") is not None:
@@ -484,6 +484,7 @@ def run_inference(
             vis_results = results["train"]
 
         if vis_results is not None:
+            print("Saving visualization...")
             visualize_results(
                 results=vis_results,
                 dataset=dataset,

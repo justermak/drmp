@@ -39,9 +39,6 @@ class GradientOptimization(ClassicalPlanner):
     def compute_gradient(
         self,
         x: torch.Tensor,
-        costs: List[Cost],
-        n_interpolate: int,
-        max_grad_norm: Optional[float],
         return_cost: bool = False,
     ) -> torch.Tensor:
         trajectories_normalized = x.clone()
@@ -62,15 +59,15 @@ class GradientOptimization(ClassicalPlanner):
             cost = sum(
                 cost(
                     trajectories=trajectories_pos,
-                    n_interpolate=n_interpolate,
+                    n_interpolate=self.n_interpolate,
                 ).sum()
-                for cost in costs
+                for cost in self.costs
             )
 
             grad = torch.autograd.grad(cost, trajectories_normalized)[0]
-            if max_grad_norm is not None:
+            if self.max_grad_norm is not None:
                 grad_norm = torch.linalg.norm(grad + 1e-8, dim=-1, keepdims=True)
-                scale_ratio = torch.clip(grad_norm, 0.0, max_grad_norm) / grad_norm
+                scale_ratio = torch.clip(grad_norm, 0.0, self.max_grad_norm) / grad_norm
                 grad = scale_ratio * grad
 
             n_fixed = 2 if self.n_control_points is not None else 1
@@ -80,6 +77,13 @@ class GradientOptimization(ClassicalPlanner):
         if return_cost:
             return grad, cost
         return grad
+    
+    def __call__(self, trajectories: torch.Tensor) -> torch.Tensor:
+        return -self.compute_gradient(
+            x=trajectories,
+            return_cost=False,
+        )
+        
 
     def optimize(
         self,
@@ -104,9 +108,6 @@ class GradientOptimization(ClassicalPlanner):
 
                 grad, cost = self.compute_gradient(
                     x=x,
-                    costs=self.costs,
-                    n_interpolate=self.n_interpolate,
-                    max_grad_norm=self.max_grad_norm,
                     return_cost=True,
                 )
                 x = x - grad

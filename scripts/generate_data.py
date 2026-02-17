@@ -39,6 +39,7 @@ def run(args):
         n_sampling_steps=args.n_sampling_steps,
         n_optimization_steps=args.n_optimization_steps,
         use_gpmp2=args.use_gpmp2,
+        n_control_points=args.n_control_points,
         val_portion=args.val_portion,
         rrt_connect_max_step_size=args.rrt_connect_max_step_size,
         rrt_connect_max_radius=args.rrt_connect_max_radius,
