@@ -47,16 +47,24 @@ class RRTConnect(ClassicalPlanner):
         self.samples_ptr = 0
 
         self.nodes_trees_1_pos = (
-            self.start_pos.unsqueeze(0).repeat(self.n_trajectories_with_luft, 1).unsqueeze(1)
+            self.start_pos.unsqueeze(0)
+            .repeat(self.n_trajectories_with_luft, 1)
+            .unsqueeze(1)
         )
         self.nodes_trees_2_pos = (
-            self.goal_pos.unsqueeze(0).repeat(self.n_trajectories_with_luft, 1).unsqueeze(1)
+            self.goal_pos.unsqueeze(0)
+            .repeat(self.n_trajectories_with_luft, 1)
+            .unsqueeze(1)
         )
-        self.nodes_trees_1_parents = [[None] for _ in range(self.n_trajectories_with_luft)]
-        self.nodes_trees_2_parents = [[None] for _ in range(self.n_trajectories_with_luft)]
+        self.nodes_trees_1_parents = [
+            [None] for _ in range(self.n_trajectories_with_luft)
+        ]
+        self.nodes_trees_2_parents = [
+            [None] for _ in range(self.n_trajectories_with_luft)
+        ]
 
     def _initialize_samples(self) -> bool:
-        samples, success = self.robot.random_collision_free_q(
+        samples, success = self.robot.random_collision_free_points(
             env=self.env,
             n_samples=self.n_samples,
             use_extra_objects=self.use_extra_objects,
@@ -73,9 +81,7 @@ class RRTConnect(ClassicalPlanner):
             self._initialize_samples()
             self.samples_ptr = 0
 
-        samples = self.samples[
-            self.samples_ptr : self.samples_ptr + n_samples
-        ]
+        samples = self.samples[self.samples_ptr : self.samples_ptr + n_samples]
         self.samples_ptr += n_samples
         return samples
 
@@ -232,7 +238,7 @@ class RRTConnect(ClassicalPlanner):
                         idxs.remove(i)
                         if n_success >= self.n_trajectories:
                             break
-                        
+
                 idxs_list = list(idxs)
                 if n_success >= self.n_trajectories:
                     if debug:

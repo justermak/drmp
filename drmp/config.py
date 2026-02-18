@@ -18,7 +18,7 @@ DEFAULT_TRAIN_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvDense2D_2000_50",
     "normalizer_name": "TrivialNormalizer",
-    "n_control_points": 24, # set to None for non-spline models
+    "n_control_points": 24,  # set to None for non-spline models
     "spline_degree": 3,
     "apply_augmentations": True,
     "filter_collision": True,
@@ -37,7 +37,7 @@ DEFAULT_TRAIN_ARGS = {
     # Drift
     "temperature": 1.0,
     # Inference
-    "inference_args":{
+    "inference_args": {
         "n_inference_steps": 32,
         # "eta": 0.0,
     },
@@ -99,7 +99,7 @@ DEFAULT_INFERENCE_ARGS = {
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "",
     "checkpoint_iter": None,
-    "n_inference_steps": 8, # None for DDPM, otherwise DDIM or shortcut
+    "n_inference_steps": 8,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
     # MPD guide
@@ -159,8 +159,8 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
-    "classical_n_sampling_steps": 10000, # set to None for straight lines instead of samping based planner
-    "classical_n_optimization_steps": 300, # set to None to skip optimization based planner
+    "classical_n_sampling_steps": 10000,  # set to None for straight lines instead of samping based planner
+    "classical_n_optimization_steps": 300,  # set to None to skip optimization based planner
     "classical_smoothen": True,
     # RRT-Connect parameters
     "rrt_connect_max_step_size": 0.005,

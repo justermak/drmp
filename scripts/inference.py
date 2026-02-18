@@ -6,7 +6,7 @@ import torch
 
 from drmp.config import DEFAULT_INFERENCE_ARGS
 from drmp.dataset.dataset import TrajectoryDataset
-from drmp.model.generative_models import get_models, get_additional_inference_args
+from drmp.model.generative_models import get_additional_inference_args, get_models
 from drmp.planning.inference import create_test_subset, run_inference
 from drmp.planning.inference_config import (
     ClassicalConfig,
@@ -53,7 +53,11 @@ def run(args):
         "normalizer_name": "TrivialNormalizer",
         "n_control_points": args.mpd_splines_n_control_points
         if args.algorithm == "mpd-splines"
-        else (args.rrt_grad_splines_n_control_points if args.algorithm == "rrt-grad-splines" else None),
+        else (
+            args.rrt_grad_splines_n_control_points
+            if args.algorithm == "rrt-grad-splines"
+            else None
+        ),
         "filtering_config": {},
     }
     if args.algorithm == "generative-model":
@@ -63,7 +67,9 @@ def run(args):
             )
         )
 
-    train_subset, _, val_subset, _ = dataset.load_data(dataset_dir=dataset_dir, debug=args.debug, **dataset_usage_config)
+    train_subset, _, val_subset, _ = dataset.load_data(
+        dataset_dir=dataset_dir, debug=args.debug, **dataset_usage_config
+    )
 
     splits = eval(args.splits)
 
@@ -82,37 +88,32 @@ def run(args):
     if args.algorithm == "generative-model":
         checkpoint_dir = os.path.join(args.checkpoints_dir, args.checkpoint_name)
         model_init_config = load_config_from_yaml(
-            os.path.join(
-                args.checkpoints_dir, args.checkpoint_name, "init_config.yaml"
-            )
+            os.path.join(args.checkpoints_dir, args.checkpoint_name, "init_config.yaml")
         )
         model_info_config = load_config_from_yaml(
-            os.path.join(
-                args.checkpoints_dir, args.checkpoint_name, "info_config.yaml"
-            )        
+            os.path.join(args.checkpoints_dir, args.checkpoint_name, "info_config.yaml")
         )
-        
+
         model_name = model_info_config["model_name"]
-        model = MODELS[model_name](
-            dataset=dataset,
-            **model_init_config
-        ).to(device)
+        model = MODELS[model_name](dataset=dataset, **model_init_config).to(device)
 
         model.load_state_dict(
             torch.load(
                 os.path.join(
                     checkpoint_dir,
-                    args.checkpoint_iter or 
-                    ("ema_model_current_state_dict.pth"
-                    if model_info_config["use_ema"]
-                    else "model_current_state_dict.pth"),
+                    args.checkpoint_iter
+                    or (
+                        "ema_model_current_state_dict.pth"
+                        if model_info_config["use_ema"]
+                        else "model_current_state_dict.pth"
+                    ),
                 ),
                 map_location=tensor_args["device"],
             )
         )
         model.eval()
         model = torch.compile(model)
-        
+
         additional_args = get_additional_inference_args(model_name, vars(args))
         model_config = GenerativeModelConfig(
             model=model,
@@ -190,12 +191,27 @@ def run(args):
             ddim=args.mpd_ddim,
         )
 
-    elif args.algorithm in ["rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"]:
+    elif args.algorithm in [
+        "rrt",
+        "gpmp2",
+        "grad",
+        "rrt-gpmp2",
+        "rrt-grad",
+        "rrt-grad-splines",
+    ]:
         model_config = ClassicalConfig(
             use_extra_objects=args.use_extra_objects,
             dataset=dataset,
-            sampling_based_planner_name="rrt" if args.algorithm in ["rrt", "rrt-grad", "rrt-grad-splines", "rrt-gpmp2"] else None,
-            optimization_based_planner_name="gpmp2" if args.algorithm in ["gpmp2", "rrt-gpmp2"] else ("grad" if args.algorithm in ["grad", "rrt-grad", "rrt-grad-splines"] else None),
+            sampling_based_planner_name="rrt"
+            if args.algorithm in ["rrt", "rrt-grad", "rrt-grad-splines", "rrt-gpmp2"]
+            else None,
+            optimization_based_planner_name="gpmp2"
+            if args.algorithm in ["gpmp2", "rrt-gpmp2"]
+            else (
+                "grad"
+                if args.algorithm in ["grad", "rrt-grad", "rrt-grad-splines"]
+                else None
+            ),
             n_sampling_steps=args.classical_n_sampling_steps,
             n_optimization_steps=args.classical_n_optimization_steps,
             n_dim=args.classical_n_dof,
@@ -222,7 +238,7 @@ def run(args):
         raise ValueError(
             f"Unknown algorithm: {args.algorithm}. Valid options: generative-model, mpd, mpd-splines, classical"
         )
-        
+
     results_dir = os.path.join(args.generations_dir, experiment_name)
     os.makedirs(results_dir, exist_ok=True)
 

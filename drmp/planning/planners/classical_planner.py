@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
+import torch
+
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-import torch
 
 
 class ClassicalPlanner(ABC):
@@ -26,7 +27,5 @@ class ClassicalPlanner(ABC):
         pass
 
     @abstractmethod
-    def optimize(
-        self, **kwargs
-    ) -> torch.Tensor | List[torch.Tensor]:
+    def optimize(self, **kwargs) -> torch.Tensor | List[torch.Tensor]:
         pass

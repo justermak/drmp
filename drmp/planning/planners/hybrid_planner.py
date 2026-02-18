@@ -7,7 +7,6 @@ from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.torch_timer import TimerCUDA
-from drmp.utils import create_straight_line_trajectory, smoothen_trajectory
 
 
 class HybridPlanner(ClassicalPlanner):
@@ -36,7 +35,9 @@ class HybridPlanner(ClassicalPlanner):
                 tensor_args=tensor_args,
             )
         else:
-            raise ValueError("At least one of sampling_based_planner or optimization_based_planner must be provided.")
+            raise ValueError(
+                "At least one of sampling_based_planner or optimization_based_planner must be provided."
+            )
         self.sampling_based_planner = sampling_based_planner
         self.optimization_based_planner = optimization_based_planner
         self.n_support_points = n_support_points
@@ -45,7 +46,6 @@ class HybridPlanner(ClassicalPlanner):
         self.n_control_points = n_control_points
         if self.sampling_based_planner is not None:
             self.sampling_based_planner.n_trajectories = n_trajectories
-
 
     def optimize(
         self,
@@ -63,29 +63,23 @@ class HybridPlanner(ClassicalPlanner):
                         debug=debug,
                     )
                 else:
-                    trajectories = [
-                        None for _ in range(self.n_trajectories)
-                    ]
+                    trajectories = [None for _ in range(self.n_trajectories)]
                 if debug:
                     print(
                         f"Sample-based Planner -- Optimization time: {t_sampling_based.elapsed:.3f} sec"
                     )
-                
+
             with TimerCUDA() as t_smoothen:
                 trajectories_smooth = [
-                    smoothen_trajectory(
+                    self.robot.smoothen_trajectory(
                         traj,
                         n_support_points=self.n_support_points,
-                        dt=self.dt,
-                        type='control_points',
                     )
                     if traj is not None
-                    else create_straight_line_trajectory(
+                    else self.robot.create_straight_line_trajectory(
                         start_pos=self.start_pos,
                         goal_pos=self.goal_pos,
                         n_support_points=self.n_support_points,
-                        dt=self.dt,
-                        tensor_args=self.tensor_args,
                     )
                     for traj in trajectories
                 ]
@@ -95,7 +89,15 @@ class HybridPlanner(ClassicalPlanner):
                     )
 
             initial_trajectories = torch.stack(trajectories_smooth)
-            
+            if isinstance(self.optimization_based_planner, GPMP2):
+                initial_trajectories = torch.cat(
+                    [
+                        initial_trajectories,
+                        self.robot.get_velocity(initial_trajectories, mode="avg"),
+                    ],
+                    dim=-1,
+                )
+
             if self.n_control_points is not None:
                 with TimerCUDA() as t_fit_bsplines:
                     initial_trajectories = self.robot.fit_bsplines_to_position(
@@ -111,9 +113,9 @@ class HybridPlanner(ClassicalPlanner):
                 if self.optimization_based_planner is not None:
                     trajectories = self.optimization_based_planner.optimize(
                         trajectories=initial_trajectories,
-                        n_optimization_steps=n_optimization_steps, 
-                        print_freq=print_freq // 2, 
-                        debug=debug
+                        n_optimization_steps=n_optimization_steps,
+                        print_freq=print_freq // 2,
+                        debug=debug,
                     )
                 else:
                     trajectories = initial_trajectories
@@ -121,7 +123,7 @@ class HybridPlanner(ClassicalPlanner):
                     print(
                         f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
                     )
-            
+
             if self.n_control_points is not None:
                 with TimerCUDA() as t_fit_position:
                     trajectories = self.robot.get_position_interpolated(

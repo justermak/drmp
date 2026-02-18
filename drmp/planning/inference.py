@@ -279,14 +279,24 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "free_fraction_hw": float(free_fraction_hw),
         "collision_intensity_center": float(collision_intensity_center),
         "collision_intensity_hw": float(collision_intensity_hw),
-        "path_length_best_center": float(path_length_best_center) if path_length_best_center is not None else None,
+        "path_length_best_center": float(path_length_best_center)
+        if path_length_best_center is not None
+        else None,
         "path_length_best_hw": path_length_best_hw,
-        "sharpness_center": float(sharpness_center) if sharpness_center is not None else None,
+        "sharpness_center": float(sharpness_center)
+        if sharpness_center is not None
+        else None,
         "sharpness_hw": float(sharpness_hw) if sharpness_hw is not None else None,
-        "path_length_center": float(path_length_center) if path_length_center is not None else None,
+        "path_length_center": float(path_length_center)
+        if path_length_center is not None
+        else None,
         "path_length_hw": float(path_length_hw) if path_length_hw is not None else None,
-        "waypoints_variance_center": float(waypoints_variance_center) if waypoints_variance_center is not None else None,
-        "waypoints_variance_hw": float(waypoints_variance_hw) if waypoints_variance_hw is not None else None,
+        "waypoints_variance_center": float(waypoints_variance_center)
+        if waypoints_variance_center is not None
+        else None,
+        "waypoints_variance_hw": float(waypoints_variance_hw)
+        if waypoints_variance_hw is not None
+        else None,
     }
     return stats
 
@@ -420,7 +430,9 @@ def run_inference(
     tensor_args: Dict[str, Any],
 ) -> Dict[str, Any]:
     model_wrapper = model_config.prepare(
-        dataset=dataset, tensor_args=tensor_args, n_trajectories_per_task=n_trajectories_per_task
+        dataset=dataset,
+        tensor_args=tensor_args,
+        n_trajectories_per_task=n_trajectories_per_task,
     )
 
     results = {}

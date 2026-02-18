@@ -1,8 +1,8 @@
+from typing import Any, Dict
+
 import matplotlib.pyplot as plt
-from drmp.planning.planners.gradient_optimization import GradientOptimization
 import numpy as np
 import torch
-from typing import Dict, Any
 from torch.utils.data import Subset
 from torch.utils.tensorboard import SummaryWriter
 
@@ -16,6 +16,7 @@ from drmp.planning.metrics import (
     compute_success,
     compute_waypoints_variance,
 )
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.visualizer import Visualizer
 
 
@@ -51,7 +52,7 @@ def _log_trajectories_metrics(
         trajectories[..., :2, :] = start_pos.unsqueeze(0)
         trajectories[..., -2:, :] = goal_pos.unsqueeze(0)
         trajectories = dataset.robot.get_position_interpolated(
-            trajectories=trajectories,
+            control_points=trajectories,
             n_support_points=dataset.n_support_points,
         )
     else:

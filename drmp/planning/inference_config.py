@@ -15,9 +15,9 @@ from drmp.planning.costs import (
     CostObstacles,
 )
 from drmp.planning.planners.gpmp2 import GPMP2
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.planning.planners.gradient_optimization import GradientOptimization
 
 
 class ModelWrapperBase(ABC):
@@ -53,7 +53,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.additional_args = additional_args
-        
+
     def sample(
         self,
         dataset: TrajectoryDataset,
@@ -64,7 +64,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         context = self.model.build_context(data)
         start_pos = data["start_pos"]
         goal_pos = data["goal_pos"]
-        
+
         trajectories_iters_normalized = self.model.run_inference(
             n_samples=n_trajectories_per_task,
             context=context,
@@ -262,7 +262,7 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
             return None, None
 
         self.planner.reset(start_pos, goal_pos)
-        
+
         trajectories = self.planner.optimize(
             n_sampling_steps=self.n_sampling_steps,
             n_optimization_steps=self.n_optimization_steps,
@@ -377,19 +377,17 @@ class GenerativeModelConfig(ModelConfigBase):
             if cost is not None
         ]
 
-        guide = (
-            GradientOptimization(
-                env=dataset.env,
-                robot=dataset.generating_robot,
-                normalizer=dataset.normalizer,
-                n_support_points=dataset.n_support_points,
-                n_control_points=dataset.n_control_points,
-                costs=costs,
-                max_grad_norm=self.max_grad_norm,
-                n_interpolate=self.n_interpolate,
-                tensor_args=tensor_args,
-                use_extra_objects=self.use_extra_objects,
-            )
+        guide = GradientOptimization(
+            env=dataset.env,
+            robot=dataset.generating_robot,
+            normalizer=dataset.normalizer,
+            n_support_points=dataset.n_support_points,
+            n_control_points=dataset.n_control_points,
+            costs=costs,
+            max_grad_norm=self.max_grad_norm,
+            n_interpolate=self.n_interpolate,
+            tensor_args=tensor_args,
+            use_extra_objects=self.use_extra_objects,
         )
 
         return GenerativeModelWrapper(
@@ -666,7 +664,7 @@ class ClassicalConfig(ModelConfigBase):
         self.grad_lambda_acceleration = grad_lambda_acceleration
         self.grad_max_grad_norm = grad_max_grad_norm
         self.grad_n_interpolate = grad_n_interpolate
-        
+
     def prepare(
         self,
         dataset: TrajectoryDataset,
@@ -746,7 +744,12 @@ class ClassicalConfig(ModelConfigBase):
 
             costs = [
                 cost
-                for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+                for cost in [
+                    collision_cost,
+                    position_cost,
+                    velocity_cost,
+                    acceleration_cost,
+                ]
                 if cost is not None
             ]
             optimization_based_planner = GradientOptimization(

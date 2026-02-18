@@ -136,7 +136,13 @@ class GPMP2(ClassicalPlanner):
         self.goal_pos = goal_pos.to(**self.tensor_args)
         self._build_start_goal_cost(self.start_pos, self.goal_pos)
 
-    def optimize(self, trajectories: torch.Tensor, n_optimization_steps: int = 1, print_freq: int = None, debug: bool = False) -> torch.Tensor:
+    def optimize(
+        self,
+        trajectories: torch.Tensor,
+        n_optimization_steps: int = 1,
+        print_freq: int = None,
+        debug: bool = False,
+    ) -> torch.Tensor:
         self.n_optimization_steps = n_optimization_steps
         b, K = None, None
         with TimerCUDA() as t_opt:
@@ -146,7 +152,9 @@ class GPMP2(ClassicalPlanner):
                     self.print_info(step + 1, t_opt.elapsed, self.get_costs(b, K))
 
             if debug:
-                self.print_info(n_optimization_steps, t_opt.elapsed, self.get_costs(b, K))
+                self.print_info(
+                    n_optimization_steps, t_opt.elapsed, self.get_costs(b, K)
+                )
 
         return trajectories
 

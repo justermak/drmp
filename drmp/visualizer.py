@@ -181,10 +181,12 @@ class Visualizer:
             fig, ax = plt.subplots()
         B, N, S = trajectories.shape
         if points_collision_mask is None:
-            _, _, points_collision_mask = self.robot.get_trajectories_collision_and_free(
-                env=self.env,
-                trajectories=trajectories,
-                on_extra=self.use_extra_objects,
+            _, _, points_collision_mask = (
+                self.robot.get_trajectories_collision_and_free(
+                    env=self.env,
+                    trajectories=trajectories,
+                    on_extra=self.use_extra_objects,
+                )
             )
         trajectories_collision_mask = points_collision_mask.any(dim=-1)
         points_collision_mask = points_collision_mask[

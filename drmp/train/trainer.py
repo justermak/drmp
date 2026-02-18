@@ -3,7 +3,6 @@ import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from drmp.planning.planners.gradient_optimization import GradientOptimization
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -18,6 +17,7 @@ from drmp.planning.costs import (
     CostJointVelocity,
     CostObstacles,
 )
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.torch_timer import TimerCUDA
 from drmp.train.logs import log
 

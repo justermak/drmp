@@ -1,13 +1,13 @@
 from typing import Any, Dict, List, Optional
 
+import torch
+
 from drmp.dataset.transform import NormalizerBase
+from drmp.planning.costs import Cost
+from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.torch_timer import TimerCUDA
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-import torch
-
-from drmp.planning.costs import Cost
-from drmp.planning.planners.classical_planner import ClassicalPlanner
 
 
 class GradientOptimization(ClassicalPlanner):
@@ -31,11 +31,11 @@ class GradientOptimization(ClassicalPlanner):
         self.costs = costs
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
-        
+
     def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
         self.start_pos = start_pos
         self.goal_pos = goal_pos
-    
+
     def compute_gradient(
         self,
         x: torch.Tensor,
@@ -45,8 +45,10 @@ class GradientOptimization(ClassicalPlanner):
 
         with torch.enable_grad():
             trajectories_normalized.requires_grad_(True)
-            trajectories_unnormalized = self.normalizer.unnormalize(trajectories_normalized)
-            
+            trajectories_unnormalized = self.normalizer.unnormalize(
+                trajectories_normalized
+            )
+
             if self.n_control_points is not None:
                 trajectories_pos = self.robot.get_position_interpolated(
                     control_points=trajectories_unnormalized,
@@ -77,13 +79,12 @@ class GradientOptimization(ClassicalPlanner):
         if return_cost:
             return grad, cost
         return grad
-    
+
     def __call__(self, trajectories: torch.Tensor) -> torch.Tensor:
         return -self.compute_gradient(
             x=trajectories,
             return_cost=False,
         )
-        
 
     def optimize(
         self,
@@ -106,15 +107,14 @@ class GradientOptimization(ClassicalPlanner):
                 if debug and print_freq and i % print_freq == 0:
                     self.print_info(i + 1, t_opt.elapsed, cost)
 
-                grad, cost = self.compute_gradient(
-                    x=x,
-                    return_cost=True,
-                )
-                x = x - grad
+                grad, cost = self.compute_gradient(x=x, return_cost=True)
+
+                x = self.robot.gradient_step(x, -grad)
 
         return x
-    
-    def print_info(self, step: int, elapsed_time: float, cost: torch.Tensor = None) -> None:
+
+    def print_info(
+        self, step: int, elapsed_time: float, cost: torch.Tensor = None
+    ) -> None:
         cost_val = cost.item() if cost is not None else float("nan")
         print(f"Step {step} | Time: {elapsed_time:.3f} sec | Cost: {cost_val:.3e}")
-        

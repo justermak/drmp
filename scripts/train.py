@@ -66,7 +66,7 @@ def run(args):
         if args.model_name == "DiffusionDense"
         else args.n_control_points
     )
-    
+
     additional_args = get_additional_init_args(args.model_name, vars(args))
     model_config = {
         "state_dim": args.state_dim,
@@ -84,10 +84,7 @@ def run(args):
         "cfg_scale": args.cfg_scale,
         **additional_args,
     }
-    model = MODELS[args.model_name](
-        dataset=dataset,
-        **model_config
-    ).to(device)
+    model = MODELS[args.model_name](dataset=dataset, **model_config).to(device)
 
     # you can load a checkpoint here
 

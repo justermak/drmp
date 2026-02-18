@@ -1,4 +1,5 @@
 from typing import Tuple
+
 import numpy as np
 import torch
 from scipy import stats
@@ -29,7 +30,9 @@ def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase) -> torch.Ten
     return integrated_squared_jerk
 
 
-def compute_waypoints_variance(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
+def compute_waypoints_variance(
+    trajectories: torch.Tensor, robot: RobotBase
+) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] < 3:
         return torch.tensor(0.0)

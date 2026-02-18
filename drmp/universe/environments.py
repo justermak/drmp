@@ -81,12 +81,13 @@ class EnvBase(ABC):
                     tensor_args=self.tensor_args,
                 )
 
-        self.q_distribution = torch.distributions.uniform.Uniform(
+        self.distribution = torch.distributions.uniform.Uniform(
             self.limits[0], self.limits[1]
         )
 
-    def random_q(self, shape) -> torch.Tensor:
-        return self.q_distribution.sample(shape)
+    def random_points(self, shape) -> torch.Tensor:
+        return self.distribution.sample(shape)
+
 
 class EnvEmpty2D(EnvBase):
     def __init__(
@@ -426,7 +427,7 @@ class EnvDenseNarrowPassage2D(EnvBase):
         obj_field_fixed = ObjectField(
             [
                 MultiSphereField(
-                    centers = np.array(
+                    centers=np.array(
                         [
                             [0.3313474655151367, 0.6288051009178162],
                             [-0.36961784958839417, -0.12315540760755539],
@@ -438,7 +439,7 @@ class EnvDenseNarrowPassage2D(EnvBase):
                             [0.35, 0],
                         ]
                     ),
-                    radii = np.array(
+                    radii=np.array(
                         [
                             0.125,
                             0.125,
@@ -455,7 +456,7 @@ class EnvDenseNarrowPassage2D(EnvBase):
                 MultiBoxField(
                     centers=np.array(
                         [
-                             [0.607781708240509, 0.19512386620044708],
+                            [0.607781708240509, 0.19512386620044708],
                             [-0.3352295458316803, -0.6887519359588623],
                             [-0.6572632193565369, 0.41827881932258606],
                             [-0.664594292640686, 0.016457155346870422],

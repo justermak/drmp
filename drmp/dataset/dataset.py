@@ -2,8 +2,6 @@ import os
 import traceback
 from typing import Any, Dict, Set, Tuple
 
-from drmp.planning.costs import CostObstacles, CostJointAcceleration, CostJointPosition, CostJointVelocity
-from drmp.planning.planners.gradient_optimization import GradientOptimization
 import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
@@ -11,15 +9,19 @@ from tqdm.autonotebook import tqdm
 
 from drmp.dataset.filtering import get_filter_functions
 from drmp.dataset.transform import NormalizerBase, TrivialNormalizer, get_normalizers
+from drmp.planning.costs import (
+    CostJointAcceleration,
+    CostJointPosition,
+    CostJointVelocity,
+    CostObstacles,
+)
 from drmp.planning.planners.gpmp2 import GPMP2
+from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.planning.planners.hybrid_planner import HybridPlanner
 from drmp.planning.planners.rrt_connect import RRTConnect
 from drmp.universe.environments import EnvBase, get_envs
 from drmp.universe.robot import RobotBase, get_robots
-from drmp.utils import (
-    fix_random_seed,
-    save_config_to_yaml,
-)
+from drmp.utils import fix_random_seed, save_config_to_yaml
 from drmp.visualizer import Visualizer
 
 NORMALIZERS = get_normalizers()
@@ -236,7 +238,6 @@ class TrajectoryDataset(Dataset):
         }
 
         return data
-    
 
     @staticmethod
     def _worker_process_task(args) -> Tuple[int, int, int, str]:
@@ -369,10 +370,15 @@ class TrajectoryDataset(Dataset):
 
                 costs = [
                     cost
-                    for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+                    for cost in [
+                        collision_cost,
+                        position_cost,
+                        velocity_cost,
+                        acceleration_cost,
+                    ]
                     if cost is not None
                 ]
-                
+
                 optimization_based_planner = GradientOptimization(
                     env=env,
                     robot=generating_robot,
@@ -398,10 +404,12 @@ class TrajectoryDataset(Dataset):
 
             fix_random_seed(seed + task_id)
 
-            start_pos, goal_pos, success = generating_robot.random_collision_free_start_goal(
-                env=env,
-                n_samples=1,
-                threshold_start_goal_pos=threshold_start_goal_pos,
+            start_pos, goal_pos, success = (
+                generating_robot.random_collision_free_start_goal(
+                    env=env,
+                    n_samples=1,
+                    threshold_start_goal_pos=threshold_start_goal_pos,
+                )
             )
 
             if not success:
@@ -423,7 +431,7 @@ class TrajectoryDataset(Dataset):
             )
             n_free = len(trajectories_free)
             n_collision = len(trajectories) - n_free
-            
+
             print("Saving data...")
             torch.save(
                 trajectories.cpu(),
