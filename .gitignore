@@ -1,9 +1,7 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Distribution / packaging
 .Python
 build/
 runs/
@@ -25,7 +23,6 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Environments
 .env
 .venv
 env/
@@ -33,8 +30,13 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+uv.lock
+*/_version.py
 
-# pth files
+*.log
+*.txt
+*.out
+*.ipynb
 *.pth
 *.pt
 
@@ -43,6 +45,3 @@ venv.bak/
 /datasets
 /models
 /generations
-
-test.ipynb
-nohup.out
