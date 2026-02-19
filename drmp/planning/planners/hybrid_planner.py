@@ -100,7 +100,7 @@ class HybridPlanner(ClassicalPlanner):
 
             if self.n_control_points is not None:
                 with TimerCUDA() as t_fit_bsplines:
-                    initial_trajectories = self.robot.fit_bsplines_to_position(
+                    initial_trajectories = self.robot.fit_bsplines_to_trajectories(
                         trajectories=initial_trajectories,
                         n_control_points=self.n_control_points,
                     )

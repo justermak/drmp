@@ -11,7 +11,7 @@ from drmp.dataset.filtering import get_filter_functions
 from drmp.dataset.transform import NormalizerBase, TrivialNormalizer, get_normalizers
 from drmp.planning.costs import (
     CostJointAcceleration,
-    CostJointPosition,
+    CostJointJerk,
     CostJointVelocity,
     CostObstacles,
 )
@@ -165,7 +165,7 @@ class TrajectoryDataset(Dataset):
         self.normalizer: NormalizerBase = NORMALIZERS[self.normalizer_name]()
         if self.n_control_points is not None:
             print("Fitting B-Splines to trajectories...")
-            self.control_points = self.robot.fit_bsplines_to_position(
+            self.control_points = self.robot.fit_bsplines_to_trajectories(
                 trajectories=self.trajectories,
                 n_control_points=self.n_control_points,
             )
@@ -269,9 +269,9 @@ class TrajectoryDataset(Dataset):
             gpmp2_delta,
             gpmp2_method,
             grad_lambda_obstacles,
-            grad_lambda_position,
             grad_lambda_velocity,
             grad_lambda_acceleration,
+            grad_lambda_jerk,
             grad_max_grad_norm,
             grad_n_interpolate,
             grid_map_sdf_fixed,
@@ -287,13 +287,13 @@ class TrajectoryDataset(Dataset):
                 grid_map_sdf_fixed=grid_map_sdf_fixed,
                 grid_map_sdf_extra=grid_map_sdf_extra,
             )
-            generating_robot = ROBOTS[robot_name](
+            generating_robot: RobotBase = ROBOTS[robot_name](
                 margin=generating_robot_margin,
                 dt=duration / (n_support_points - 1),
                 spline_degree=spline_degree,
                 tensor_args=tensor_args,
             )
-            robot = ROBOTS[robot_name](
+            robot: RobotBase = ROBOTS[robot_name](
                 margin=robot_margin,
                 dt=duration / (n_support_points - 1),
                 spline_degree=spline_degree,
@@ -341,15 +341,6 @@ class TrajectoryDataset(Dataset):
                         tensor_args=tensor_args,
                     )
 
-                position_cost = None
-                if grad_lambda_position is not None:
-                    position_cost = CostJointPosition(
-                        robot=robot,
-                        n_support_points=n_support_points,
-                        lambda_position=grad_lambda_position,
-                        tensor_args=tensor_args,
-                    )
-
                 velocity_cost = None
                 if grad_lambda_velocity is not None:
                     velocity_cost = CostJointVelocity(
@@ -368,13 +359,22 @@ class TrajectoryDataset(Dataset):
                         tensor_args=tensor_args,
                     )
 
+                jerk_cost = None
+                if grad_lambda_jerk is not None:
+                    jerk_cost = CostJointJerk(
+                        robot=robot,
+                        n_support_points=n_support_points,
+                        lambda_jerk=grad_lambda_jerk,
+                        tensor_args=tensor_args,
+                    )
+
                 costs = [
                     cost
                     for cost in [
                         collision_cost,
-                        position_cost,
                         velocity_cost,
                         acceleration_cost,
+                        jerk_cost,
                     ]
                     if cost is not None
                 ]
@@ -484,9 +484,9 @@ class TrajectoryDataset(Dataset):
         gpmp2_delta: float,
         gpmp2_method: str,
         grad_lambda_obstacles: float,
-        grad_lambda_position: float,
         grad_lambda_velocity: float,
         grad_lambda_acceleration: float,
+        grad_lambda_jerk: float,
         grad_max_grad_norm: float,
         grad_n_interpolate: int,
         val_portion: float,
@@ -526,9 +526,9 @@ class TrajectoryDataset(Dataset):
             "gpmp2_delta": gpmp2_delta,
             "gpmp2_method": gpmp2_method,
             "grad_lambda_obstacles": grad_lambda_obstacles,
-            "grad_lambda_position": grad_lambda_position,
             "grad_lambda_velocity": grad_lambda_velocity,
             "grad_lambda_acceleration": grad_lambda_acceleration,
+            "grad_lambda_jerk": grad_lambda_jerk,
             "grad_max_grad_norm": grad_max_grad_norm,
             "grad_n_interpolate": grad_n_interpolate,
             "val_portion": val_portion,
@@ -603,9 +603,9 @@ class TrajectoryDataset(Dataset):
                 gpmp2_delta,
                 gpmp2_method,
                 grad_lambda_obstacles,
-                grad_lambda_position,
                 grad_lambda_velocity,
                 grad_lambda_acceleration,
+                grad_lambda_jerk,
                 grad_max_grad_norm,
                 grad_n_interpolate,
                 grid_map_sdf_fixed,

@@ -117,16 +117,8 @@ def run(args):
         ema_update_interval=args.ema_update_interval,
         use_amp=args.use_amp,
         inference_args=args.inference_args,
-        n_guide_steps=args.n_guide_steps,
-        t_start_guide=args.t_start_guide,
-        lambda_obstacles=args.lambda_obstacles,
-        lambda_position=args.lambda_position,
-        lambda_velocity=args.lambda_velocity,
-        lambda_acceleration=args.lambda_acceleration,
-        max_grad_norm=args.max_grad_norm,
-        n_interpolate=args.n_interpolate,
-        debug=args.debug,
         tensor_args=tensor_args,
+        debug=args.debug,
     )
 
 

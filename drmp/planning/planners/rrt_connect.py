@@ -113,7 +113,7 @@ class RRTConnect(ClassicalPlanner):
 
     def cut(self, sequences: torch.Tensor) -> torch.Tensor:
         in_collision = self.robot.get_collision_mask(
-            env=self.env, qs=sequences, on_extra=self.use_extra_objects
+            env=self.env, points=sequences, on_extra=self.use_extra_objects
         )
         in_collision = torch.cat(
             (in_collision, torch.ones_like(in_collision[:, :1], dtype=torch.bool)),

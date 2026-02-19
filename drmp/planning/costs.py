@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
-import einops
 import torch
 
 from drmp.planning.factors import FieldFactor, GPFactor, UnaryFactor
@@ -58,26 +57,6 @@ class CostObstacles(Cost):
         return cost
 
 
-class CostJointPosition(Cost):
-    def __init__(
-        self,
-        robot: RobotBase,
-        n_support_points: int,
-        lambda_position: float,
-        tensor_args: Dict[str, Any],
-    ):
-        super().__init__(robot, n_support_points, tensor_args)
-        self.lambda_position = lambda_position
-
-    def __call__(
-        self,
-        trajectories: torch.Tensor,
-        n_interpolate: int,
-    ):
-        cost = 0.5 * (trajectories**2).sum(-1).sum(-1) * self.lambda_position
-        return cost
-
-
 class CostJointVelocity(Cost):
     def __init__(
         self,
@@ -123,6 +102,29 @@ class CostJointAcceleration(Cost):
             mode="forward",
         )
         cost = 0.5 * (trajectories_acc**2).sum(-1).sum(-1) * self.lambda_acceleration
+        return cost
+
+class CostJointJerk(Cost):
+    def __init__(
+        self,
+        robot: RobotBase,
+        n_support_points: int,
+        lambda_jerk: float,
+        tensor_args: Dict[str, Any],
+    ):
+        super().__init__(robot, n_support_points, tensor_args)
+        self.lambda_jerk = lambda_jerk
+
+    def __call__(
+        self,
+        trajectories: torch.Tensor,
+        n_interpolate: int,
+    ):
+        trajectories_jerk = self.robot.get_jerk(
+            trajectories=trajectories,
+            mode="forward",
+        )
+        cost = 0.5 * (trajectories_jerk**2).sum(-1).sum(-1) * self.lambda_jerk
         return cost
 
 
@@ -386,7 +388,7 @@ class CostGP(FactorCost):
 
         A[:, self.dim :, : -self.dim] = torch.block_diag(*H1_gp)
         A[:, self.dim :, self.dim :] += torch.block_diag(*H2_gp)
-        b[:, self.dim :] = einops.rearrange(err_gp, "b h d 1 -> b (h d) 1")
+        b[:, self.dim :] = err_gp.flatten(1, 2)
         K[:, self.dim :, self.dim :] += torch.block_diag(*self.gp_prior.Q_inv)
 
         return A, b, K

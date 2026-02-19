@@ -1,14 +1,6 @@
 # DRMP (Diffusion robot motion planning)
 Project on exproling applications of generative models (especially diffusion) to robot motion planning
 
-### Installation
-
-```
-uv venv --python 3.10
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-uv pip install -e .
-
-```
 ---
 ## Experiments
 

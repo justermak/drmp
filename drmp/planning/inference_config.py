@@ -10,7 +10,7 @@ from drmp.planning.costs import (
     CostComposite,
     CostGPTrajectory,
     CostJointAcceleration,
-    CostJointPosition,
+    CostJointJerk,
     CostJointVelocity,
     CostObstacles,
 )
@@ -83,7 +83,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
             trajectories_iters[..., :2, :] = start_pos.unsqueeze(0)
             trajectories_iters[..., -2:, :] = goal_pos.unsqueeze(0)
             trajectories_iters = dataset.robot.get_position_interpolated(
-                trajectories=trajectories_iters,
+                control_points=trajectories_iters,
                 n_support_points=dataset.n_support_points,
             )
         else:
@@ -224,7 +224,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
         )
 
         trajectories_iters = dataset.robot.get_position_interpolated(
-            trajectories=control_points_iters,
+            control_points=control_points_iters,
             n_support_points=dataset.n_support_points,
         )
 
@@ -254,9 +254,9 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         start_pos = data["start_pos"]
         goal_pos = data["goal_pos"]
 
-        qs = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
+        points = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
         collision_mask = dataset.generating_robot.get_collision_mask(
-            env=dataset.env, qs=qs, on_extra=self.use_extra_objects
+            env=dataset.env, points=points, on_extra=self.use_extra_objects
         )
         if collision_mask.any():
             return None, None
@@ -302,9 +302,9 @@ class GenerativeModelConfig(ModelConfigBase):
         n_guide_steps: int,
         use_extra_objects: bool,
         lambda_obstacles: float,
-        lambda_position: float,
         lambda_velocity: float,
         lambda_acceleration: float,
+        lambda_jerk: float,
         max_grad_norm: float,
         n_interpolate: int,
         additional_args: Dict[str, Any],
@@ -315,9 +315,9 @@ class GenerativeModelConfig(ModelConfigBase):
         self.t_start_guide = t_start_guide
         self.n_guide_steps = n_guide_steps
         self.lambda_obstacles = lambda_obstacles
-        self.lambda_position = lambda_position
         self.lambda_velocity = lambda_velocity
         self.lambda_acceleration = lambda_acceleration
+        self.lambda_jerk = lambda_jerk
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
         self.additional_args = additional_args
@@ -339,15 +339,6 @@ class GenerativeModelConfig(ModelConfigBase):
                 tensor_args=tensor_args,
             )
 
-        position_cost = None
-        if self.lambda_position is not None:
-            position_cost = CostJointPosition(
-                robot=dataset.robot,
-                n_support_points=dataset.n_support_points,
-                lambda_position=self.lambda_position,
-                tensor_args=tensor_args,
-            )
-
         velocity_cost = None
         if self.lambda_velocity is not None:
             velocity_cost = CostJointVelocity(
@@ -365,14 +356,23 @@ class GenerativeModelConfig(ModelConfigBase):
                 lambda_acceleration=self.lambda_acceleration,
                 tensor_args=tensor_args,
             )
+            
+        jerk_cost = None
+        if self.lambda_jerk is not None:
+            jerk_cost = CostJointJerk(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                lambda_jerk=self.lambda_jerk,
+                tensor_args=tensor_args,
+            )
 
         costs = [
             cost
             for cost in [
                 collision_cost,
-                position_cost,
                 velocity_cost,
                 acceleration_cost,
+                jerk_cost,
             ]
             if cost is not None
         ]
@@ -404,9 +404,9 @@ class GenerativeModelConfig(ModelConfigBase):
         return {
             "use_extra_objects": self.use_extra_objects,
             "lambda_obstacles": self.lambda_obstacles,
-            "lambda_position": self.lambda_position,
             "lambda_velocity": self.lambda_velocity,
             "lambda_acceleration": self.lambda_acceleration,
+            "lambda_jerk": self.lambda_jerk,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
             "t_start_guide": self.t_start_guide,
@@ -633,9 +633,9 @@ class ClassicalConfig(ModelConfigBase):
         gpmp2_delta: float,
         gpmp2_method: str,
         grad_lambda_obstacles: float,
-        grad_lambda_position: float,
         grad_lambda_velocity: float,
         grad_lambda_acceleration: float,
+        grad_lambda_jerk: float,
         grad_max_grad_norm: float,
         grad_n_interpolate: int,
     ):
@@ -659,9 +659,9 @@ class ClassicalConfig(ModelConfigBase):
         self.gpmp2_delta = gpmp2_delta
         self.gpmp2_method = gpmp2_method
         self.grad_lambda_obstacles = grad_lambda_obstacles
-        self.grad_lambda_position = grad_lambda_position
         self.grad_lambda_velocity = grad_lambda_velocity
         self.grad_lambda_acceleration = grad_lambda_acceleration
+        self.grad_lambda_jerk = grad_lambda_jerk
         self.grad_max_grad_norm = grad_max_grad_norm
         self.grad_n_interpolate = grad_n_interpolate
 
@@ -715,15 +715,6 @@ class ClassicalConfig(ModelConfigBase):
                     tensor_args=tensor_args,
                 )
 
-            position_cost = None
-            if self.grad_lambda_position is not None:
-                position_cost = CostJointPosition(
-                    robot=dataset.generating_robot,
-                    n_support_points=dataset.n_support_points,
-                    lambda_position=self.grad_lambda_position,
-                    tensor_args=tensor_args,
-                )
-
             velocity_cost = None
             if self.grad_lambda_velocity is not None:
                 velocity_cost = CostJointVelocity(
@@ -741,14 +732,23 @@ class ClassicalConfig(ModelConfigBase):
                     lambda_acceleration=self.grad_lambda_acceleration,
                     tensor_args=tensor_args,
                 )
+                
+            jerk_cost = None
+            if self.grad_lambda_jerk is not None:
+                jerk_cost = CostJointJerk(
+                    robot=dataset.generating_robot,
+                    n_support_points=dataset.n_support_points,
+                    lambda_jerk=self.grad_lambda_jerk,
+                    tensor_args=tensor_args,
+                )
 
             costs = [
                 cost
                 for cost in [
                     collision_cost,
-                    position_cost,
                     velocity_cost,
                     acceleration_cost,
+                    jerk_cost,
                 ]
                 if cost is not None
             ]
@@ -800,4 +800,10 @@ class ClassicalConfig(ModelConfigBase):
             "gpmp2_step_size": self.gpmp2_step_size,
             "gpmp2_delta": self.gpmp2_delta,
             "gpmp2_method": self.gpmp2_method,
+            "grad_lambda_obstacles": self.grad_lambda_obstacles,
+            "grad_lambda_velocity": self.grad_lambda_velocity,
+            "grad_lambda_acceleration": self.grad_lambda_acceleration,
+            "grad_lambda_jerk": self.grad_lambda_jerk,
+            "grad_max_grad_norm": self.grad_max_grad_norm,
+            "grad_n_interpolate": self.grad_n_interpolate,
         }

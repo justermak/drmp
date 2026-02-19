@@ -163,7 +163,6 @@ def interpolate_trajectories(
         trajectories.transpose(-2, -1),
         size=n_total_points,
         mode="linear",
-        align_corners=True,
     ).transpose(-2, -1)
 
     return trajectories_interpolate

@@ -13,7 +13,7 @@ from drmp.dataset.dataset import TrajectoryDataset
 from drmp.model.generative_models import GenerativeModel
 from drmp.planning.costs import (
     CostJointAcceleration,
-    CostJointPosition,
+    CostJointJerk,
     CostJointVelocity,
     CostObstacles,
 )
@@ -191,16 +191,8 @@ def train(
     ema_update_interval: int,
     use_amp: bool,
     inference_args: Dict[str, Any],
-    n_guide_steps: int,
-    t_start_guide: int,
-    lambda_obstacles: float,
-    lambda_position: float,
-    lambda_velocity: float,
-    lambda_acceleration: float,
-    max_grad_norm: float,
-    n_interpolate: int,
-    debug: bool,
     tensor_args: Dict[str, Any],
+    debug: bool,
 ) -> None:
     epochs = int(np.ceil(num_train_steps / len(train_dataloader)))
     step = 0
@@ -231,12 +223,12 @@ def train(
     dataset: TrajectoryDataset = train_subset.dataset
 
     collision_cost = None
-    if lambda_obstacles is not None:
+    if inference_args.get("lambda_obstacles", None) is not None:
         collision_cost = CostObstacles(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            lambda_obstacles=lambda_obstacles,
+            lambda_obstacles=inference_args["lambda_obstacles"],
             use_extra_objects=False,
             tensor_args=tensor_args,
         )
@@ -245,79 +237,93 @@ def train(
             robot=dataset.robot,
             env=dataset.env,
             n_support_points=dataset.n_support_points,
-            lambda_obstacles=lambda_obstacles,
+            lambda_obstacles=inference_args["lambda_obstacles"],
             use_extra_objects=True,
             tensor_args=tensor_args,
         )
 
-    position_cost = None
-    if lambda_position is not None:
-        position_cost = CostJointPosition(
-            robot=dataset.robot,
-            n_support_points=dataset.n_support_points,
-            lambda_position=lambda_position,
-            tensor_args=tensor_args,
-        )
-
     velocity_cost = None
-    if lambda_velocity is not None:
+    if inference_args.get("lambda_velocity", None) is not None:
         velocity_cost = CostJointVelocity(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            lambda_velocity=lambda_velocity,
+            lambda_velocity=inference_args["lambda_velocity"],
             tensor_args=tensor_args,
         )
 
     acceleration_cost = None
-    if lambda_acceleration is not None:
+    if inference_args.get("lambda_acceleration", None) is not None:
         acceleration_cost = CostJointAcceleration(
             robot=dataset.robot,
             n_support_points=dataset.n_support_points,
-            lambda_acceleration=lambda_acceleration,
+            lambda_acceleration=inference_args["lambda_acceleration"],
+            tensor_args=tensor_args,
+        )
+        
+    jerk_cost = None
+    if inference_args.get("lambda_jerk", None) is not None:
+        jerk_cost = CostJointJerk(
+            robot=dataset.robot,
+            n_support_points=dataset.n_support_points,
+            lambda_jerk=inference_args["lambda_jerk"],
             tensor_args=tensor_args,
         )
 
     costs = [
         cost
-        for cost in [collision_cost, position_cost, velocity_cost, acceleration_cost]
+        for cost in [collision_cost, velocity_cost, acceleration_cost, jerk_cost,]
         if cost is not None
     ]
+    
     costs_extra = [
         cost
         for cost in [
             collision_cost_extra,
-            position_cost,
             velocity_cost,
             acceleration_cost,
+            jerk_cost,
         ]
         if cost is not None
     ]
+    
+    max_grad_norm = inference_args.get("max_grad_norm", None)
+    n_interpolate = inference_args.get("n_interpolate", None)
+    t_start_guide = inference_args.get("t_start_guide", 0)
+    n_guide_steps = inference_args.get("n_guide_steps", 0)
+    
+    if costs != []:
+        guide = GradientOptimization(
+            env=dataset.env,
+            robot=dataset.robot,
+            normalizer=dataset.normalizer,
+            n_support_points=dataset.n_support_points,
+            n_control_points=dataset.n_control_points,
+            costs=costs,
+            max_grad_norm=max_grad_norm,
+            n_interpolate=n_interpolate,
+            tensor_args=tensor_args,
+            use_extra_objects=False,
+        )
+        
+    else:
+        guide = None
 
-    guide = GradientOptimization(
-        env=dataset.env,
-        robot=dataset.robot,
-        normalizer=dataset.normalizer,
-        n_support_points=dataset.n_support_points,
-        n_control_points=dataset.n_control_points,
-        costs=costs,
-        max_grad_norm=max_grad_norm,
-        n_interpolate=n_interpolate,
-        tensor_args=tensor_args,
-        use_extra_objects=False,
-    )
-
-    guide_extra = GradientOptimization(
-        env=dataset.env,
-        robot=dataset.robot,
-        normalizer=dataset.normalizer,
-        n_support_points=dataset.n_support_points,
-        n_control_points=dataset.n_control_points,
-        costs=costs_extra,
-        max_grad_norm=max_grad_norm,
-        n_interpolate=n_interpolate,
-        tensor_args=tensor_args,
-        use_extra_objects=True,
-    )
+    if costs_extra != []:
+         guide_extra = GradientOptimization(
+            env=dataset.env,
+            robot=dataset.robot,
+            normalizer=dataset.normalizer,
+            n_support_points=dataset.n_support_points,
+            n_control_points=dataset.n_control_points,
+            costs=costs_extra,
+            max_grad_norm=max_grad_norm,
+            n_interpolate=n_interpolate,
+            tensor_args=tensor_args,
+            use_extra_objects=True,
+        )
+         
+    else:
+        guide_extra = None
 
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
