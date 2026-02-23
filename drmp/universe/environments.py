@@ -9,15 +9,6 @@ from drmp.universe.grid_map_sdf import GridMapSDF
 from drmp.universe.primitives import MultiBoxField, MultiSphereField, ObjectField
 
 
-def get_envs():
-    return {
-        "EnvEmpty2D": EnvEmpty2D,
-        "EnvSimple2D": EnvSimple2D,
-        "EnvDense2D": EnvDense2D,
-        "EnvDenseNarrowPassage2D": EnvDenseNarrowPassage2D,
-    }
-
-
 def create_workspace_boundary_boxes(limits: np.ndarray, r: float = 0.2) -> list:
     x_min, y_min = limits[0]
     x_max, y_max = limits[1]
@@ -56,6 +47,7 @@ class EnvBase(ABC):
         grid_map_sdf_fixed: Any = None,
         grid_map_sdf_extra: Any = None,
     ):
+        self.name = None
         self.tensor_args = tensor_args
         self.limits = limits
         self.limits_np = limits.cpu().numpy()
@@ -96,7 +88,7 @@ class EnvEmpty2D(EnvBase):
         grid_map_sdf_fixed: Any = None,
         grid_map_sdf_extra: Any = None,
     ):
-        # Create workspace boundary boxes
+        self.name = "EnvEmpty2D"
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
         boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
             limits_np
@@ -133,6 +125,85 @@ class EnvEmpty2D(EnvBase):
         )
 
 
+class EnvSparse2D(EnvBase):
+    def __init__(
+        self,
+        tensor_args: Dict[str, Any],
+        grid_map_sdf_fixed: Any = None,
+        grid_map_sdf_extra: Any = None,
+    ):
+        self.name = "EnvSparse2D"
+        limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
+        boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
+            limits_np
+        )
+
+        obj_field_fixed = ObjectField(
+            [
+                MultiSphereField(
+                    centers=np.array(
+                        [
+                            [-0.6, 0.4],
+                            [-0.5, -0.6],
+                            [0.2, 0.1],
+                            [0.6, -0.7],
+                            [0.7, 0.7],
+                        ]
+                    ),
+                    radii=np.array(
+                        [
+                            0.2,
+                            0.2,
+                            0.2,
+                            0.2,
+                            0.2,
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                ),
+                MultiBoxField(
+                    boundary_centers,
+                    boundary_half_sizes,
+                    tensor_args=tensor_args,
+                ),
+            ]
+        )
+
+        obj_field_extra = ObjectField(
+            [
+                MultiSphereField(
+                    np.array(
+                        [
+                            [0.1, -0.5],
+                            [0.0, 0.7],
+                            [-0.5, -0.1],
+                            [0.8, 0.0],
+                        ]
+                    ),
+                    np.array(
+                        [
+                            0.1,
+                            0.1,
+                            0.1,
+                            0.1,
+                        ]
+                    ),
+                    tensor_args=tensor_args,
+                )
+            ]
+        )
+
+        super().__init__(
+            limits=torch.tensor(limits_np, **tensor_args),
+            obj_field_fixed=obj_field_fixed,
+            obj_field_extra=obj_field_extra,
+            sdf_cell_size=0.005,
+            grid_map_sdf_fixed=grid_map_sdf_fixed,
+            grid_map_sdf_extra=grid_map_sdf_extra,
+            tensor_args=tensor_args,
+        )
+
+
 class EnvSimple2D(EnvBase):
     def __init__(
         self,
@@ -140,7 +211,7 @@ class EnvSimple2D(EnvBase):
         grid_map_sdf_fixed: Any = None,
         grid_map_sdf_extra: Any = None,
     ):
-        # Create workspace boundary boxes
+        self.name = "EnvSimple2D"
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
         boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
             limits_np
@@ -266,6 +337,7 @@ class EnvDense2D(EnvBase):
         grid_map_sdf_fixed: Any = None,
         grid_map_sdf_extra: Any = None,
     ):
+        self.name = "EnvDense2D"
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
         boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
             limits_np
@@ -419,6 +491,7 @@ class EnvDenseNarrowPassage2D(EnvBase):
         grid_map_sdf_fixed: Any = None,
         grid_map_sdf_extra: Any = None,
     ):
+        self.name = "EnvDenseNarrowPassage2D"
         limits_np = np.array([[-1.0, -1.0], [1.0, 1.0]])
         boundary_centers, boundary_half_sizes = create_workspace_boundary_boxes(
             limits_np
@@ -555,3 +628,13 @@ class EnvDenseNarrowPassage2D(EnvBase):
             grid_map_sdf_fixed=grid_map_sdf_fixed,
             grid_map_sdf_extra=grid_map_sdf_extra,
         )
+
+
+def get_envs():
+    return {
+        "EnvEmpty2D": EnvEmpty2D,
+        "EnvSparse2D": EnvSparse2D,
+        "EnvSimple2D": EnvSimple2D,
+        "EnvDense2D": EnvDense2D,
+        "EnvDenseNarrowPassage2D": EnvDenseNarrowPassage2D,
+    }

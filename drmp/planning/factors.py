@@ -4,7 +4,6 @@ import torch
 
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils import interpolate_trajectories
 
 
 class UnaryFactor:
@@ -50,7 +49,7 @@ class FieldFactor:
         calc_jacobian: bool = False,
         return_full_error: bool = True,
     ) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
-        trajectories_interpolated = interpolate_trajectories(
+        trajectories_interpolated = robot.linearly_interpolate_trajectories(
             trajectories, n_interpolate=n_interpolate
         )
         error_interpolated = robot.compute_cost(

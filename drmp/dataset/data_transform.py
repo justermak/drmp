@@ -81,7 +81,7 @@ class GaussianNormalizer(NormalizerBase):
         return x * self.std + self.mean
 
 
-def get_normalizers():
+def get_data_transforms():
     return {
         "TrivialNormalizer": TrivialNormalizer,
         "LimitsNormalizer": LimitsNormalizer,

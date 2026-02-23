@@ -7,8 +7,12 @@ import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm.autonotebook import tqdm
 
+from drmp.dataset.data_transform import (
+    NormalizerBase,
+    TrivialNormalizer,
+    get_data_transforms,
+)
 from drmp.dataset.filtering import get_filter_functions
-from drmp.dataset.transform import NormalizerBase, TrivialNormalizer, get_normalizers
 from drmp.planning.costs import (
     CostJointAcceleration,
     CostJointJerk,
@@ -24,7 +28,7 @@ from drmp.universe.robot import RobotBase, get_robots
 from drmp.utils import fix_random_seed, save_config_to_yaml
 from drmp.visualizer import Visualizer
 
-NORMALIZERS = get_normalizers()
+NORMALIZERS = get_data_transforms()
 
 ENVS = get_envs()
 ROBOTS = get_robots()
@@ -40,6 +44,7 @@ class TrajectoryDataset(Dataset):
         n_support_points: int,
         duration: float,
         spline_degree: int,
+        additional_robot_args: Dict[str, Any],
         tensor_args: Dict[str, Any],
     ):
         self.tensor_args = tensor_args
@@ -50,18 +55,21 @@ class TrajectoryDataset(Dataset):
         self.robot_margin = robot_margin
         self.generating_robot_margin = generating_robot_margin
         self.spline_degree = spline_degree
+        self.additional_robot_args = additional_robot_args
         self.env: EnvBase = ENVS[env_name](tensor_args=tensor_args)
         self.robot: RobotBase = ROBOTS[robot_name](
             margin=robot_margin,
             dt=duration / (n_support_points - 1),
             spline_degree=spline_degree,
             tensor_args=tensor_args,
+            **additional_robot_args,
         )
         self.generating_robot: RobotBase = ROBOTS[robot_name](
             margin=generating_robot_margin,
             dt=duration / (n_support_points - 1),
             spline_degree=spline_degree,
             tensor_args=tensor_args,
+            **additional_robot_args,
         )
 
         self.apply_augmentations: bool = None
@@ -222,7 +230,7 @@ class TrajectoryDataset(Dataset):
             x = self.trajectories_normalized[idx]
 
         if self.apply_augmentations and torch.rand(1).item() < 0.5:
-            x = torch.flip(x, dims=[0])
+            x = self.robot.invert_trajectories(x)
             start_pos_normalized, goal_pos_normalized = (
                 goal_pos_normalized,
                 start_pos_normalized,
@@ -251,14 +259,17 @@ class TrajectoryDataset(Dataset):
             n_support_points,
             duration,
             spline_degree,
+            additional_robot_args,
             n_trajectories_per_task,
             threshold_start_goal_pos,
             n_sampling_steps,
             n_optimization_steps,
+            smoothen,
+            create_straight_line_trajectories,
             use_gpmp2,
             n_control_points,
-            rrt_connect_max_step_size,
             rrt_connect_max_radius,
+            rrt_connect_n_points,
             rrt_connect_n_samples,
             gpmp2_n_interpolate,
             gpmp2_sigma_start,
@@ -287,17 +298,19 @@ class TrajectoryDataset(Dataset):
                 grid_map_sdf_fixed=grid_map_sdf_fixed,
                 grid_map_sdf_extra=grid_map_sdf_extra,
             )
-            generating_robot: RobotBase = ROBOTS[robot_name](
-                margin=generating_robot_margin,
-                dt=duration / (n_support_points - 1),
-                spline_degree=spline_degree,
-                tensor_args=tensor_args,
-            )
             robot: RobotBase = ROBOTS[robot_name](
                 margin=robot_margin,
                 dt=duration / (n_support_points - 1),
                 spline_degree=spline_degree,
                 tensor_args=tensor_args,
+                **additional_robot_args,
+            )
+            generating_robot: RobotBase = ROBOTS[robot_name](
+                margin=generating_robot_margin,
+                dt=duration / (n_support_points - 1),
+                spline_degree=spline_degree,
+                tensor_args=tensor_args,
+                **additional_robot_args,
             )
             normalizer = TrivialNormalizer()
 
@@ -305,8 +318,8 @@ class TrajectoryDataset(Dataset):
                 env=env,
                 robot=generating_robot,
                 n_trajectories=n_trajectories_per_task,
-                max_step_size=rrt_connect_max_step_size,
                 max_radius=rrt_connect_max_radius,
+                n_points=rrt_connect_n_points,
                 n_samples=rrt_connect_n_samples,
                 use_extra_objects=False,
                 tensor_args=tensor_args,
@@ -395,6 +408,8 @@ class TrajectoryDataset(Dataset):
             planner = HybridPlanner(
                 sampling_based_planner=sampling_based_planner,
                 optimization_based_planner=optimization_based_planner,
+                smoothen=smoothen,
+                create_straight_line_trajectories=create_straight_line_trajectories,
                 n_trajectories=n_trajectories_per_task,
                 n_support_points=n_support_points,
                 dt=generating_robot.dt,
@@ -418,27 +433,26 @@ class TrajectoryDataset(Dataset):
             start_pos = start_pos.squeeze(0)
             goal_pos = goal_pos.squeeze(0)
 
-            planner.reset(start_pos, goal_pos)
-
             trajectories = planner.optimize(
+                start_pos=start_pos,
+                goal_pos=goal_pos,
                 n_sampling_steps=n_sampling_steps,
                 n_optimization_steps=n_optimization_steps,
                 debug=debug,
             )
-
             _, trajectories_free, _ = robot.get_trajectories_collision_and_free(
                 env=env, trajectories=trajectories
             )
             n_free = len(trajectories_free)
             n_collision = len(trajectories) - n_free
 
-            print("Saving data...")
             torch.save(
                 trajectories.cpu(),
                 os.path.join(dataset_dir, f"trajectories_{task_id}.pt"),
             )
 
             if debug:
+                print(f"Task {task_id} - Free trajectories: {n_free}")
                 planning_visualizer = Visualizer(
                     env=env, robot=robot, use_extra_objects=False
                 )
@@ -451,6 +465,7 @@ class TrajectoryDataset(Dataset):
                         save_path=os.path.join(
                             dataset_dir, f"trajectories_figure_{task_id}.png"
                         ),
+                        draw_indices=[0]
                     )
                 except Exception as e:
                     print(f"Visualization failed for task {task_id}: {e}")
@@ -470,10 +485,12 @@ class TrajectoryDataset(Dataset):
         threshold_start_goal_pos: float,
         n_sampling_steps: int,
         n_optimization_steps: int,
+        smoothen: bool,
+        create_straight_line_trajectories: bool,
         use_gpmp2: bool,
         n_control_points: int,
-        rrt_connect_max_step_size: float,
         rrt_connect_max_radius: float,
+        rrt_connect_n_points: int,
         rrt_connect_n_samples: int,
         gpmp2_n_interpolate: int,
         gpmp2_sigma_start: float,
@@ -504,37 +521,12 @@ class TrajectoryDataset(Dataset):
             "n_support_points": self.n_support_points,
             "duration": self.duration,
             "spline_degree": self.spline_degree,
+            "additional_robot_args": self.additional_robot_args,
         }
 
-        info_config = {
-            "n_tasks": n_tasks,
-            "n_trajectories_per_task": n_trajectories_per_task,
-            "threshold_start_goal_pos": threshold_start_goal_pos,
-            "n_sampling_steps": n_sampling_steps,
-            "n_optimization_steps": n_optimization_steps,
-            "use_gpmp2": use_gpmp2,
-            "n_control_points": n_control_points,
-            "rrt_connect_max_step_size": rrt_connect_max_step_size,
-            "rrt_connect_max_radius": rrt_connect_max_radius,
-            "rrt_connect_n_samples": rrt_connect_n_samples,
-            "gpmp2_n_interpolate": gpmp2_n_interpolate,
-            "gpmp2_sigma_start": gpmp2_sigma_start,
-            "gpmp2_sigma_goal_prior": gpmp2_sigma_goal_prior,
-            "gpmp2_sigma_gp": gpmp2_sigma_gp,
-            "gpmp2_sigma_collision": gpmp2_sigma_collision,
-            "gpmp2_step_size": gpmp2_step_size,
-            "gpmp2_delta": gpmp2_delta,
-            "gpmp2_method": gpmp2_method,
-            "grad_lambda_obstacles": grad_lambda_obstacles,
-            "grad_lambda_velocity": grad_lambda_velocity,
-            "grad_lambda_acceleration": grad_lambda_acceleration,
-            "grad_lambda_jerk": grad_lambda_jerk,
-            "grad_max_grad_norm": grad_max_grad_norm,
-            "grad_n_interpolate": grad_n_interpolate,
-            "val_portion": val_portion,
-            "n_processes": n_processes,
-            "seed": seed,
-        }
+        info_config = locals().copy()
+        del info_config["self"]
+        del info_config["dataset_dir"]
 
         save_config_to_yaml(init_config, os.path.join(dataset_dir, "init_config.yaml"))
         save_config_to_yaml(info_config, os.path.join(dataset_dir, "info_config.yaml"))
@@ -585,14 +577,17 @@ class TrajectoryDataset(Dataset):
                 self.n_support_points,
                 self.duration,
                 self.spline_degree,
+                self.additional_robot_args,
                 n_trajectories_per_task,
                 threshold_start_goal_pos,
                 n_sampling_steps,
                 n_optimization_steps,
+                smoothen,
+                create_straight_line_trajectories,
                 use_gpmp2,
                 n_control_points,
-                rrt_connect_max_step_size,
                 rrt_connect_max_radius,
+                rrt_connect_n_points,
                 rrt_connect_n_samples,
                 gpmp2_n_interpolate,
                 gpmp2_sigma_start,
@@ -629,7 +624,7 @@ class TrajectoryDataset(Dataset):
         n_completed_tasks = 0
         n_failed_tasks = 0
         with tqdm(
-            total=len(tasks_to_run), mininterval=1, desc="Generating data"
+            total=len(tasks_to_run), desc="Generating data"
         ) as pbar:
             pbar.update(n_skipped_tasks)
 
@@ -662,6 +657,7 @@ class TrajectoryDataset(Dataset):
                             }
                         )
                         pbar.update(1)
+                        
             else:
                 for args in tasks_to_run:
                     res = self._worker_process_task(args)
@@ -676,7 +672,15 @@ class TrajectoryDataset(Dataset):
                         raise RuntimeError(
                             f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
                         )
-
+                        
+                    pbar.set_postfix(
+                        {
+                            "status": status,
+                            "collision": n_collision,
+                            "free": n_free,
+                            "failed": n_failed_tasks,
+                        }
+                    )
                     pbar.update(1)
 
         n_trajectories_total = 0

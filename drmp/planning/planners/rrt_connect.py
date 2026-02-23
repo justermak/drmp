@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import torch
 
@@ -14,24 +14,25 @@ class RRTConnect(ClassicalPlanner):
         env: EnvBase,
         robot: RobotBase,
         n_trajectories: int,
-        max_step_size: float,
         max_radius: float,
+        n_points: float,
         n_samples: int,
         use_extra_objects: bool,
         tensor_args: Dict[str, Any],
         eps: float = 1e-6,
     ):
         super().__init__(
+            name="RRTConnect",
             env=env,
             robot=robot,
             use_extra_objects=use_extra_objects,
             tensor_args=tensor_args,
         )
-        self.max_step_size = max_step_size
+        self.n_points = n_points
         self.max_radius = max_radius
         self.n_samples = n_samples
         self.n_trajectories = n_trajectories
-        self.n_trajectories_with_luft = int(1.2 * n_trajectories)
+        self.n_trajectories_with_luft = int(1.1 * n_trajectories)
         self.use_extra_objects = use_extra_objects
         self.eps = eps
 
@@ -39,29 +40,6 @@ class RRTConnect(ClassicalPlanner):
         ok = self._initialize_samples()
         if not ok:
             raise RuntimeError("Failed to initialize RRTConnect samples")
-
-    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
-        self.start_pos = start_pos.to(**self.tensor_args)
-        self.goal_pos = goal_pos.to(**self.tensor_args)
-
-        self.samples_ptr = 0
-
-        self.nodes_trees_1_pos = (
-            self.start_pos.unsqueeze(0)
-            .repeat(self.n_trajectories_with_luft, 1)
-            .unsqueeze(1)
-        )
-        self.nodes_trees_2_pos = (
-            self.goal_pos.unsqueeze(0)
-            .repeat(self.n_trajectories_with_luft, 1)
-            .unsqueeze(1)
-        )
-        self.nodes_trees_1_parents = [
-            [None] for _ in range(self.n_trajectories_with_luft)
-        ]
-        self.nodes_trees_2_parents = [
-            [None] for _ in range(self.n_trajectories_with_luft)
-        ]
 
     def _initialize_samples(self) -> bool:
         samples, success = self.robot.random_collision_free_points(
@@ -85,284 +63,215 @@ class RRTConnect(ClassicalPlanner):
         self.samples_ptr += n_samples
         return samples
 
-    def get_nearest_nodes(
-        self, nodes: torch.Tensor, targets: torch.Tensor, idxs: List[int]
-    ) -> Tuple[torch.Tensor, torch.LongTensor]:
-        distances = torch.linalg.norm(nodes[idxs] - targets.unsqueeze(1), dim=-1)
-        min_idxs = torch.min(distances, dim=-1).indices
-        return nodes[idxs, min_idxs], min_idxs
-
-    def extend(
+    def extend_and_cut(
         self,
-        q1: torch.Tensor,
-        q2: torch.Tensor,
-        max_step_size: float,
-        max_radius: float,
+        points: torch.Tensor,
+        targets: torch.Tensor,
     ) -> torch.Tensor:
-        dist = torch.linalg.norm(q1 - q2, dim=-1)
-        q2 = q1 + (q2 - q1) * torch.minimum(
-            (max_radius / dist), torch.ones_like(dist)
-        ).unsqueeze(-1)
-        alpha = torch.linspace(0, 1, int(max_radius / max_step_size) + 2).to(
-            **self.tensor_args
-        )
-        q1 = q1.unsqueeze(1)
-        q2 = q2.unsqueeze(1)
-        extension = q1 + (q2 - q1) * alpha.unsqueeze(0).unsqueeze(-1)
-        return extension
+        diff = targets - points
+        dist = torch.linalg.norm(diff, dim=-1)
+        direction = diff / (dist.unsqueeze(-1) + 1e-8)
 
-    def cut(self, sequences: torch.Tensor) -> torch.Tensor:
+        targets = points + direction * torch.minimum(
+            dist, torch.tensor(self.max_radius, device=dist.device)
+        ).unsqueeze(-1)
+        
+        targets = self.robot.enforce_rigid_constraints(targets)
+
+        paths = self.robot.create_straight_line_trajectories(points, targets, n_support_points=self.n_points)
+
         in_collision = self.robot.get_collision_mask(
-            env=self.env, points=sequences, on_extra=self.use_extra_objects
+            env=self.env, points=paths, on_extra=self.use_extra_objects
         )
-        in_collision = torch.cat(
-            (in_collision, torch.ones_like(in_collision[:, :1], dtype=torch.bool)),
-            dim=-1,
-        )
-        sequences = torch.cat((sequences, sequences[:, -1:, :]), dim=1)
-        hack = torch.arange(sequences.shape[1], 0, -1).to(**self.tensor_args)
-        max_idxs = torch.argmax(in_collision * hack, dim=-1) - 1
-        res = sequences[torch.arange(sequences.shape[0]), max_idxs]
+
+        has_collision = torch.any(in_collision, dim=-1)
+        first_collision_idx = in_collision.float().argmax(dim=-1) - 1
+        idx = torch.where(has_collision, first_collision_idx, paths.shape[1] - 1)
+
+        res = paths[torch.arange(paths.shape[0]), idx]
+
         return res
 
-    def purge_duplicates_from_trajectories(
-        self, paths: List[torch.Tensor]
-    ) -> torch.Tensor:
-        selections = []
-        for path in paths:
-            if path is None:
-                print("WTF: RRT-Connect failed to find a path")
-                selections.append(None)
-                continue
-            if path.shape[0] <= 2:
-                selections.append(path)
-                continue
-
-            diff = torch.norm(torch.diff(path, dim=-2), dim=-1)
-            idxs = torch.argwhere(diff > self.eps).squeeze(-1)
-            selection = path[idxs]
-
-            if not torch.allclose(selection[0], path[0], atol=self.eps):
-                selection = torch.cat((path[:1], selection), dim=0)
-            if not torch.allclose(selection[-1], path[-1], atol=self.eps):
-                selection = torch.cat((selection, path[-1:]), dim=0)
-            selections.append(selection)
-        return selections
-
-    def trace(
-        self, nodes: torch.Tensor, parents: List[Optional[int]]
-    ) -> List[torch.Tensor]:
-        path = []
-        idx = len(nodes) - 1
-        while idx is not None:
-            path.append(nodes[idx].unsqueeze(0))
-            idx = parents[idx]
-        return path
-
     def optimize(
-        self, n_sampling_steps: int, print_freq: int = 50, debug: bool = True
+        self,
+        start_pos: torch.Tensor,
+        goal_pos: torch.Tensor,
+        n_sampling_steps: int,
+        print_freq: int = 50,
+        debug: bool = True,
     ) -> Optional[torch.Tensor]:
+        self.start_pos = start_pos
+        self.goal_pos = goal_pos
+        self.dim = start_pos.shape[-1]
+        self.samples_ptr = 0
         self.n_sampling_steps = n_sampling_steps
         step = 0
-        n_success = 0
-        paths = []
-        idxs = set(range(self.n_trajectories_with_luft))
-        idxs_list = list(idxs)
+
+        max_nodes = self.n_sampling_steps + 1
+
+        tree_nodes = torch.zeros(
+            (2, self.n_trajectories_with_luft, max_nodes, self.dim), **self.tensor_args
+        )
+
+        tree_nodes[0, :, 0, :] = start_pos
+        tree_nodes[1, :, 0, :] = goal_pos
+
+        self.tree_nodes = tree_nodes
+
+        tree_parents = torch.zeros(
+            (2, self.n_trajectories_with_luft, max_nodes),
+            dtype=torch.long,
+            device=start_pos.device,
+        )
+
+        tree_parents[0, :, 0] = -1
+        tree_parents[1, :, 0] = -1
+
+        self.tree_parents = tree_parents
+
+        tree_counts = torch.ones(
+            (2, self.n_trajectories_with_luft),
+            dtype=torch.long,
+            device=start_pos.device,
+        )
+
+        self.tree_counts = tree_counts
+
+        active_mask = torch.ones(
+            self.n_trajectories_with_luft, dtype=torch.bool, device=start_pos.device
+        )
+
+        cur = 1
+
         with TimerCUDA() as t:
-            while step < n_sampling_steps:
-                if debug and step % print_freq == 0:
-                    self.print_info(step, t.elapsed, n_success)
-
-                step += 1
-
-                self.nodes_trees_1_pos, self.nodes_trees_2_pos = (
-                    self.nodes_trees_2_pos,
-                    self.nodes_trees_1_pos,
-                )
-                self.nodes_trees_1_parents, self.nodes_trees_2_parents = (
-                    self.nodes_trees_2_parents,
-                    self.nodes_trees_1_parents,
-                )
-                targets = self.sample(len(idxs_list))
-                nearest_pos, nearest_idxs = self.get_nearest_nodes(
-                    self.nodes_trees_1_pos, targets, idxs_list
-                )
-                extended = self.extend(
-                    nearest_pos, targets, self.max_step_size, self.max_radius
-                )
-                cut = self.cut(extended)
-                n1 = torch.zeros_like(self.nodes_trees_1_pos[..., 0, :])
-                n1[idxs_list] = cut
-
-                self.nodes_trees_1_pos = torch.cat(
-                    [self.nodes_trees_1_pos, n1.unsqueeze(1)], dim=1
-                )
-                for i, j in enumerate(idxs_list):
-                    self.nodes_trees_1_parents[j].append(nearest_idxs[i].item())
-
-                nearest_pos, nearest_idxs = self.get_nearest_nodes(
-                    self.nodes_trees_2_pos, cut, idxs_list
-                )
-                extended = self.extend(
-                    nearest_pos, cut, self.max_step_size, self.max_radius
-                )
-                cut = self.cut(extended)
-                n2 = torch.zeros_like(self.nodes_trees_2_pos[..., 0, :])
-                n2[idxs_list] = cut
-
-                self.nodes_trees_2_pos = torch.cat(
-                    [self.nodes_trees_2_pos, n2.unsqueeze(1)], dim=1
-                )
-                for i, j in enumerate(idxs_list):
-                    self.nodes_trees_2_parents[j].append(nearest_idxs[i].item())
-
-                for i in idxs_list:
-                    if torch.allclose(
-                        self.nodes_trees_1_pos[i][-1],
-                        self.nodes_trees_2_pos[i][-1],
-                        atol=self.eps,
-                    ):
-                        path1 = self.trace(
-                            self.nodes_trees_1_pos[i], self.nodes_trees_1_parents[i]
-                        )
-                        path2 = self.trace(
-                            self.nodes_trees_2_pos[i], self.nodes_trees_2_parents[i]
-                        )
-
-                        tree_1_root = self.nodes_trees_1_pos[i][0]
-                        if torch.allclose(tree_1_root, self.goal_pos, atol=self.eps):
-                            path1, path2 = path2, path1
-
-                        paths.append(torch.cat(path1[::-1] + path2[1:], dim=0))
-                        n_success += 1
-                        idxs.remove(i)
-                        if n_success >= self.n_trajectories:
-                            break
-
-                idxs_list = list(idxs)
-                if n_success >= self.n_trajectories:
-                    if debug:
-                        self.print_info(step, t.elapsed, n_success)
+            for step in range(1, n_sampling_steps + 1):
+                cur = 1 - cur
+                n_active = active_mask.sum().item()
+                if self.n_trajectories_with_luft - n_active >= self.n_trajectories:
                     break
 
-        trajectories = self.purge_duplicates_from_trajectories(paths)
+                if debug and step % print_freq == 0:
+                    total_nodes = tree_counts.sum().item()
+                    pad = len(str(self.n_sampling_steps))
+                    print(
+                        f"| Step: {step:>{pad}}/{self.n_sampling_steps:>{pad}} "
+                        f"| Time: {t.elapsed:.3f}s "
+                        f"| Nodes: {total_nodes} "
+                        f"| Success: {self.n_trajectories_with_luft - n_active}/{self.n_trajectories}"
+                    )
+
+                max_len = tree_counts[cur].max().item()
+                targets = self.sample(n_active)
+                idx = torch.arange(max_len, device=targets.device).expand(n_active, -1)
+                real_idx = torch.arange(
+                    self.n_trajectories_with_luft, device=targets.device
+                )[active_mask]
+
+                cur_nodes = tree_nodes[cur, active_mask, :max_len, :]
+                cur_counts = tree_counts[cur, active_mask]
+
+                mask = idx < cur_counts.unsqueeze(-1)
+                dists = torch.linalg.norm(cur_nodes - targets.unsqueeze(-2), dim=-1)
+                dists_masked = torch.where(
+                    mask, dists, torch.tensor(float("inf"), device=dists.device)
+                )
+
+                nearest_idxs = torch.min(dists_masked, dim=-1)[1]
+                nearest_nodes = cur_nodes[torch.arange(n_active), nearest_idxs]
+                new_nodes = self.extend_and_cut(
+                    nearest_nodes,
+                    targets,
+                )
+
+                upd_mask = (
+                    torch.linalg.norm(new_nodes - nearest_nodes, dim=-1) > self.eps
+                )
+
+                row_idx = real_idx[upd_mask]
+                col_idx = cur_counts[upd_mask]
+
+                if len(row_idx) > 0:
+                    tree_nodes[cur, row_idx, col_idx] = new_nodes[upd_mask]
+                    tree_parents[cur, row_idx, col_idx] = nearest_idxs[upd_mask]
+                    tree_counts[cur, row_idx] += 1
+
+                max_len = tree_counts[1 - cur].max().item()
+                targets2 = new_nodes[upd_mask]
+                candidates_mask = active_mask.clone()
+                candidates_mask[real_idx] = upd_mask
+                n_candidates = candidates_mask.sum().item()
+
+                if n_candidates == 0:
+                    continue
+
+                idx = torch.arange(max_len, device=targets.device).expand(
+                    n_candidates, -1
+                )
+                real_idx = torch.arange(
+                    self.n_trajectories_with_luft, device=targets.device
+                )[candidates_mask]
+
+                other_nodes = tree_nodes[1 - cur, candidates_mask, :max_len, :]
+                other_counts = tree_counts[1 - cur, candidates_mask]
+
+                mask = idx < other_counts.unsqueeze(-1)
+                dists = torch.linalg.norm(other_nodes - targets2.unsqueeze(-2), dim=-1)
+                dists_masked = torch.where(
+                    mask, dists, torch.tensor(float("inf"), device=dists.device)
+                )
+
+                nearest_idxs = torch.min(dists_masked, dim=-1)[1]
+                nearest_nodes = other_nodes[torch.arange(n_candidates), nearest_idxs]
+                nodes_new_other = self.extend_and_cut(
+                    nearest_nodes,
+                    targets2,
+                )
+
+                upd_mask = (
+                    torch.linalg.norm(nodes_new_other - nearest_nodes, dim=-1)
+                    > self.eps
+                )
+
+                row_idx = real_idx[upd_mask]
+                col_idx = other_counts[upd_mask]
+
+                if len(row_idx) > 0:
+                    tree_nodes[1 - cur, row_idx, col_idx] = nodes_new_other[upd_mask]
+                    tree_parents[1 - cur, row_idx, col_idx] = nearest_idxs[upd_mask]
+                    tree_counts[1 - cur, row_idx] += 1
+
+                active_mask[real_idx] = (
+                    torch.linalg.norm(nodes_new_other - targets2, dim=-1) > self.eps
+                )
+
+            trajectories = []
+
+            tree_nodes = tree_nodes.cpu()
+            tree_counts = tree_counts.cpu()
+            tree_parents = tree_parents.cpu()
+            success_mask = (~active_mask).cpu()
+
+            cnt = 0
+            for i in torch.where(success_mask)[0]:
+                path1 = []
+                cur = tree_counts[0, i].item() - 1
+                while cur != -1:
+                    path1.append(tree_nodes[0, i, cur])
+                    cur = tree_parents[0, i, cur].item()
+                path1 = path1[::-1]
+
+                path2 = []
+                cur = tree_counts[1, i].item() - 1
+                while cur != -1:
+                    path2.append(tree_nodes[1, i, cur])
+                    cur = tree_parents[1, i, cur].item()
+                if torch.allclose(path1[-1], path2[0], atol=self.eps):
+                    path2 = path2[1:]
+                trajectories.append(torch.stack(path1 + path2).to(**self.tensor_args))
+                cnt += 1
+                if cnt >= self.n_trajectories:
+                    break
+
+        trajectories = trajectories + [None] * (self.n_trajectories - len(trajectories))
+
         return trajectories
-
-    def print_info(self, step, elapsed_time, success) -> None:
-        total_nodes = sum(
-            len(self.nodes_trees_1_pos[i]) + len(self.nodes_trees_2_pos[i])
-            for i in range(self.n_trajectories_with_luft)
-        )
-        pad = len(str(self.n_sampling_steps))
-        print(
-            f"| Step: {step:>{pad}}/{self.n_sampling_steps:>{pad}} "
-            f"| Time: {elapsed_time:.3f} s"
-            f"| Nodes: {total_nodes} "
-            f"| Success: {success}/{self.n_trajectories}"
-        )
-
-    def visualize_trees(
-        self,
-        traj_idx: int = 0,
-        save_path: str = "rrt_trees.png",
-    ) -> None:
-        """Visualize the RRT trees for a specific trajectory."""
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            print("Matplotlib not available for visualization")
-            return
-
-        fig, ax = plt.subplots(figsize=(10, 10))
-
-        # Render environment
-        from drmp.visualizer import Visualizer
-
-        vis = Visualizer(self.env, self.robot, use_extra_objects=self.use_extra_objects)
-        vis._render_environment(ax, use_extra_objects=self.use_extra_objects)
-
-        # Draw tree 1 (from start)
-        nodes_1 = self.nodes_trees_1_pos[traj_idx].cpu().numpy()
-        parents_1 = self.nodes_trees_1_parents[traj_idx]
-
-        for i, parent_idx in enumerate(parents_1):
-            if parent_idx is not None:
-                child = nodes_1[i]
-                parent = nodes_1[parent_idx]
-                ax.plot(
-                    [parent[0], child[0]],
-                    [parent[1], child[1]],
-                    "b-",
-                    alpha=0.5,
-                    linewidth=0.5,
-                )
-
-        ax.scatter(
-            nodes_1[:, 0],
-            nodes_1[:, 1],
-            c="blue",
-            s=10,
-            alpha=0.6,
-            label="Tree 1 (start)",
-            zorder=10,
-        )
-
-        # Draw tree 2 (from goal)
-        nodes_2 = self.nodes_trees_2_pos[traj_idx].cpu().numpy()
-        parents_2 = self.nodes_trees_2_parents[traj_idx]
-
-        for i, parent_idx in enumerate(parents_2):
-            if parent_idx is not None:
-                child = nodes_2[i]
-                parent = nodes_2[parent_idx]
-                ax.plot(
-                    [parent[0], child[0]],
-                    [parent[1], child[1]],
-                    "r-",
-                    alpha=0.5,
-                    linewidth=0.5,
-                )
-
-        ax.scatter(
-            nodes_2[:, 0],
-            nodes_2[:, 1],
-            c="red",
-            s=10,
-            alpha=0.6,
-            label="Tree 2 (goal)",
-            zorder=10,
-        )
-
-        # Draw start and goal
-        start_np = self.start_pos.cpu().numpy()
-        goal_np = self.goal_pos.cpu().numpy()
-        ax.scatter(
-            [start_np[0]],
-            [start_np[1]],
-            c="cyan",
-            s=100,
-            marker="*",
-            label="Start",
-            zorder=20,
-            edgecolors="black",
-        )
-        ax.scatter(
-            [goal_np[0]],
-            [goal_np[1]],
-            c="magenta",
-            s=100,
-            marker="*",
-            label="Goal",
-            zorder=20,
-            edgecolors="black",
-        )
-
-        ax.legend(loc="upper right")
-        ax.set_title(f"RRT-Connect Trees (Trajectory {traj_idx})")
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"Tree visualization saved to {save_path}")

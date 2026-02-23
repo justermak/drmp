@@ -92,6 +92,7 @@ class GPMP2(ClassicalPlanner):
         tensor_args: Dict[str, Any],
     ):
         super().__init__(
+            name="GPMP2",
             env=env,
             robot=robot,
             use_extra_objects=use_extra_objects,
@@ -131,11 +132,6 @@ class GPMP2(ClassicalPlanner):
             tensor_args=self.tensor_args,
         )
 
-    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
-        self.start_pos = start_pos.to(**self.tensor_args)
-        self.goal_pos = goal_pos.to(**self.tensor_args)
-        self._build_start_goal_cost(self.start_pos, self.goal_pos)
-
     def optimize(
         self,
         trajectories: torch.Tensor,
@@ -143,13 +139,16 @@ class GPMP2(ClassicalPlanner):
         print_freq: int = None,
         debug: bool = False,
     ) -> torch.Tensor:
+        self.start_pos = trajectories[0, 0, : self.n_dim]
+        self.goal_pos = trajectories[0, -1, : self.n_dim]
+        self._build_start_goal_cost(self.start_pos, self.goal_pos)
         self.n_optimization_steps = n_optimization_steps
         b, K = None, None
         with TimerCUDA() as t_opt:
-            for step in range(n_optimization_steps):
+            for step in range(1, n_optimization_steps + 1):
                 trajectories, b, K = self._step(trajectories)
                 if debug and print_freq and step % print_freq == 0:
-                    self.print_info(step + 1, t_opt.elapsed, self.get_costs(b, K))
+                    self.print_info(step, t_opt.elapsed, self.get_costs(b, K))
 
             if debug:
                 self.print_info(

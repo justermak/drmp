@@ -26,6 +26,7 @@ def run(args):
         n_support_points=args.n_support_points,
         duration=args.duration,
         spline_degree=args.spline_degree,
+        additional_robot_args=args.additional_robot_args,
         tensor_args=tensor_args,
     )
 
@@ -38,11 +39,13 @@ def run(args):
         threshold_start_goal_pos=args.threshold_start_goal_pos,
         n_sampling_steps=args.n_sampling_steps,
         n_optimization_steps=args.n_optimization_steps,
+        smoothen=args.smoothen,
+        create_straight_line_trajectories=args.create_straight_line_trajectories,
         use_gpmp2=args.use_gpmp2,
         n_control_points=args.n_control_points,
         val_portion=args.val_portion,
-        rrt_connect_max_step_size=args.rrt_connect_max_step_size,
         rrt_connect_max_radius=args.rrt_connect_max_radius,
+        rrt_connect_n_points=args.rrt_connect_n_points,
         rrt_connect_n_samples=args.rrt_connect_n_samples,
         gpmp2_n_interpolate=args.gpmp2_n_interpolate,
         gpmp2_sigma_start=args.gpmp2_sigma_start,

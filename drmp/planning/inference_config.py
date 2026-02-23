@@ -82,7 +82,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         if dataset.n_control_points is not None:
             trajectories_iters[..., :2, :] = start_pos.unsqueeze(0)
             trajectories_iters[..., -2:, :] = goal_pos.unsqueeze(0)
-            trajectories_iters = dataset.robot.get_position_interpolated(
+            trajectories_iters = dataset.robot.get_trajectories_from_bsplines(
                 control_points=trajectories_iters,
                 n_support_points=dataset.n_support_points,
             )
@@ -223,7 +223,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
             debug=False,
         )
 
-        trajectories_iters = dataset.robot.get_position_interpolated(
+        trajectories_iters = dataset.robot.get_trajectories_from_bsplines(
             control_points=control_points_iters,
             n_support_points=dataset.n_support_points,
         )
@@ -261,9 +261,9 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         if collision_mask.any():
             return None, None
 
-        self.planner.reset(start_pos, goal_pos)
-
         trajectories = self.planner.optimize(
+            start_pos=start_pos,
+            goal_pos=goal_pos,
             n_sampling_steps=self.n_sampling_steps,
             n_optimization_steps=self.n_optimization_steps,
             debug=debug,
@@ -356,7 +356,7 @@ class GenerativeModelConfig(ModelConfigBase):
                 lambda_acceleration=self.lambda_acceleration,
                 tensor_args=tensor_args,
             )
-            
+
         jerk_cost = None
         if self.lambda_jerk is not None:
             jerk_cost = CostJointJerk(
@@ -620,9 +620,11 @@ class ClassicalConfig(ModelConfigBase):
         optimization_based_planner_name: Optional[str],
         n_sampling_steps: int,
         n_optimization_steps: int,
+        smoothen: bool,
+        create_straight_line_trajectories: bool,
         n_dim: int,
-        rrt_connect_max_step_size: float,
         rrt_connect_max_radius: float,
+        rrt_connect_n_points: int,
         rrt_connect_n_samples: int,
         gpmp2_n_interpolate: int,
         gpmp2_sigma_start: float,
@@ -640,15 +642,16 @@ class ClassicalConfig(ModelConfigBase):
         grad_n_interpolate: int,
     ):
         super().__init__(use_extra_objects=use_extra_objects)
-        print(sampling_based_planner_name, optimization_based_planner_name)
         self.dataset = dataset
         self.sampling_based_planner_name = sampling_based_planner_name
         self.optimization_based_planner_name = optimization_based_planner_name
         self.n_sampling_steps = n_sampling_steps
         self.n_optimization_steps = n_optimization_steps
+        self.smoothen = smoothen
+        self.create_straight_line_trajectories = create_straight_line_trajectories
         self.n_dim = n_dim
-        self.rrt_connect_max_step_size = rrt_connect_max_step_size
         self.rrt_connect_max_radius = rrt_connect_max_radius
+        self.rrt_connect_n_points = rrt_connect_n_points
         self.rrt_connect_n_samples = rrt_connect_n_samples
         self.gpmp2_n_interpolate = gpmp2_n_interpolate
         self.gpmp2_sigma_start = gpmp2_sigma_start
@@ -671,27 +674,28 @@ class ClassicalConfig(ModelConfigBase):
         tensor_args: Dict[str, Any],
         n_trajectories_per_task: int,
     ) -> ClassicalPlannerWrapper:
+        robot = dataset.generating_robot if self.optimization_based_planner_name == "GPMP2" else dataset.robot
         sampling_based_planner = None
         if self.sampling_based_planner_name is not None:
             sampling_based_planner = RRTConnect(
                 env=dataset.env,
-                robot=dataset.generating_robot,
+                robot=robot,
                 n_trajectories=n_trajectories_per_task,
-                max_step_size=self.rrt_connect_max_step_size,
                 max_radius=self.rrt_connect_max_radius,
+                n_points=self.rrt_connect_n_points,
                 n_samples=self.rrt_connect_n_samples,
                 use_extra_objects=self.use_extra_objects,
                 tensor_args=tensor_args,
             )
 
         optimization_based_planner = None
-        if self.optimization_based_planner_name == "gpmp2":
+        if self.optimization_based_planner_name == "GPMP2":
             optimization_based_planner = GPMP2(
                 env=dataset.env,
-                robot=dataset.generating_robot,
-                n_dim=dataset.generating_robot.n_dim,
+                robot=robot,
+                n_dim=robot.n_dim,
                 n_support_points=dataset.n_support_points,
-                dt=dataset.generating_robot.dt,
+                dt=robot.dt,
                 n_interpolate=self.gpmp2_n_interpolate,
                 sigma_start=self.gpmp2_sigma_start,
                 sigma_gp=self.gpmp2_sigma_gp,
@@ -703,11 +707,11 @@ class ClassicalConfig(ModelConfigBase):
                 use_extra_objects=self.use_extra_objects,
                 tensor_args=tensor_args,
             )
-        elif self.optimization_based_planner_name == "grad":
+        elif self.optimization_based_planner_name == "GradientOptimization":
             collision_cost = None
             if self.grad_lambda_obstacles is not None:
                 collision_cost = CostObstacles(
-                    robot=dataset.generating_robot,
+                    robot=robot,
                     env=dataset.env,
                     n_support_points=dataset.n_support_points,
                     lambda_obstacles=self.grad_lambda_obstacles,
@@ -718,7 +722,7 @@ class ClassicalConfig(ModelConfigBase):
             velocity_cost = None
             if self.grad_lambda_velocity is not None:
                 velocity_cost = CostJointVelocity(
-                    robot=dataset.generating_robot,
+                    robot=robot,
                     n_support_points=dataset.n_support_points,
                     lambda_velocity=self.grad_lambda_velocity,
                     tensor_args=tensor_args,
@@ -727,16 +731,16 @@ class ClassicalConfig(ModelConfigBase):
             acceleration_cost = None
             if self.grad_lambda_acceleration is not None:
                 acceleration_cost = CostJointAcceleration(
-                    robot=dataset.generating_robot,
+                    robot=robot,
                     n_support_points=dataset.n_support_points,
                     lambda_acceleration=self.grad_lambda_acceleration,
                     tensor_args=tensor_args,
                 )
-                
+
             jerk_cost = None
             if self.grad_lambda_jerk is not None:
                 jerk_cost = CostJointJerk(
-                    robot=dataset.generating_robot,
+                    robot=robot,
                     n_support_points=dataset.n_support_points,
                     lambda_jerk=self.grad_lambda_jerk,
                     tensor_args=tensor_args,
@@ -754,7 +758,7 @@ class ClassicalConfig(ModelConfigBase):
             ]
             optimization_based_planner = GradientOptimization(
                 env=dataset.env,
-                robot=dataset.generating_robot,
+                robot=robot,
                 normalizer=dataset.normalizer,
                 n_support_points=dataset.n_support_points,
                 n_control_points=dataset.n_control_points,
@@ -768,9 +772,11 @@ class ClassicalConfig(ModelConfigBase):
         planner = HybridPlanner(
             sampling_based_planner=sampling_based_planner,
             optimization_based_planner=optimization_based_planner,
+            smoothen=self.smoothen,
+            create_straight_line_trajectories=self.create_straight_line_trajectories,
             n_trajectories=n_trajectories_per_task,
             n_support_points=dataset.n_support_points,
-            dt=dataset.generating_robot.dt,
+            dt=robot.dt,
             n_control_points=dataset.n_control_points,
             tensor_args=tensor_args,
         )
@@ -781,6 +787,7 @@ class ClassicalConfig(ModelConfigBase):
             n_sampling_steps=self.n_sampling_steps,
             n_optimization_steps=self.n_optimization_steps,
         )
+        
         return wrapper
 
     def to_dict(self) -> Dict[str, Any]:
@@ -789,8 +796,8 @@ class ClassicalConfig(ModelConfigBase):
             "n_optimization_steps": self.n_optimization_steps,
             "use_extra_objects": self.use_extra_objects,
             "n_dim": self.n_dim,
-            "rrt_connect_max_step_size": self.rrt_connect_max_step_size,
             "rrt_connect_max_radius": self.rrt_connect_max_radius,
+            "rrt_connect_n_points": self.rrt_connect_n_points,
             "rrt_connect_n_samples": self.rrt_connect_n_samples,
             "gpmp2_n_interpolate": self.gpmp2_n_interpolate,
             "gpmp2_sigma_start": self.gpmp2_sigma_start,

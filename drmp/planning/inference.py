@@ -43,8 +43,10 @@ def run_inference_for_task(
             debug=debug,
         )
     task_time = timer_model_sampling.elapsed
+    
     if trajectories_final is None:
         return None
+    
     (
         trajectories_final_collision,
         trajectories_final_free,
@@ -61,7 +63,7 @@ def run_inference_for_task(
 
     success = compute_success(trajectories_final_free)
     free_fraction = compute_free_fraction(
-        trajectories_final_free, trajectories_final_collision
+        trajectories_final_free, n_trajectories_per_task
     )
     collision_intensity = (
         compute_collision_intensity(points_final_collision_mask).cpu().numpy()

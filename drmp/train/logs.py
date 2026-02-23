@@ -51,7 +51,7 @@ def _log_trajectories_metrics(
     if dataset.n_control_points is not None:
         trajectories[..., :2, :] = start_pos.unsqueeze(0)
         trajectories[..., -2:, :] = goal_pos.unsqueeze(0)
-        trajectories = dataset.robot.get_position_interpolated(
+        trajectories = dataset.robot.get_trajectories_from_bsplines(
             control_points=trajectories,
             n_support_points=dataset.n_support_points,
         )
@@ -67,7 +67,7 @@ def _log_trajectories_metrics(
 
     tensorboard_writer.add_scalar(
         f"{prefix}free_fraction{suffix}",
-        compute_free_fraction(trajectories_free, trajectories_collision),
+        compute_free_fraction(trajectories_free, 20),
         step,
     )
     tensorboard_writer.add_scalar(

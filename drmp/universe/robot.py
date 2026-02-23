@@ -1,14 +1,12 @@
 from abc import ABC, abstractmethod
+from functools import cache
 from typing import Any, Dict, Tuple
 
+import numpy as np
 import torch
+import torch.nn.functional as F
 
 from drmp.universe.environments import EnvBase
-from drmp.utils import (
-    fit_bsplines_to_trajectories,
-    get_trajectories_from_bsplines,
-    interpolate_trajectories,
-)
 
 
 class RobotBase(ABC):
@@ -19,6 +17,7 @@ class RobotBase(ABC):
         spline_degree: int,
         tensor_args: Dict[str, Any],
     ) -> None:
+        self.name = None
         self.tensor_args = tensor_args
         self.margin = margin
         self.dt = dt
@@ -37,26 +36,161 @@ class RobotBase(ABC):
     def generate_random_points(self, env: EnvBase, n_samples: int) -> torch.Tensor:
         pass
 
-    @abstractmethod
-    def get_anchor_points(self, points: torch.Tensor) -> torch.Tensor:
-        pass
+    @staticmethod
+    @cache
+    def _get_knots(
+        n_control_points: int, degree: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        n_internal = n_control_points - degree - 1
+        internal_knots = np.linspace(0, 1, n_internal + 2)
+        knots = np.concatenate(([0.0] * degree, internal_knots, [1.0] * degree))
+        knots_torch = torch.tensor(knots, device=device, dtype=dtype)
+        return knots_torch
 
-    @abstractmethod
-    def create_straight_line_trajectory(
+    @staticmethod
+    @cache
+    def _compute_bspline_basis(
+        n_support_points: int,
+        n_control_points: int,
+        degree: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        knots = RobotBase._get_knots(
+            n_control_points, degree, device=device, dtype=dtype
+        )
+        t = torch.linspace(0, 1, n_support_points, device=device, dtype=dtype)
+        n_t = t.shape[0]
+        device = t.device
+        dtype = t.dtype
+
+        num_basis_0 = n_control_points + degree
+        basis = torch.zeros(n_t, num_basis_0, device=device, dtype=dtype)
+
+        for i in range(num_basis_0):
+            cond = (t >= knots[i]) & (t < knots[i + 1])
+            basis[:, i] = cond.type(dtype)
+
+        for d in range(1, degree + 1):
+            num_basis_d = num_basis_0 - d
+            new_basis = torch.zeros(n_t, num_basis_d, device=device, dtype=dtype)
+
+            for i in range(num_basis_d):
+                denom1 = knots[i + d] - knots[i]
+                if denom1 != 0:
+                    term1 = ((t - knots[i]) / denom1) * basis[:, i]
+                else:
+                    term1 = torch.zeros_like(basis[:, i])
+
+                denom2 = knots[i + d + 1] - knots[i + 1]
+                if denom2 != 0:
+                    term2 = ((knots[i + d + 1] - t) / denom2) * basis[:, i + 1]
+                else:
+                    term2 = torch.zeros_like(basis[:, i + 1])
+
+                new_basis[:, i] = term1 + term2
+            basis = new_basis
+
+        if t.numel() > 0:
+            t_max = knots[-1]
+            mask_end = t == t_max
+            if mask_end.any():
+                basis[mask_end, :] = 0
+                basis[mask_end, -1] = 1.0
+
+        return basis
+
+    def _fit_bsplines_to_trajectories(
         self,
-        start_pos: torch.Tensor,
-        goal_pos: torch.Tensor,
+        trajectories: torch.Tensor,
+        n_control_points: int,
+    ) -> torch.Tensor:
+        device = trajectories.device
+        dtype = trajectories.dtype
+        n_support_points = trajectories.shape[-2]
+
+        basis = RobotBase._compute_bspline_basis(
+            n_support_points=n_support_points,
+            n_control_points=n_control_points,
+            degree=self.spline_degree,
+            device=device,
+            dtype=dtype,
+        )
+        n_fixed = self.spline_degree - 1
+
+        basis_start = basis[:, :n_fixed]
+        basis_mid = basis[:, n_fixed:-n_fixed]
+        basis_end = basis[:, -n_fixed:]
+
+        start_pos = trajectories[..., 0, :]
+        goal_pos = trajectories[..., -1, :]
+
+        term_start = basis_start.sum(dim=1, keepdim=True) @ start_pos.unsqueeze(-2)
+        term_end = basis_end.sum(dim=1, keepdim=True) @ goal_pos.unsqueeze(-2)
+
+        residuals = trajectories - term_start - term_end
+
+        basis_mid_pinv = torch.linalg.pinv(basis_mid)
+        control_points_mid = basis_mid_pinv @ residuals
+        control_points_start = torch.stack([start_pos] * n_fixed, dim=-2)
+        control_points_end = torch.stack([goal_pos] * n_fixed, dim=-2)
+
+        control_points = torch.cat(
+            [control_points_start, control_points_mid, control_points_end], dim=-2
+        )
+
+        return control_points
+
+    def _get_trajectories_from_bsplines(
+        self,
+        control_points: torch.Tensor,
         n_support_points: int,
     ) -> torch.Tensor:
-        pass
+        device = control_points.device
+        dtype = control_points.dtype
+        n_control_points = control_points.shape[-2]
 
-    @abstractmethod
-    def smoothen_trajectory(
-        self,
-        trajectory: torch.Tensor,
-        n_support_points: int,
+        basis = RobotBase._compute_bspline_basis(
+            n_support_points=n_support_points,
+            n_control_points=n_control_points,
+            degree=self.spline_degree,
+            device=device,
+            dtype=dtype,
+        )
+        trajectories = torch.einsum("sc,...cd->...sd", basis, control_points)
+
+        return trajectories
+
+    def linearly_interpolate_trajectories(
+        self, trajectories: torch.Tensor, n_interpolate: int = 0
     ) -> torch.Tensor:
-        pass
+        assert trajectories.ndim == 3, (
+            "trajectories must be of shape (n_trajectories, n_waypoints, n_dims)"
+        )
+        n_waypoints = trajectories.shape[-2]
+        n_total_points = (n_waypoints - 1) * (n_interpolate + 1) + 1
+        trajectories_interpolated = F.interpolate(
+            trajectories.transpose(-2, -1),
+            size=n_total_points,
+            mode="linear",
+            align_corners=True,
+        ).transpose(-2, -1)
+        
+        trajectories_interpolated_constrained = self.enforce_rigid_constraints(trajectories_interpolated)
+
+        return trajectories_interpolated_constrained
+
+    def create_straight_line_trajectories(
+        self, start: torch.Tensor, goal: torch.Tensor, n_support_points: int
+    ) -> torch.Tensor:
+        t = torch.linspace(0, 1, n_support_points, **self.tensor_args)
+        trajectories = start.unsqueeze(-2) * (1 - t).unsqueeze(-1) + goal.unsqueeze(
+            -2
+        ) * t.unsqueeze(-1)
+        
+        trajectories_constrained = self.enforce_rigid_constraints(trajectories)
+        
+        return trajectories_constrained
 
     def get_position(
         self,
@@ -64,16 +198,15 @@ class RobotBase(ABC):
     ) -> torch.Tensor:
         return trajectories[..., : self.n_dim]
 
-    def get_position_interpolated(
+    def get_trajectories_from_bsplines(
         self,
         control_points: torch.Tensor,
         n_support_points: int,
     ) -> torch.Tensor:
         control_points_pos = self.get_position(control_points)
-        trajectories_pos = get_trajectories_from_bsplines(
+        trajectories_pos = self._get_trajectories_from_bsplines(
             control_points=control_points_pos,
             n_support_points=n_support_points,
-            degree=self.spline_degree,
         )
         trajectories_constrained = self.enforce_rigid_constraints(trajectories_pos)
         return trajectories_constrained
@@ -84,10 +217,9 @@ class RobotBase(ABC):
         n_control_points: int,
     ) -> torch.Tensor:
         trajectories_pos = self.get_position(trajectories)
-        control_points_pos = fit_bsplines_to_trajectories(
+        control_points_pos = self._fit_bsplines_to_trajectories(
             trajectories=trajectories_pos,
             n_control_points=n_control_points,
-            degree=self.spline_degree,
         )
         return control_points_pos
 
@@ -104,7 +236,7 @@ class RobotBase(ABC):
             trajectories_vel = torch.cat(
                 [trajectories_vel, torch.zeros_like(trajectories_vel[:, :1, :])], dim=-2
             )
-            
+
         elif mode == "central":
             trajectories_pos = self.get_position(trajectories)
             trajectories_vel = (
@@ -118,7 +250,7 @@ class RobotBase(ABC):
                 ],
                 dim=-2,
             )
-            
+
         elif mode == "avg":
             trajectories_pos = self.get_position(trajectories)
             displacement = trajectories_pos[:, -1, :] - trajectories_pos[:, 0, :]
@@ -131,13 +263,13 @@ class RobotBase(ABC):
                 ],
                 dim=1,
             )
-            
+
         elif trajectories.shape[-1] >= 2 * self.n_dim:
             trajectories_vel = trajectories[..., self.n_dim : 2 * self.n_dim]
-            
+
         else:
             trajectories_vel = torch.zeros_like(trajectories[..., : self.n_dim])
-            
+
         return trajectories_vel
 
     def get_acceleration(
@@ -149,30 +281,44 @@ class RobotBase(ABC):
         dt = dt if dt is not None else self.dt
         if mode == "forward":
             trajectories_vel = self.get_velocity(trajectories, mode="forward", dt=dt)
-            trajectories_acc = self.get_velocity(trajectories_vel, mode="forward", dt=dt)
-            
+            trajectories_acc = self.get_velocity(
+                trajectories_vel, mode="forward", dt=dt
+            )
+
         elif mode == "central":
             trajectories_vel = self.get_velocity(trajectories, mode="central", dt=dt)
-            trajectories_acc = self.get_velocity(trajectories_vel, mode="central", dt=dt)
-            
+            trajectories_acc = self.get_velocity(
+                trajectories_vel, mode="central", dt=dt
+            )
+
         else:
             trajectories_acc = torch.zeros_like(trajectories[..., : self.n_dim])
-            
+
         return trajectories_acc
-    
-    def get_jerk(self, trajectories: torch.Tensor, mode: str = "forward", dt: float = None) -> torch.Tensor:
+
+    def get_jerk(
+        self, trajectories: torch.Tensor, mode: str = "forward", dt: float = None
+    ) -> torch.Tensor:
         dt = dt if dt is not None else self.dt
         if mode == "forward":
-            trajectories_acc = self.get_acceleration(trajectories, mode="forward", dt=dt)
-            trajectories_jerk = self.get_velocity(trajectories_acc, mode="forward", dt=dt)
-            
+            trajectories_acc = self.get_acceleration(
+                trajectories, mode="forward", dt=dt
+            )
+            trajectories_jerk = self.get_velocity(
+                trajectories_acc, mode="forward", dt=dt
+            )
+
         elif mode == "central":
-            trajectories_acc = self.get_acceleration(trajectories, mode="central", dt=dt)
-            trajectories_jerk = self.get_velocity(trajectories_acc, mode="central", dt=dt)
-            
+            trajectories_acc = self.get_acceleration(
+                trajectories, mode="central", dt=dt
+            )
+            trajectories_jerk = self.get_velocity(
+                trajectories_acc, mode="central", dt=dt
+            )
+
         else:
             trajectories_jerk = torch.zeros_like(trajectories[..., : self.n_dim])
-            
+
         return trajectories_jerk
 
     def invert_trajectories(self, trajectories: torch.Tensor) -> torch.Tensor:
@@ -186,12 +332,12 @@ class RobotBase(ABC):
             trajectories_inverted = torch.cat(
                 [trajectories_pos_reversed, trajectories_vel_reversed], dim=-1
             )
-            
+
         else:
             raise ValueError(
                 "Input tensor must have either only position or at least position and velocity concatenated."
             )
-            
+
         return trajectories_inverted
 
     def get_collision_mask(
@@ -203,16 +349,18 @@ class RobotBase(ABC):
     ) -> torch.Tensor:
         points_pos = self.get_position(points)
         collision_points = self.get_collision_points(points_pos)
-        
+
         if on_fixed:
             sdf_fixed = env.grid_map_sdf_fixed.compute_approx_signed_distance(
                 collision_points
             )
             collision_mask_fixed = (sdf_fixed < self.margin).any(dim=[-1, -2])
-        
+
         else:
             collision_mask_fixed = torch.zeros(
-                collision_points.shape[:-2], dtype=torch.bool, device=self.tensor_args["device"]
+                collision_points.shape[:-2],
+                dtype=torch.bool,
+                device=self.tensor_args["device"],
             )
 
         if on_extra:
@@ -220,14 +368,16 @@ class RobotBase(ABC):
                 collision_points
             )
             collision_mask_extra = (sdf_extra < self.margin).any(dim=[-1, -2])
-            
+
         else:
             collision_mask_extra = torch.zeros(
-                collision_points.shape[:-2], dtype=torch.bool, device=self.tensor_args["device"]
+                collision_points.shape[:-2],
+                dtype=torch.bool,
+                device=self.tensor_args["device"],
             )
 
         collision_mask = collision_mask_fixed | collision_mask_extra
-        
+
         return collision_mask
 
     def compute_cost(
@@ -279,7 +429,7 @@ class RobotBase(ABC):
             n = min(n, n_samples - cur)
 
             if n > 0:
-                samples[cur : cur + n] =  points[~collision_mask][:n]
+                samples[cur : cur + n] = points[~collision_mask][:n]
                 cur += n
 
             if cur >= n_samples:
@@ -312,16 +462,14 @@ class RobotBase(ABC):
                 return None, None, False
 
             start, goal = points[:n_samples], points[n_samples:]
-            start_anchors = self.get_anchor_points(start)
-            goal_anchors = self.get_anchor_points(goal)
             threshold_mask = (
-                torch.linalg.norm(start_anchors - goal_anchors, dim=-1)
+                torch.linalg.norm(start - goal, dim=-1)
                 > threshold_start_goal_pos
             )
-            
+
             n = torch.sum(threshold_mask).item()
             n = min(n, n_samples - cur)
-            
+
             if n > 0:
                 samples_start[cur : cur + n] = start[threshold_mask][:n]
                 samples_goal[cur : cur + n] = goal[threshold_mask][:n]
@@ -336,11 +484,11 @@ class RobotBase(ABC):
         self,
         env: EnvBase,
         trajectories: torch.Tensor,
-        n_interpolate: int = 5,
+        n_interpolate: int = 10,
         on_fixed: bool = True,
         on_extra: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        trajectories_interpolated = interpolate_trajectories(
+        trajectories_interpolated = self.linearly_interpolate_trajectories(
             trajectories=trajectories, n_interpolate=n_interpolate
         )
         points_collision_mask = self.get_collision_mask(
@@ -369,6 +517,7 @@ class RobotSphere2D(RobotBase):
         tensor_args: Dict[str, Any],
     ) -> None:
         super().__init__(margin, dt, spline_degree, tensor_args)
+        self.name = "Sphere2D"
         self.n_dim = 2
 
     def enforce_rigid_constraints(self, trajectories):
@@ -380,38 +529,6 @@ class RobotSphere2D(RobotBase):
     def generate_random_points(self, env: EnvBase, n_samples: int) -> torch.Tensor:
         return env.random_points((n_samples,))
 
-    def get_anchor_points(self, points):
-        return points
-
-    def create_straight_line_trajectory(
-        self,
-        start_pos: torch.Tensor,
-        goal_pos: torch.Tensor,
-        n_support_points: int,
-    ) -> torch.Tensor:
-        alphas = torch.linspace(0, 1, n_support_points, **self.tensor_args)
-        pos = start_pos.unsqueeze(0) + (goal_pos - start_pos).unsqueeze(
-            0
-        ) * alphas.unsqueeze(1)
-
-        return pos
-
-    def smoothen_trajectory(
-        self,
-        trajectory: torch.Tensor,
-        n_support_points: int,
-    ) -> torch.Tensor:
-        trajectory_augmented = torch.cat(
-            [trajectory[:1, :], trajectory, trajectory[-1:, :]], dim=0
-        )
-        pos = get_trajectories_from_bsplines(
-            control_points=trajectory_augmented,
-            n_support_points=n_support_points,
-            degree=self.spline_degree,
-        )
-        
-        return pos
-
 
 class RobotL2D(RobotBase):
     def __init__(
@@ -419,12 +536,13 @@ class RobotL2D(RobotBase):
         margin: float,
         dt: float,
         spline_degree: int,
+        tensor_args: Dict[str, Any],
         width: float,
         height: float,
         n_spheres: int,
-        tensor_args: Dict[str, Any],
     ) -> None:
         super().__init__(margin, dt, spline_degree, tensor_args)
+        self.name = "L2D"
         self.width = width
         self.height = height
         self.n_spheres = n_spheres
@@ -454,26 +572,26 @@ class RobotL2D(RobotBase):
         new_points = torch.cat(
             [base + new_right_side, base, base + new_top_side], dim=-1
         )
-
+        
         return new_points
 
     def get_collision_points(self, points: torch.Tensor) -> torch.Tensor:
-        top, base, right = points[..., :2], points[..., 2:4], points[..., 4:]
+        right, base, top = points[..., :2], points[..., 2:4], points[..., 4:]
 
-        n1 = int(self.n_spheres * (self.height / (self.width + self.height)))
-        n2 = self.n_spheres - n1 - 1
+        n_right = int((self.n_spheres - 1) * (self.width / (self.width + self.height)))
+        n_top = self.n_spheres - 1 - n_right
 
-        l1 = torch.linspace(0, 1, n1 + 1)
-        l2 = torch.linspace(0, 1, n2 + 1)
-
-        s1 = top.unsqueeze(-2) * l1.unsqueeze(-1) + base.unsqueeze(-2) * (
-            1 - l1
+        l_right = torch.linspace(0, 1, n_right + 1, device=points.device)
+        l_top = torch.linspace(0, 1, n_top + 1, device=points.device)
+        
+        s_right = right.unsqueeze(-2) * l_right.unsqueeze(-1) + base.unsqueeze(-2) * (
+            1 - l_right
         ).unsqueeze(-1)
-        s2 = right.unsqueeze(-2) * l2.unsqueeze(-1) + base.unsqueeze(-2) * (
-            1 - l2
+        s_top = top.unsqueeze(-2) * l_top.unsqueeze(-1) + base.unsqueeze(-2) * (
+            1 - l_top
         ).unsqueeze(-1)
 
-        all_points = torch.cat([s1, s2[..., 1:, :]], dim=-2)
+        all_points = torch.cat([s_right, s_top[..., 1:, :]], dim=-2)
 
         return all_points
 
@@ -487,18 +605,12 @@ class RobotL2D(RobotBase):
         right_x = x + self.width * torch.cos(theta)
         right_y = y + self.width * torch.sin(theta)
 
-        top_x = x + self.height * torch.sin(theta)
+        top_x = x - self.height * torch.sin(theta)
         top_y = y + self.height * torch.cos(theta)
 
         points = torch.stack([right_x, right_y, x, y, top_x, top_y], dim=-1)
 
         return points
-
-    def create_straight_line_trajectory(self, start_pos, goal_pos, n_support_points):
-        pass
-
-    def smoothen_trajectory(self, trajectory, n_support_points):
-        pass
 
 
 def get_robots():

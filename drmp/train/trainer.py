@@ -259,7 +259,7 @@ def train(
             lambda_acceleration=inference_args["lambda_acceleration"],
             tensor_args=tensor_args,
         )
-        
+
     jerk_cost = None
     if inference_args.get("lambda_jerk", None) is not None:
         jerk_cost = CostJointJerk(
@@ -271,10 +271,15 @@ def train(
 
     costs = [
         cost
-        for cost in [collision_cost, velocity_cost, acceleration_cost, jerk_cost,]
+        for cost in [
+            collision_cost,
+            velocity_cost,
+            acceleration_cost,
+            jerk_cost,
+        ]
         if cost is not None
     ]
-    
+
     costs_extra = [
         cost
         for cost in [
@@ -285,12 +290,12 @@ def train(
         ]
         if cost is not None
     ]
-    
+
     max_grad_norm = inference_args.get("max_grad_norm", None)
     n_interpolate = inference_args.get("n_interpolate", None)
     t_start_guide = inference_args.get("t_start_guide", 0)
     n_guide_steps = inference_args.get("n_guide_steps", 0)
-    
+
     if costs != []:
         guide = GradientOptimization(
             env=dataset.env,
@@ -304,12 +309,12 @@ def train(
             tensor_args=tensor_args,
             use_extra_objects=False,
         )
-        
+
     else:
         guide = None
 
     if costs_extra != []:
-         guide_extra = GradientOptimization(
+        guide_extra = GradientOptimization(
             env=dataset.env,
             robot=dataset.robot,
             normalizer=dataset.normalizer,
@@ -321,7 +326,7 @@ def train(
             tensor_args=tensor_args,
             use_extra_objects=True,
         )
-         
+
     else:
         guide_extra = None
 

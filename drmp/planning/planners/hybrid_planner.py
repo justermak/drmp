@@ -14,14 +14,18 @@ class HybridPlanner(ClassicalPlanner):
         self,
         sampling_based_planner: RRTConnect,
         optimization_based_planner: GPMP2 | GradientOptimization,
+        smoothen: bool,
+        create_straight_line_trajectories: bool,
         n_trajectories: int,
         n_support_points: int,
         dt: float,
         n_control_points: int,
         tensor_args: Dict[str, Any],
     ):
+        name = f"HybridPlanner ({sampling_based_planner.name if sampling_based_planner is not None else 'None'}+{optimization_based_planner.name if optimization_based_planner is not None else 'None'})"
         if sampling_based_planner is not None:
             super().__init__(
+                name=name,
                 env=sampling_based_planner.env,
                 robot=sampling_based_planner.robot,
                 use_extra_objects=sampling_based_planner.use_extra_objects,
@@ -29,6 +33,7 @@ class HybridPlanner(ClassicalPlanner):
             )
         elif optimization_based_planner is not None:
             super().__init__(
+                name=name,
                 env=optimization_based_planner.env,
                 robot=optimization_based_planner.robot,
                 use_extra_objects=optimization_based_planner.use_extra_objects,
@@ -40,112 +45,126 @@ class HybridPlanner(ClassicalPlanner):
             )
         self.sampling_based_planner = sampling_based_planner
         self.optimization_based_planner = optimization_based_planner
+        self.smoothen = smoothen
         self.n_support_points = n_support_points
         self.dt = dt
         self.n_trajectories = n_trajectories
         self.n_control_points = n_control_points
+        self.create_straight_line_trajectories = create_straight_line_trajectories
         if self.sampling_based_planner is not None:
             self.sampling_based_planner.n_trajectories = n_trajectories
 
     def optimize(
         self,
+        start_pos: torch.Tensor,
+        goal_pos: torch.Tensor,
         n_sampling_steps: int,
         n_optimization_steps: int,
         print_freq: int = 200,
         debug: bool = False,
     ) -> torch.Tensor:
         with TimerCUDA() as t_hybrid:
-            with TimerCUDA() as t_sampling_based:
-                if self.sampling_based_planner is not None:
+            if self.sampling_based_planner is not None and n_sampling_steps is not None:
+                with TimerCUDA() as t_sampling_based:
                     trajectories = self.sampling_based_planner.optimize(
+                        start_pos=start_pos,
+                        goal_pos=goal_pos,
                         n_sampling_steps=n_sampling_steps,
                         print_freq=print_freq,
                         debug=debug,
                     )
-                else:
-                    trajectories = [None for _ in range(self.n_trajectories)]
+                
                 if debug:
                     print(
                         f"Sample-based Planner -- Optimization time: {t_sampling_based.elapsed:.3f} sec"
                     )
-
-            with TimerCUDA() as t_smoothen:
+            else:
+                trajectories = []
+                
+            if self.smoothen:
                 trajectories_smooth = [
-                    self.robot.smoothen_trajectory(
-                        traj,
+                    self.robot.get_trajectories_from_bsplines(
+                        torch.cat(
+                            [trajectory[:1, :], trajectory, trajectory[-1:, :]],
+                            dim=0,
+                        ),
                         n_support_points=self.n_support_points,
                     )
-                    if traj is not None
-                    else self.robot.create_straight_line_trajectory(
-                        start_pos=self.start_pos,
-                        goal_pos=self.goal_pos,
-                        n_support_points=self.n_support_points,
-                    )
-                    for traj in trajectories
+                    for trajectory in trajectories
+                    if trajectory is not None
                 ]
-                if debug:
-                    print(
-                        f"Trajectory Smoothening -- Time: {t_smoothen.elapsed:.3f} sec"
+            else:
+                trajectories_smooth = [
+                    torch.cat(
+                        [
+                            trajectory,
+                            trajectory[-1:].repeat(
+                                self.n_support_points - len(trajectory), 1
+                            ),
+                        ],
+                        dim=0,
                     )
+                    for trajectory in trajectories
+                    if trajectory is not None
+                ]
 
             initial_trajectories = torch.stack(trajectories_smooth)
-            if isinstance(self.optimization_based_planner, GPMP2):
-                initial_trajectories = torch.cat(
-                    [
-                        initial_trajectories,
-                        self.robot.get_velocity(initial_trajectories, mode="avg"),
-                    ],
-                    dim=-1,
-                )
+            if self.create_straight_line_trajectories:
+                n_initial = initial_trajectories.shape[0]
+                if n_initial < self.n_trajectories:
+                    straight_line_trajectory = self.robot.create_straight_line_trajectory(
+                        start_pos=start_pos,
+                        goal_pos=goal_pos,
+                        n_support_points=self.n_support_points,
+                    )
+                    straight_line_trajectories = straight_line_trajectory.repeat(
+                        self.n_trajectories - n_initial, 1, 1
+                    )
+                    initial_trajectories = torch.cat(
+                        [initial_trajectories, straight_line_trajectories], dim=0
+                    )
+                    
+            if self.optimization_based_planner is not None and n_optimization_steps is not None:
+                if self.optimization_based_planner.name == "GPMP2":
+                    initial_trajectories = torch.cat(
+                        [
+                            initial_trajectories,
+                            self.robot.get_velocity(initial_trajectories, mode="avg"),
+                        ],
+                        dim=-1,
+                    )
 
-            if self.n_control_points is not None:
-                with TimerCUDA() as t_fit_bsplines:
+                if self.n_control_points is not None:
                     initial_trajectories = self.robot.fit_bsplines_to_trajectories(
                         trajectories=initial_trajectories,
                         n_control_points=self.n_control_points,
                     )
-                    if debug:
-                        print(
-                            f"Fitting B-Splines -- Time: {t_fit_bsplines.elapsed:.3f} sec"
-                        )
 
-            with TimerCUDA() as t_opt_based:
-                if self.optimization_based_planner is not None:
+                with TimerCUDA() as t_opt_based:
                     trajectories = self.optimization_based_planner.optimize(
                         trajectories=initial_trajectories,
                         n_optimization_steps=n_optimization_steps,
                         print_freq=print_freq // 2,
                         debug=debug,
                     )
-                else:
-                    trajectories = initial_trajectories
+                    
                 if debug:
                     print(
                         f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
                     )
-
-            if self.n_control_points is not None:
-                with TimerCUDA() as t_fit_position:
-                    trajectories = self.robot.get_position_interpolated(
+                    
+                if self.n_control_points is not None:
+                    trajectories = self.robot.get_trajectories_from_bsplines(
                         control_points=trajectories,
                         n_support_points=self.n_support_points,
                     )
-                    if debug:
-                        print(
-                            f"Getting Position from B-Splines -- Time: {t_fit_position.elapsed:.3f} sec"
-                        )
-
-            if debug:
-                print(
-                    f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
-                )
+                    
+            else:
+                trajectories = initial_trajectories
+            
+        if debug:
+            print(
+                f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
+            )
 
         return trajectories
-
-    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
-        self.start_pos = start_pos
-        self.goal_pos = goal_pos
-        if self.sampling_based_planner is not None:
-            self.sampling_based_planner.reset(start_pos, goal_pos)
-        if self.optimization_based_planner is not None:
-            self.optimization_based_planner.reset(start_pos, goal_pos)

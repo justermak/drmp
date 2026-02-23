@@ -85,16 +85,16 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 3,
-    "n_trajectories_per_task": 2,
+    "n_tasks": 30,
+    "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
     "algorithm": "rrt-grad",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSimple2D_2000_50",
+    "dataset_name": "EnvSparse2D_2000_50_L",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": False,
+    "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "",
@@ -116,8 +116,8 @@ DEFAULT_INFERENCE_ARGS = {
     "n_guide_steps": 2,
     "lambda_obstacles": 5e-3,
     "lambda_velocity": 1e-6,
-    "lambda_acceleration": 1e-6,
-    "lambda_jerk": 1e-6,
+    "lambda_acceleration": 0,
+    "lambda_jerk": 0,
     "max_grad_norm": 1.0,
     "n_interpolate": 10,
     # MPD
@@ -160,11 +160,12 @@ DEFAULT_INFERENCE_ARGS = {
     # Classical algorithm
     "classical_n_dof": N_DIM,
     "classical_n_sampling_steps": 10000,  # set to None for straight lines instead of samping based planner
-    "classical_n_optimization_steps": 30,  # set to None to skip optimization based planner
+    "classical_n_optimization_steps": 500,  # set to None to skip optimization based planner
     "classical_smoothen": True,
+    "classical_create_straight_line_trajectories": False,
     # RRT-Connect parameters
-    "rrt_connect_max_step_size": 0.005,
     "rrt_connect_max_radius": 0.3,
+    "rrt_connect_n_points": 64,
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
@@ -179,8 +180,8 @@ DEFAULT_INFERENCE_ARGS = {
     # "grad_lambda_obstacles": 5e-3,
     # "grad_lambda_velocity": 3e-7,
     # "grad_lambda_acceleration": 7e-7,
-    "grad_lambda_obstacles": 0,
-    "grad_lambda_velocity": 1e-3,
+    "grad_lambda_obstacles": 5e-3,
+    "grad_lambda_velocity": 1e-6,
     "grad_lambda_acceleration": 0,
     "grad_lambda_jerk": 0,
     "grad_max_grad_norm": 1.0,
@@ -197,26 +198,33 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDenseNarrowPassage2D_2000_50",
-    "env_name": "EnvDenseNarrowPassage2D",
-    "robot_name": "Sphere2D",
-    "robot_margin": 0.01,
-    "generating_robot_margin": 0.02,
+    "dataset_name": "EnvSparse2D_2000_50_L",
+    "env_name": "EnvSparse2D",
+    "robot_name": "L2D",
+    "robot_margin": 0.05,
+    "generating_robot_margin": 0.06,
     "n_support_points": 64,
     "duration": 5.0,
     "spline_degree": 3,
+    "additional_robot_args": {
+        "width": 0.3, 
+        "height": 0.4, 
+        "n_spheres": 8
+    },
     # Task generation
     "n_tasks": 2000,
     "n_trajectories_per_task": 50,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "n_sampling_steps": 10000,
-    "n_optimization_steps": 300,
-    "use_gpmp2": True,
-    "n_control_points": None,
+    "n_optimization_steps": 500,
+    "smoothen": True,
+    "create_straight_line_trajectories": False,
+    "use_gpmp2": False,
+    "n_control_points": 24,
     # RRT-Connect parameters
-    "rrt_connect_max_step_size": 0.005,
     "rrt_connect_max_radius": 0.3,
+    "rrt_connect_n_points": 128,
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
@@ -230,14 +238,14 @@ DEFAULT_DATA_GENERATION_ARGS = {
     # Gradient optimization parameters
     "grad_lambda_obstacles": 5e-3,
     "grad_lambda_velocity": 1e-6,
-    "grad_lambda_acceleration": 1e-6,
-    "grad_lambda_jerk": 1e-6,
+    "grad_lambda_acceleration": 0,
+    "grad_lambda_jerk": 0,
     "grad_max_grad_norm": 1.0,
     "grad_n_interpolate": 10,
     # Other
-    "n_processes": 1,
+    "n_processes": 2,
     "val_portion": 0.05,
     "device": "cuda",
-    "debug": True,
+    "debug": False,
     "seed": 42,
 }

@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from drmp.dataset.transform import NormalizerBase
+from drmp.dataset.data_transform import NormalizerBase
 from drmp.planning.costs import Cost
 from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.torch_timer import TimerCUDA
@@ -24,17 +24,19 @@ class GradientOptimization(ClassicalPlanner):
         tensor_args: Dict[str, Any],
         use_extra_objects: bool = False,
     ):
-        super().__init__(env, robot, use_extra_objects, tensor_args)
+        super().__init__(
+            name="GradientOptimization",
+            env=env,
+            robot=robot,
+            use_extra_objects=use_extra_objects,
+            tensor_args=tensor_args,
+        )
         self.normalizer = normalizer
         self.n_support_points = n_support_points
         self.n_control_points = n_control_points
         self.costs = costs
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
-
-    def reset(self, start_pos: torch.Tensor, goal_pos: torch.Tensor) -> None:
-        self.start_pos = start_pos
-        self.goal_pos = goal_pos
 
     def compute_gradient(
         self,
@@ -50,7 +52,7 @@ class GradientOptimization(ClassicalPlanner):
             )
 
             if self.n_control_points is not None:
-                trajectories_pos = self.robot.get_position_interpolated(
+                trajectories_pos = self.robot.get_trajectories_from_bsplines(
                     control_points=trajectories_unnormalized,
                     n_support_points=self.n_support_points,
                 )
@@ -95,7 +97,7 @@ class GradientOptimization(ClassicalPlanner):
     ) -> torch.Tensor:
         x = trajectories.clone()
         if self.n_control_points is not None and x.shape[-2] == self.n_support_points:
-            x = self.robot.get_position_interpolated(
+            x = self.robot.get_trajectories_from_bsplines(
                 control_points=x,
                 n_support_points=self.n_support_points,
             )
@@ -103,9 +105,9 @@ class GradientOptimization(ClassicalPlanner):
             x = self.normalizer.normalize(x)
         cost = None
         with TimerCUDA() as t_opt:
-            for i in range(n_optimization_steps):
+            for i in range(1, n_optimization_steps + 1):
                 if debug and print_freq and i % print_freq == 0:
-                    self.print_info(i + 1, t_opt.elapsed, cost)
+                    self.print_info(i, t_opt.elapsed, cost)
 
                 grad, cost = self.compute_gradient(x=x, return_cost=True)
 

@@ -53,13 +53,11 @@ def compute_waypoints_variance(
 
 
 def compute_free_fraction(
-    trajectories_free: torch.Tensor, trajectories_collision: torch.Tensor
+    trajectories_free: torch.Tensor, n_trajectories_per_task: int
 ) -> float:
     assert trajectories_free.ndim == 3
-    assert trajectories_collision.ndim == 3
     cnt_free = trajectories_free.shape[0]
-    cnt_coll = trajectories_collision.shape[0]
-    fraction = cnt_free / (cnt_free + cnt_coll)
+    fraction = cnt_free / n_trajectories_per_task
     return fraction
 
 

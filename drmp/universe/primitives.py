@@ -8,15 +8,10 @@ import torch
 class PrimitiveShapeField(ABC):
     def __init__(self, tensor_args: Dict[str, Any]) -> None:
         self.tensor_args = tensor_args
+        self.name = None
 
     @abstractmethod
     def compute_signed_distance(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
-
-    @abstractmethod
-    def to(
-        self, device: torch.device = None, dtype: torch.dtype = None
-    ) -> "PrimitiveShapeField":
         raise NotImplementedError()
 
 
@@ -28,6 +23,7 @@ class MultiSphereField(PrimitiveShapeField):
         tensor_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(tensor_args=tensor_args)
+        self.name = "MultiSphere"
         self.centers = torch.tensor(centers, **self.tensor_args)
         self.radii = torch.tensor(radii, **self.tensor_args)
 
@@ -35,17 +31,6 @@ class MultiSphereField(PrimitiveShapeField):
         distance_to_centers = torch.cdist(x, self.centers)
         sdfs = distance_to_centers - self.radii
         return sdfs
-
-    def to(
-        self, device: torch.device = None, dtype: torch.dtype = None
-    ) -> "MultiSphereField":
-        if device is not None:
-            self.tensor_args["device"] = device
-        if dtype is not None:
-            self.tensor_args["dtype"] = dtype
-        self.centers = self.centers.to(device=device, dtype=dtype)
-        self.radii = self.radii.to(device=device, dtype=dtype)
-        return self
 
 
 class MultiBoxField(PrimitiveShapeField):
@@ -57,6 +42,7 @@ class MultiBoxField(PrimitiveShapeField):
         tensor_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(tensor_args=tensor_args)
+        self.name = "MultiBox"
         self.centers = torch.tensor(centers, **self.tensor_args)
         self.half_sizes = torch.tensor(half_sizes, **self.tensor_args)
         self.smooth_factor = smooth_factor
@@ -72,18 +58,6 @@ class MultiBoxField(PrimitiveShapeField):
             - self.radii
         )
         return sdfs
-
-    def to(
-        self, device: torch.device = None, dtype: torch.dtype = None
-    ) -> "MultiBoxField":
-        if device is not None:
-            self.tensor_args["device"] = device
-        if dtype is not None:
-            self.tensor_args["dtype"] = dtype
-        self.centers = self.centers.to(device=device, dtype=dtype)
-        self.half_sizes = self.half_sizes.to(device=device, dtype=dtype)
-        self.radii = self.radii.to(device=device, dtype=dtype)
-        return self
 
 
 class ObjectField(PrimitiveShapeField):
@@ -101,14 +75,3 @@ class ObjectField(PrimitiveShapeField):
     def compute_signed_distance(self, x: torch.Tensor) -> torch.Tensor:
         sdf_fields = [field.compute_signed_distance(x) for field in self.fields]
         return torch.cat(sdf_fields, dim=-1)
-
-    def to(
-        self, device: torch.device = None, dtype: torch.dtype = None
-    ) -> "ObjectField":
-        if device is not None:
-            self.tensor_args["device"] = device
-        if dtype is not None:
-            self.tensor_args["dtype"] = dtype
-        for field in self.fields:
-            field.to(device=device, dtype=dtype)
-        return self

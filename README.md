@@ -10,7 +10,7 @@ Setup: All classical algorithms are just ran on both versions of the environment
 
 Map size: $[-1; 1]^2$
 
-Robot: Sphere2D (circle of radius 0.1)
+Robot: Sphere2D (circle of radius 0.01)
 
 Objects: 30 circles + smoothed squares
 

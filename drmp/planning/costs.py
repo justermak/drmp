@@ -6,7 +6,6 @@ import torch
 from drmp.planning.factors import FieldFactor, GPFactor, UnaryFactor
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
-from drmp.utils import interpolate_trajectories
 
 
 class Cost(ABC):
@@ -43,7 +42,7 @@ class CostObstacles(Cost):
         trajectories: torch.Tensor,
         n_interpolate: int,
     ):
-        trajectories_interpolated = interpolate_trajectories(
+        trajectories_interpolated = self.robot.linearly_interpolate_trajectories(
             trajectories, n_interpolate=n_interpolate
         )
         cost = (
@@ -103,6 +102,7 @@ class CostJointAcceleration(Cost):
         )
         cost = 0.5 * (trajectories_acc**2).sum(-1).sum(-1) * self.lambda_acceleration
         return cost
+
 
 class CostJointJerk(Cost):
     def __init__(

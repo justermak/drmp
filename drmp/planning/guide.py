@@ -27,7 +27,7 @@ class Guide:
 
             trajectories = self.dataset.normalizer.unnormalize(trajectories_normalized)
             if self.dataset.n_control_points is not None:
-                trajectories_pos = self.dataset.robot.get_position_interpolated(
+                trajectories_pos = self.dataset.robot.get_trajectories_from_bsplines(
                     trajectories=trajectories,
                     n_support_points=self.dataset.n_support_points,
                 )

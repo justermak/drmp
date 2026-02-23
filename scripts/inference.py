@@ -202,21 +202,23 @@ def run(args):
         model_config = ClassicalConfig(
             use_extra_objects=args.use_extra_objects,
             dataset=dataset,
-            sampling_based_planner_name="rrt"
+            sampling_based_planner_name="RRTConnect"
             if args.algorithm in ["rrt", "rrt-grad", "rrt-grad-splines", "rrt-gpmp2"]
             else None,
-            optimization_based_planner_name="gpmp2"
+            optimization_based_planner_name="GPMP2"
             if args.algorithm in ["gpmp2", "rrt-gpmp2"]
             else (
-                "grad"
+                "GradientOptimization"
                 if args.algorithm in ["grad", "rrt-grad", "rrt-grad-splines"]
                 else None
             ),
             n_sampling_steps=args.classical_n_sampling_steps,
             n_optimization_steps=args.classical_n_optimization_steps,
+            smoothen=args.classical_smoothen,
+            create_straight_line_trajectories=args.classical_create_straight_line_trajectories,
             n_dim=args.classical_n_dof,
-            rrt_connect_max_step_size=args.rrt_connect_max_step_size,
             rrt_connect_max_radius=args.rrt_connect_max_radius,
+            rrt_connect_n_points=args.rrt_connect_n_points,
             rrt_connect_n_samples=args.rrt_connect_n_samples,
             gpmp2_n_interpolate=args.gpmp2_n_interpolate,
             gpmp2_sigma_start=args.gpmp2_sigma_start,
