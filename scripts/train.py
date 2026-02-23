@@ -63,7 +63,7 @@ def run(args):
     assert args.state_dim == dataset.robot.n_dim
     assert args.horizon == (
         dataset.n_support_points
-        if args.model_name == "DiffusionDense"
+        if args.n_control_points is None
         else args.n_control_points
     )
 
