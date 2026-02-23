@@ -4,19 +4,19 @@ Project on exproling applications of generative models (especially diffusion) to
 ---
 ## Experiments
 
-Setup: All classical algorithms are just ran on both versions of the environment. Learning base algorithms are trained only on the base environment and tested on both versions. Since they don't take the environment as an input, runing them on the environment with extra obstacles tests their ability to generate diverse tragectories that can be optimized 
+Setup: All classical algorithms are just ran on both versions of the environment. Learning base algorithms are trained only on the base environment and tested on both versions. Since they don't take the map as an input, runing them on the environments with extra obstacles tests their ability to generate diverse tragectories that can be easily optimized 
+
+## RobotSphere2D
+
+### EnvSimple2D
+
+#### Base
+
+#### Extra objects
 
 ### EnvDense2D
 
-Map size: $[-1; 1]^2$
-
-Robot: Sphere2D (circle of radius 0.01)
-
-Objects: 30 circles + smoothed squares
-
-Extra objects: 7 circles + smoothed squares
-
-### Base
+#### Base
 
 | Metric | DRMP (ours) | MPD | 
 | --- | --- | --- | 
@@ -31,7 +31,7 @@ Extra objects: 7 circles + smoothed squares
 | Path length | 2.3721 ± 0.0342 | 2.4811 ± 0.0343 | 
 | Waypoints variance | 0.1730 ± 0.0033 | 0.1871 ± 0.0030 |
 
-### Extra objects
+#### Extra objects
 
 | Metric | DRMP(ours) | MPD | gpmp2-rrt-prior | rrt-connect-splines |  rrt-connect-splines | gpmp2-uninformative |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -45,3 +45,17 @@ Extra objects: 7 circles + smoothed squares
 | Sharpness | 329.6351 ± 11.3132 | 0.7123 ± 0.0151 | 201.9304 ± 21.7101 | 17074.7402 ± 3398.0365 | 14132.7982 ± 1174.7089 | 386.6198 ± 68.1822 |
 | Path length | 2.2844 ± 0.0331 | 2.5409 ± 0.0226 | 2.3085 ± 0.0359 | 3.4323 ± 0.0814 | 2.8576 ± 0.0514 | 1.8251 ± 0.0336 |
 | Waypoints variance | 0.1340 ± 0.0062 | 0.1742 ± 0.0038 | 0.1910 ± 0.0041 | 0.0000 ± 0.0000 | 0.1991 ± 0.0070 | 0.0000 ± 0.0000 |
+
+### EnvDenseNarrowPassage2D
+
+#### Base
+
+#### Extra objects
+
+## RobotL2D
+
+### EnvSparse2D
+
+#### Base
+
+#### Extra objects

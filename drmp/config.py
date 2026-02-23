@@ -86,10 +86,10 @@ DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
     "n_tasks": 10,
-    "n_trajectories_per_task": 10,
+    "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "mpd",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvSparse2D_2000_50_L",

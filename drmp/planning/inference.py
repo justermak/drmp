@@ -437,13 +437,13 @@ def run_inference(
 
     print_stats(stats)
 
+    with open(os.path.join(results_dir, "stats.json"), "w") as f:
+        json.dump(stats, f, indent=4)
+
     if debug:
         print("Saving data...")
         with open(os.path.join(results_dir, "results.pickle"), "wb") as f:
             pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-        with open(os.path.join(results_dir, "stats.json"), "w") as f:
-            json.dump(stats, f, indent=4)
 
         vis_results = None
         if "test" in results and results["test"].get("sample") is not None:
