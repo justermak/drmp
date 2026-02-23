@@ -16,7 +16,7 @@ from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
     compute_path_length,
-    compute_sharpness,
+    compute_ISJ,
     compute_success,
     compute_waypoints_variance,
 )
@@ -35,6 +35,7 @@ def run_inference_for_task(
 ) -> Dict[str, Any]:
     robot = dataset.robot
     env = dataset.env
+    
     with TimerCUDA() as timer_model_sampling:
         trajectories_iters, trajectories_final = model_wrapper.sample(
             dataset=dataset,
@@ -45,7 +46,19 @@ def run_inference_for_task(
     task_time = timer_model_sampling.elapsed
     
     if trajectories_final is None:
-        return None
+        stats = {
+            "task_id": task_id,
+            "n_trajectories_per_task": n_trajectories_per_task,
+            "success": 0.0,
+            "free_fraction": 0.0,
+            "collision_intensity": None,
+            "path_length_best": None,
+            "ISJ": None,
+            "path_length": None,
+            "waypoints_variance": None,
+            "t_task": task_time,
+        }
+        return stats
     
     (
         trajectories_final_collision,
@@ -68,7 +81,7 @@ def run_inference_for_task(
     collision_intensity = (
         compute_collision_intensity(points_final_collision_mask).cpu().numpy()
     )
-    sharpness = None
+    ISJ = None
     path_length = None
     waypoints_variance = None
     best_traj_idx = None
@@ -76,7 +89,7 @@ def run_inference_for_task(
     path_length_best = None
 
     if trajectories_final_free is not None and trajectories_final_free.shape[0] > 0:
-        sharpness = compute_sharpness(trajectories_final_free, robot)
+        ISJ = compute_ISJ(trajectories_final_free, robot)
         path_length = compute_path_length(trajectories_final_free, robot)
         waypoints_variance = (
             compute_waypoints_variance(trajectories_final_free, robot).cpu().numpy()
@@ -84,7 +97,7 @@ def run_inference_for_task(
         best_traj_idx = torch.argmin(path_length).item()
         traj_final_best = trajectories_final_free[best_traj_idx]
         path_length_best = torch.min(path_length).item()
-        sharpness = sharpness.cpu().numpy()
+        ISJ = ISJ.cpu().numpy()
         path_length = path_length.cpu().numpy()
 
     stats = {
@@ -94,7 +107,7 @@ def run_inference_for_task(
         "free_fraction": free_fraction,
         "collision_intensity": collision_intensity,
         "path_length_best": path_length_best,
-        "sharpness": sharpness,
+        "ISJ": ISJ,
         "path_length": path_length,
         "waypoints_variance": waypoints_variance,
         "t_task": task_time,
@@ -121,45 +134,6 @@ def run_inference_for_task(
     return {"stats": stats, "full_data": full_data}
 
 
-def get_best_trajectory(
-    dataset: TrajectoryDataset,
-    data: dict,
-    n_trajectories_per_task: int,
-    model_wrapper: ModelWrapperBase,
-    metric: str = "path-length",  # Options: "path-length", "sharpness"
-) -> Dict[str, Any]:
-    robot = dataset.robot
-    env = dataset.env
-    _, trajectories_final = model_wrapper.sample(
-        dataset=dataset,
-        data=data,
-        n_samples=n_trajectories_per_task,
-        debug=False,
-    )
-    if trajectories_final is None:
-        return None
-
-    _, trajectories_final_free, _ = env.get_trajectories_collision_and_free(
-        trajectories=trajectories_final,
-        robot=robot,
-        on_extra=model_wrapper.use_extra_objects,
-    )
-
-    if trajectories_final_free.shape[0] == 0:
-        return None
-
-    if metric == "path-length":
-        path_length = compute_path_length(trajectories_final_free, robot)
-        best_traj_idx = torch.argmin(path_length).item()
-        return trajectories_final_free[best_traj_idx]
-    elif metric == "sharpness":
-        sharpness = compute_sharpness(trajectories_final_free, robot)
-        best_traj_idx = torch.argmin(sharpness).item()
-        return trajectories_final_free[best_traj_idx]
-    else:
-        raise ValueError(f"Unknown metric: {metric}")
-
-
 def run_inference_on_dataset(
     subset: Subset,
     n_tasks: int,
@@ -172,10 +146,24 @@ def run_inference_on_dataset(
     dataset: TrajectoryDataset = subset.dataset
 
     return_full_data = True
-    cur = 0
-    for i in tqdm(range(2 * n_tasks), desc="Processing tasks"):
-        idx = np.random.choice(subset.indices)
-        data = dataset[idx]
+    for i in tqdm(range(n_tasks), desc="Processing tasks"):
+        while True:
+            idx = np.random.choice(subset.indices)
+            data = dataset[idx]
+            
+            if model_wrapper.name != 'Classical' and \
+                model_wrapper.planner.optimization_based_planner is not None and \
+                model_wrapper.planner.optimization_based_planner.name != "GPMP2":
+                break
+            
+            start_pos = data["start_pos"]
+            goal_pos = data["goal_pos"]
+            points = torch.stack((start_pos, goal_pos))
+            collision_mask = dataset.generating_robot.get_collision_mask(
+                env=dataset.env, points=points, on_extra=model_wrapper.use_extra_objects
+            )
+            if not collision_mask.any():
+                break
 
         task_results = run_inference_for_task(
             task_id=i,
@@ -188,15 +176,13 @@ def run_inference_on_dataset(
         )
 
         if task_results is not None:
-            cur += 1
             if return_full_data:
                 statistics.append(task_results["stats"])
                 full_data_sample = task_results["full_data"]
                 return_full_data = False
+                
             else:
                 statistics.append(task_results)
-        if cur >= n_tasks:
-            break
 
     result = {"statistics": statistics}
 
@@ -226,13 +212,13 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     n_trajectories_per_task = statistics[0]["n_trajectories_per_task"]
     success = [r["success"] for r in statistics]
     free_fraction = [r["free_fraction"] for r in statistics]
-    collision_intensity = [r["collision_intensity"] for r in statistics]
+    collision_intensity = [r["collision_intensity"] for r in statistics if r["collision_intensity"] is not None]
     t = [r["t_task"] for r in statistics]
     path_length_best = [
         r["path_length_best"] for r in statistics if r["path_length_best"] is not None
     ]
-    sharpness = [
-        r["sharpness"].mean().item() for r in statistics if r["sharpness"] is not None
+    ISJ = [
+        r["ISJ"].mean().item() for r in statistics if r["ISJ"] is not None
     ]
     path_length = [
         r["path_length"].mean().item()
@@ -258,8 +244,8 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if path_length_best
         else (None, None)
     )
-    sharpness_center, sharpness_hw = (
-        bootstrap_confidence_interval(sharpness) if sharpness else (None, None)
+    ISJ_center, ISJ_hw = (
+        bootstrap_confidence_interval(ISJ) if ISJ else (None, None)
     )
     path_length_center, path_length_hw = (
         bootstrap_confidence_interval(path_length) if path_length else (None, None)
@@ -285,10 +271,10 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if path_length_best_center is not None
         else None,
         "path_length_best_hw": path_length_best_hw,
-        "sharpness_center": float(sharpness_center)
-        if sharpness_center is not None
+        "ISJ_center": float(ISJ_center)
+        if ISJ_center is not None
         else None,
-        "sharpness_hw": float(sharpness_hw) if sharpness_hw is not None else None,
+        "ISJ_hw": float(ISJ_hw) if ISJ_hw is not None else None,
         "path_length_center": float(path_length_center)
         if path_length_center is not None
         else None,
@@ -333,9 +319,9 @@ def print_stats(results):
             print(
                 f"| Path length | {stats['path_length_center']:.4f} ± {stats['path_length_hw']:.4f} |"
             )
-        if stats["sharpness_center"] is not None:
+        if stats["ISJ_center"] is not None:
             print(
-                f"| Sharpness | {stats['sharpness_center']:.4f} ± {stats['sharpness_hw']:.4f} |"
+                f"| ISJ | {stats['ISJ_center']:.4f} ± {stats['ISJ_hw']:.4f} |"
             )
         if stats["waypoints_variance_center"] is not None:
             print(

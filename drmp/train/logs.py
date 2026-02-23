@@ -31,18 +31,14 @@ def _log_trajectories_metrics(
     prefix: str,
     suffix: str,
     step: int,
+    guide: GradientOptimization,
     inference_args: Dict[str, Any],
-    guide=None,
-    use_extra_objects: bool = None,
-    t_start_guide: float = None,
-    n_guide_steps: int = None,
+    use_extra_objects: bool,
 ) -> None:
     trajectories_normalized = model.run_inference(
         n_samples=20,
         context=context,
         guide=guide,
-        n_guide_steps=n_guide_steps,
-        t_start_guide=t_start_guide,
         **inference_args,
     )[-1]
 
@@ -121,8 +117,6 @@ def log(
     guide: GradientOptimization,
     guide_extra: GradientOptimization,
     inference_args: Dict[str, Any],
-    t_start_guide: float,
-    n_guide_steps: int,
     train_losses: dict = None,
     val_losses: dict = None,
     debug: bool = False,
@@ -156,7 +150,7 @@ def log(
             env=dataset.env, robot=dataset.robot, use_extra_objects=False
         )
         planning_visualizer_extra = Visualizer(
-            env=dataset.env, robot=dataset.robot, use_extra_objects=False
+            env=dataset.env, robot=dataset.robot, use_extra_objects=True
         )
 
         if tensorboard_writer is not None:
@@ -171,8 +165,9 @@ def log(
                 prefix=prefix,
                 suffix="",
                 step=step,
-                inference_args=inference_args,
                 guide=None,
+                inference_args=inference_args,
+                use_extra_objects=False,
             )
 
         if guide is not None and tensorboard_writer is not None:
@@ -187,10 +182,9 @@ def log(
                 prefix=prefix,
                 suffix="_guide",
                 step=step,
-                inference_args=inference_args,
                 guide=guide,
-                t_start_guide=t_start_guide,
-                n_guide_steps=n_guide_steps,
+                inference_args=inference_args,
+                use_extra_objects=False,
             )
 
         if guide_extra is not None and tensorboard_writer is not None:
@@ -205,9 +199,7 @@ def log(
                 prefix=prefix,
                 suffix="_guide_extra",
                 step=step,
-                inference_args=inference_args,
                 guide=guide_extra,
+                inference_args=inference_args,
                 use_extra_objects=True,
-                t_start_guide=t_start_guide,
-                n_guide_steps=n_guide_steps,
             )

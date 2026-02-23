@@ -23,7 +23,7 @@ DEFAULT_TRAIN_ARGS = {
     "apply_augmentations": True,
     "filter_collision": True,
     "filter_longest_portion": None,
-    "filter_sharpest_portion": None,
+    "filter_roughest_portion": None,
     # Generative model
     "model_name": "DiffusionShortcut",  # "Diffusion", "DiffusionShortcut", "FlowMatchingShortcut", "Drift"
     "cfg_fraction": None,
@@ -63,7 +63,7 @@ DEFAULT_TRAIN_ARGS = {
     "attn_head_dim": 32,
     "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 2000000,
+    "num_train_steps": 200000,
     "lr": 1e-4,
     "weight_decay": 0,
     "batch_size": 1024,
@@ -75,9 +75,9 @@ DEFAULT_TRAIN_ARGS = {
     "ema_update_interval": 10,
     # Summary
     "log_interval": 2000,
-    "checkpoint_interval": 100000,
+    "checkpoint_interval": 20000,
     # Other
-    "device": "cuda:6",
+    "device": "cuda",
     "debug": False,
     "seed": 42,
 }

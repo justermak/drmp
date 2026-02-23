@@ -45,8 +45,8 @@ def run(args):
             "filter_longest_trajectories": {"portion": args.filter_longest_portion}
             if args.filter_longest_portion is not None
             else None,
-            "filter_sharpest_trajectories": {"portion": args.filter_sharpest_portion}
-            if args.filter_sharpest_portion is not None
+            "filter_roughest_trajectories": {"portion": args.filter_roughest_portion}
+            if args.filter_roughest_portion is not None
             else None,
         },
     }

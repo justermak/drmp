@@ -2,7 +2,7 @@ from typing import Set
 
 import torch
 
-from drmp.planning.metrics import compute_path_length, compute_sharpness
+from drmp.planning.metrics import compute_path_length, compute_ISJ
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
 
@@ -37,7 +37,7 @@ def filter_longest_trajectories(
     return indices_to_exclude
 
 
-def filter_sharpest_trajectories(
+def filter_roughest_trajectories(
     trajectories: torch.Tensor,
     robot: RobotBase,
     env: EnvBase,
@@ -59,12 +59,12 @@ def filter_sharpest_trajectories(
             continue
 
         task_trajectories = trajectories[task_start:task_end]
-        sharpnesses = compute_sharpness(task_trajectories, robot)
+        ISJs = compute_ISJ(task_trajectories, robot)
         n_to_filter = int(portion * task_size) // 2 * 2
 
         if n_to_filter > 0:
-            _, sharpest_indices = torch.topk(sharpnesses, k=n_to_filter)
-            global_indices = [task_start + idx.item() for idx in sharpest_indices]
+            _, roughest_indices = torch.topk(ISJs, k=n_to_filter)
+            global_indices = [task_start + idx.item() for idx in roughest_indices]
             indices_to_exclude.update(global_indices)
 
     return indices_to_exclude
@@ -107,6 +107,6 @@ def filter_collision(
 def get_filter_functions():
     return {
         "filter_longest_trajectories": filter_longest_trajectories,
-        "filter_sharpest_trajectories": filter_sharpest_trajectories,
+        "filter_roughest_trajectories": filter_roughest_trajectories,
         "filter_collision": filter_collision,
     }

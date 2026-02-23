@@ -329,6 +329,12 @@ def train(
 
     else:
         guide_extra = None
+        
+    inference_args_no_guide = copy.deepcopy(inference_args)
+    del inference_args_no_guide["lambda_obstacles"]
+    del inference_args_no_guide["lambda_velocity"]
+    del inference_args_no_guide["lambda_acceleration"]
+    del inference_args_no_guide["lambda_jerk"]
 
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
@@ -387,11 +393,9 @@ def train(
                                 prefix="TRAIN ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
-                                inference_args=inference_args,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                t_start_guide=t_start_guide,
-                                n_guide_steps=n_guide_steps,
+                                inference_args=inference_args,
                             )
                         print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
 
@@ -417,11 +421,9 @@ def train(
                                 prefix="VAL ",
                                 debug=debug,
                                 tensorboard_writer=tensorboard_writer,
-                                inference_args=inference_args,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                t_start_guide=t_start_guide,
-                                n_guide_steps=n_guide_steps,
+                                inference_args=inference_args,
                             )
                         print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")
 

@@ -18,7 +18,7 @@ def compute_path_length(trajectories: torch.Tensor, robot: RobotBase) -> torch.T
     return path_length
 
 
-def compute_sharpness(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
+def compute_ISJ(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
         return torch.tensor(0.0)

@@ -21,7 +21,8 @@ from drmp.planning.planners.rrt_connect import RRTConnect
 
 
 class ModelWrapperBase(ABC):
-    def __init__(self, use_extra_objects: bool):
+    def __init__(self, name: str, use_extra_objects: bool):
+        self.name = name
         self.use_extra_objects = use_extra_objects
 
     @abstractmethod
@@ -46,7 +47,7 @@ class GenerativeModelWrapper(ModelWrapperBase):
         n_guide_steps: int,
         additional_args: Dict[str, Any],
     ):
-        super().__init__(use_extra_objects)
+        super().__init__(name="Generative", use_extra_objects=use_extra_objects)
         self.model = model
         self.model_name = model_name
         self.guide = guide
@@ -105,7 +106,7 @@ class MPDModelWrapper(ModelWrapperBase):
         ddim: bool,
         use_extra_objects: bool,
     ):
-        super().__init__(use_extra_objects)
+        super().__init__(name='MPD', use_extra_objects=use_extra_objects)
         self.model = model
         self.guide = guide
         self.start_guide_steps_fraction = start_guide_steps_fraction
@@ -169,7 +170,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
         scale_grad_prior: float,
         ddim_sampling_timesteps: int,
     ):
-        super().__init__(use_extra_objects)
+        super().__init__(name='MPD-Splines', use_extra_objects=use_extra_objects)
         self.model = model
         self.guide = guide
         self.start_guide_steps_fraction = start_guide_steps_fraction
@@ -239,7 +240,7 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         n_sampling_steps: int,
         n_optimization_steps: int,
     ):
-        super().__init__(use_extra_objects)
+        super().__init__(name='Classical', use_extra_objects=use_extra_objects)
         self.planner = planner
         self.n_sampling_steps = n_sampling_steps
         self.n_optimization_steps = n_optimization_steps
@@ -253,13 +254,6 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
     ):
         start_pos = data["start_pos"]
         goal_pos = data["goal_pos"]
-
-        points = torch.cat((start_pos.unsqueeze(0), goal_pos.unsqueeze(0)), dim=0)
-        collision_mask = dataset.generating_robot.get_collision_mask(
-            env=dataset.env, points=points, on_extra=self.use_extra_objects
-        )
-        if collision_mask.any():
-            return None, None
 
         trajectories = self.planner.optimize(
             start_pos=start_pos,
