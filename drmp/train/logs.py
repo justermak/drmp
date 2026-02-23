@@ -12,7 +12,7 @@ from drmp.planning.metrics import (
     compute_collision_intensity,
     compute_free_fraction,
     compute_path_length,
-    compute_sharpness,
+    compute_ISJ,
     compute_success,
     compute_waypoints_variance,
 )
@@ -82,8 +82,8 @@ def _log_trajectories_metrics(
         step,
     )
     tensorboard_writer.add_scalar(
-        f"{prefix}avg_smoothness{suffix}",
-        compute_sharpness(trajectories_free, dataset.robot).mean(),
+        f"{prefix}avg_ISJ{suffix}",
+        compute_ISJ(trajectories_free, dataset.robot).mean(),
         step,
     )
     tensorboard_writer.add_scalar(
