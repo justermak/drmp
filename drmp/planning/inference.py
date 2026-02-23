@@ -148,9 +148,11 @@ def run_inference_on_dataset(
             idx = np.random.choice(subset.indices)
             data = dataset[idx]
             
-            if model_wrapper.name != 'Classical' and \
-                model_wrapper.planner.optimization_based_planner is not None and \
-                model_wrapper.planner.optimization_based_planner.name != "GPMP2":
+            if model_wrapper.name != 'Classical':
+                break
+            if model_wrapper.planner.optimization_based_planner is None:
+                break
+            if model_wrapper.planner.optimization_based_planner.name != "GPMP2":
                 break
             
             start_pos = data["start_pos"]

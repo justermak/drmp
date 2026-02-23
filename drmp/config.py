@@ -13,10 +13,10 @@ DEFAULT_TENSOR_ARGS = {
 
 DEFAULT_TRAIN_ARGS = {
     "checkpoints_dir": os.path.join(dir_path, "models"),
-    "checkpoint_name": None,
+    "checkpoint_name": "L_splines_1kk",
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_2000_50",
+    "dataset_name": "EnvSparse2D_2000_50_L",
     "normalizer_name": "TrivialNormalizer",
     "n_control_points": 24,  # set to None for non-spline models
     "spline_degree": 3,
@@ -45,13 +45,13 @@ DEFAULT_TRAIN_ARGS = {
         "n_guide_steps": 2,
         "lambda_obstacles": 5e-3,
         "lambda_velocity": 1e-6,
-        "lambda_acceleration": 1e-6,
-        "lambda_jerk": 1e-6,
+        "lambda_acceleration": 0,
+        "lambda_jerk": 0,
         "max_grad_norm": 1.0,
         "n_interpolate": 10,
     },
     # Unet
-    "state_dim": N_DIM,
+    "state_dim": 3 * N_DIM,
     "horizon": 24,
     "hidden_dim": 64,
     "dim_mults": "(1, 2, 4)",
@@ -61,9 +61,9 @@ DEFAULT_TRAIN_ARGS = {
     "positional_encoding_dim": 16,
     "attn_heads": 4,
     "attn_head_dim": 32,
-    "context_dim": 2 * N_DIM,
+    "context_dim": 2 * 3 * N_DIM,
     # Training
-    "num_train_steps": 200000,
+    "num_train_steps": 1000000,
     "lr": 1e-4,
     "weight_decay": 0,
     "batch_size": 1024,
@@ -75,9 +75,9 @@ DEFAULT_TRAIN_ARGS = {
     "ema_update_interval": 10,
     # Summary
     "log_interval": 2000,
-    "checkpoint_interval": 20000,
+    "checkpoint_interval": 50000,
     # Other
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }
@@ -89,7 +89,7 @@ DEFAULT_INFERENCE_ARGS = {
     "n_trajectories_per_task": 10,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "rrt-grad",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvSparse2D_2000_50_L",
@@ -97,9 +97,9 @@ DEFAULT_INFERENCE_ARGS = {
     "use_extra_objects": False,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "",
+    "checkpoint_name": "L_splines",
     "checkpoint_iter": None,
-    "n_inference_steps": 8,  # None for DDPM, otherwise DDIM or shortcut
+    "n_inference_steps": 1,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
     # MPD guide
@@ -198,7 +198,7 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSparse2D_2000_50_L",
+    "dataset_name": "EnvSparse2D_2000_200_L",
     "env_name": "EnvSparse2D",
     "robot_name": "L2D",
     "robot_margin": 0.05,
@@ -213,7 +213,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     },
     # Task generation
     "n_tasks": 2000,
-    "n_trajectories_per_task": 50,
+    "n_trajectories_per_task": 200,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "n_sampling_steps": 10000,
@@ -243,9 +243,9 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "grad_max_grad_norm": 1.0,
     "grad_n_interpolate": 10,
     # Other
-    "n_processes": 2,
+    "n_processes": 1,
     "val_portion": 0.05,
-    "device": "cuda",
+    "device": "cuda:6",
     "debug": False,
     "seed": 42,
 }
