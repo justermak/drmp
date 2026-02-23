@@ -85,8 +85,8 @@ DEFAULT_TRAIN_ARGS = {
 DEFAULT_INFERENCE_ARGS = {
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 30,
-    "n_trajectories_per_task": 100,
+    "n_tasks": 10,
+    "n_trajectories_per_task": 10,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
     "algorithm": "rrt-grad",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
@@ -94,7 +94,7 @@ DEFAULT_INFERENCE_ARGS = {
     "datasets_dir": os.path.join(dir_path, "datasets"),
     "dataset_name": "EnvSparse2D_2000_50_L",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": True,
+    "use_extra_objects": False,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
     "checkpoint_name": "",

@@ -25,7 +25,6 @@ from drmp.visualizer import Visualizer
 
 
 def run_inference_for_task(
-    task_id: int,
     dataset: TrajectoryDataset,
     data: dict,
     n_trajectories_per_task: int,
@@ -47,7 +46,6 @@ def run_inference_for_task(
     
     if trajectories_final is None:
         stats = {
-            "task_id": task_id,
             "n_trajectories_per_task": n_trajectories_per_task,
             "success": 0.0,
             "free_fraction": 0.0,
@@ -58,7 +56,7 @@ def run_inference_for_task(
             "waypoints_variance": None,
             "t_task": task_time,
         }
-        return stats
+        return {"stats": stats}
     
     (
         trajectories_final_collision,
@@ -72,7 +70,7 @@ def run_inference_for_task(
 
     trajectories_final = torch.cat(
         [trajectories_final_free, trajectories_final_collision], dim=0
-    )
+    ) # move free trajectories to the front
 
     success = compute_success(trajectories_final_free)
     free_fraction = compute_free_fraction(
@@ -81,27 +79,26 @@ def run_inference_for_task(
     collision_intensity = (
         compute_collision_intensity(points_final_collision_mask).cpu().numpy()
     )
-    ISJ = None
+    
     path_length = None
+    ISJ = None
     waypoints_variance = None
     best_traj_idx = None
     traj_final_best = None
     path_length_best = None
 
-    if trajectories_final_free is not None and trajectories_final_free.shape[0] > 0:
-        ISJ = compute_ISJ(trajectories_final_free, robot)
+    if trajectories_final_free.shape[0] > 0:
         path_length = compute_path_length(trajectories_final_free, robot)
-        waypoints_variance = (
-            compute_waypoints_variance(trajectories_final_free, robot).cpu().numpy()
-        )
         best_traj_idx = torch.argmin(path_length).item()
         traj_final_best = trajectories_final_free[best_traj_idx]
         path_length_best = torch.min(path_length).item()
-        ISJ = ISJ.cpu().numpy()
         path_length = path_length.cpu().numpy()
+        ISJ = compute_ISJ(trajectories_final_free, robot).cpu().numpy()
+        waypoints_variance = (
+            compute_waypoints_variance(trajectories_final_free, robot).cpu().numpy()
+        )
 
     stats = {
-        "task_id": task_id,
         "n_trajectories_per_task": n_trajectories_per_task,
         "success": success,
         "free_fraction": free_fraction,
@@ -114,7 +111,7 @@ def run_inference_for_task(
     }
 
     if not return_full_data:
-        return stats
+        return {"stats": stats}
 
     start_pos = dataset.normalizer.unnormalize(data["start_pos_normalized"])
 
@@ -166,7 +163,6 @@ def run_inference_on_dataset(
                 break
 
         task_results = run_inference_for_task(
-            task_id=i,
             dataset=dataset,
             data=data,
             n_trajectories_per_task=n_trajectories_per_task,
@@ -174,31 +170,16 @@ def run_inference_on_dataset(
             return_full_data=return_full_data,
             debug=debug,
         )
-
-        if task_results is not None:
-            if return_full_data:
-                statistics.append(task_results["stats"])
-                full_data_sample = task_results["full_data"]
-                return_full_data = False
-                
-            else:
-                statistics.append(task_results)
+        
+        statistics.append(task_results["stats"])
+        if return_full_data and "full_data" in task_results:
+            full_data_sample = task_results["full_data"]
+            return_full_data = False
 
     result = {"statistics": statistics}
 
     if full_data_sample is not None:
-        result["start_pos_sample"] = full_data_sample["start_pos"]
-        result["goal_pos_sample"] = full_data_sample["goal_pos"]
-        result["trajectories_iters_sample"] = full_data_sample["trajectories_iters"]
-        result["trajectories_final_sample"] = full_data_sample["trajectories_final"]
-        result["trajectories_final_collision_sample"] = full_data_sample[
-            "trajectories_final_collision"
-        ]
-        result["trajectories_final_free_sample"] = full_data_sample[
-            "trajectories_final_free"
-        ]
-        result["best_traj_idx_sample"] = full_data_sample["best_traj_idx"]
-        result["traj_final_best_sample"] = full_data_sample["traj_final_best"]
+        result["sample"] = full_data_sample
 
     return result
 
@@ -239,22 +220,11 @@ def compute_stats(results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     collision_intensity_center, collision_intensity_hw = bootstrap_confidence_interval(
         collision_intensity
     )
-    path_length_best_center, path_length_best_hw = (
-        bootstrap_confidence_interval(path_length_best)
-        if path_length_best
-        else (None, None)
-    )
-    ISJ_center, ISJ_hw = (
-        bootstrap_confidence_interval(ISJ) if ISJ else (None, None)
-    )
-    path_length_center, path_length_hw = (
-        bootstrap_confidence_interval(path_length) if path_length else (None, None)
-    )
-    waypoints_variance_center, waypoints_variance_hw = (
-        bootstrap_confidence_interval(waypoints_variance)
-        if waypoints_variance
-        else (None, None)
-    )
+    path_length_best_center, path_length_best_hw = bootstrap_confidence_interval(path_length_best)
+    path_length_center, path_length_hw = bootstrap_confidence_interval(path_length)
+    ISJ_center, ISJ_hw = bootstrap_confidence_interval(ISJ)
+    waypoints_variance_center, waypoints_variance_hw = bootstrap_confidence_interval(waypoints_variance)
+    
 
     stats = {
         "n_tasks": n_tasks,
@@ -340,11 +310,11 @@ def visualize_results(
     planner_visualizer = Visualizer(
         env=dataset.env, robot=dataset.robot, use_extra_objects=use_extra_objects
     )
-    start_pos = results["start_pos_sample"]
-    goal_pos = results["goal_pos_sample"]
-    trajectories_iters = results["trajectories_iters_sample"]
-    trajectories_final = results["trajectories_final_sample"]
-    best_traj_idx = results["best_traj_idx_sample"]
+    start_pos = results["sample"]["start_pos"]
+    goal_pos = results["sample"]["goal_pos"]
+    trajectories_iters = results["sample"]["trajectories_iters"]
+    trajectories_final = results["sample"]["trajectories_final"]
+    best_traj_idx = results["sample"]["best_traj_idx"]
 
     planner_visualizer.render_scene(
         trajectories=trajectories_final,
@@ -474,12 +444,12 @@ def run_inference(
             json.dump(stats, f, indent=4)
 
         vis_results = None
-        if "test" in results and results["test"].get("start_pos_sample") is not None:
+        if "test" in results and results["test"].get("sample") is not None:
             vis_results = results["test"]
-        elif "val" in results and results["val"].get("start_pos_sample") is not None:
+        elif "val" in results and results["val"].get("sample") is not None:
             vis_results = results["val"]
         elif (
-            "train" in results and results["train"].get("start_pos_sample") is not None
+            "train" in results and results["train"].get("sample") is not None
         ):
             vis_results = results["train"]
 
