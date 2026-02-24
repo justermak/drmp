@@ -293,8 +293,6 @@ def train(
 
     max_grad_norm = inference_args.get("max_grad_norm", None)
     n_interpolate = inference_args.get("n_interpolate", None)
-    t_start_guide = inference_args.get("t_start_guide", 0)
-    n_guide_steps = inference_args.get("n_guide_steps", 0)
 
     if costs != []:
         guide = GradientOptimization(
@@ -335,6 +333,8 @@ def train(
     del inference_args_no_guide["lambda_velocity"]
     del inference_args_no_guide["lambda_acceleration"]
     del inference_args_no_guide["lambda_jerk"]
+    del inference_args_no_guide["max_grad_norm"]
+    del inference_args_no_guide["n_interpolate"]
 
     save_model_to_disk(
         model=model, epoch=0, step=0, checkpoint_dir=checkpoint_dir, prefix="model"
@@ -395,7 +395,7 @@ def train(
                                 tensorboard_writer=tensorboard_writer,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                inference_args=inference_args,
+                                inference_args=inference_args_no_guide,
                             )
                         print(f"t_train_summary: {t_train_summary.elapsed:.4f} sec")
 
@@ -423,7 +423,7 @@ def train(
                                 tensorboard_writer=tensorboard_writer,
                                 guide=guide,
                                 guide_extra=guide_extra,
-                                inference_args=inference_args,
+                                inference_args=inference_args_no_guide,
                             )
                         print(f"t_val_summary: {t_val_summary.elapsed:.4f} sec")
 

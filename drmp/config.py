@@ -14,10 +14,10 @@ DEFAULT_TENSOR_ARGS = {
 DEFAULT_TRAIN_ARGS = {
     # Dirs
     "checkpoints_dir": os.path.join(dir_path, "models"),
-    "checkpoint_name": "L_splines_1kk",
+    "checkpoint_name": None,
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSparse2D_2000_50_L",
+    "dataset_name": "EnvDense2D_2000_50",
     "normalizer_name": "TrivialNormalizer",
     "n_control_points": 24,  # set to None for non-spline models
     "spline_degree": 3,
@@ -39,8 +39,8 @@ DEFAULT_TRAIN_ARGS = {
     "temperature": 1.0,
     # Inference
     "inference_args": {
-        "n_inference_steps": 32,
-        # "eta": 0.0,
+        "n_inference_steps": 1,
+        "eta": 0.0,
         # Guide
         "t_start_guide": 0,
         "n_guide_steps": 2,
@@ -52,7 +52,7 @@ DEFAULT_TRAIN_ARGS = {
         "n_interpolate": 10,
     },
     # Unet
-    "state_dim": 3 * N_DIM,
+    "state_dim": N_DIM,
     "horizon": 24,
     "hidden_dim": 64,
     "dim_mults": "(1, 2, 4)",
@@ -62,21 +62,21 @@ DEFAULT_TRAIN_ARGS = {
     "positional_encoding_dim": 16,
     "attn_heads": 4,
     "attn_head_dim": 32,
-    "context_dim": 2 * 3 * N_DIM,
+    "context_dim": 2 * N_DIM,
     # Training
-    "num_train_steps": 1000000,
-    "lr": 1e-4,
+    "num_train_steps": 200000,
+    "lr": 3e-5,
     "weight_decay": 0,
     "batch_size": 1024,
     "clip_grad_max_norm": 1.0,
     "use_amp": True,
     "use_ema": True,
     "ema_decay": 0.995,
-    "ema_warmup": 100000,
+    "ema_warmup": 40000,
     "ema_update_interval": 10,
     # Summary
     "log_interval": 2000,
-    "checkpoint_interval": 50000,
+    "checkpoint_interval": 20000,
     # Other
     "device": "cuda:6",
     "debug": False,
