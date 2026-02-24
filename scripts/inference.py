@@ -36,9 +36,9 @@ def run(args):
     if args.experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if args.algorithm == "generative-model":
-            experiment_name = f"{args.checkpoint_name if args.checkpoint_name else 'generative-model'}_{timestamp}"
+            experiment_name = f"{args.dataset_name}__{args.use_extra_objects}__{args.checkpoint_name if args.checkpoint_name else args.algorithm}__{timestamp}"
         else:
-            experiment_name = f"{args.algorithm}_{timestamp}"
+            experiment_name = f"{args.dataset_name}__{args.use_extra_objects}__{args.algorithm}__{timestamp}"
     else:
         experiment_name = args.experiment_name
 
@@ -203,17 +203,17 @@ def run(args):
             use_extra_objects=args.use_extra_objects,
             dataset=dataset,
             sampling_based_planner_name="RRTConnect"
-            if re.match(r"rrt", args.algorithm)
+            if re.search(r"rrt", args.algorithm)
             else None,
             optimization_based_planner_name="GPMP2"
-            if re.match(r"gpmp2", args.algorithm)
+            if re.search(r"gpmp2", args.algorithm)
             else (
                 "GradientOptimization"
-                if re.match(r"grad", args.algorithm)
+                if re.search(r"grad", args.algorithm)
                 else None
             ),
-            n_sampling_steps=args.classical_n_sampling_steps if re.match(r"rrt", args.algorithm) else None,
-            n_optimization_steps=args.gpmp2_n_optimization_steps if re.match(r"gpmp2", args.algorithm) else args.grad_n_optimization_steps if re.match(r"grad", args.algorithm) else None,
+            n_sampling_steps=args.classical_n_sampling_steps if re.search(r"rrt", args.algorithm) else None,
+            n_optimization_steps=args.gpmp2_n_optimization_steps if re.search(r"gpmp2", args.algorithm) else args.grad_n_optimization_steps if re.search(r"grad", args.algorithm) else None,
             smoothen=True if args.algorithm in ["rrt-smooth", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"] else False,
             create_straight_line_trajectories=True if args.algorithm in ["gpmp2", "grad"] else False,
             n_dim=args.classical_n_dof,

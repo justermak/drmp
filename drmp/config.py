@@ -87,20 +87,20 @@ DEFAULT_INFERENCE_ARGS = {
     # Dirs and general settings
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
-    "n_tasks": 10,
+    "n_tasks": 300,
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "rrt",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSimple2D_2000_50",
+    "dataset_name": "EnvDenseNarrowPassage2D_2000_50",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": True,
+    "use_extra_objects": False,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "DiffusionShortcut__EnvSimple2D_2000_50__bs_1024__lr_0.0001__steps_2000000__diffusion-steps_32__20260218_032408",
-    "checkpoint_iter": "ema_model_epoch_1086_iter_100000_state_dict.pth",
+    "checkpoint_name": "DiffusionShortcut__EnvDenseNarrowPassage2D_2000_50__bs_1024__lr_0.0001__steps_200000__diffusion-steps_32__20260218_104612",
+    "checkpoint_iter": "ema_model_epoch_1123_iter_100000_state_dict.pth",
     "n_inference_steps": 1,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
@@ -126,8 +126,8 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_checkpoints_dir": os.path.join(
         dir_path,
         "data_trained_models",
-        "EnvDense2D-RobotPointMass",
         "mpd",
+        "EnvNarrowPassageDense2D-RobotPointMass",
         "checkpoints",
     ),
     "mpd_checkpoint_name": "ema_model_current.pth",
@@ -142,8 +142,8 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_checkpoints_dir": os.path.join(
         dir_path,
         "data_trained_models",
-        "EnvDense2D-RobotPointMass",
         "mpd-splines",
+        "EnvNarrowPassageDense2D-RobotPointMass",
         "checkpoints",
     ),
     "mpd_splines_checkpoint_name": "ema_model_current.pth",

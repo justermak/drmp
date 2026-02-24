@@ -8,16 +8,16 @@ $algorithms = @(
     "rrt"
     ,
     "rrt-smooth"
-    # ,
-    # "gpmp2"
-    # ,
-    # "grad"
-    # ,
-    # "rrt-gpmp2"
-    # ,
-    # "rrt-grad"
-    # ,
-    # "rrt-grad-splines"
+    ,
+    "gpmp2"
+    ,
+    "grad"
+    ,
+    "rrt-gpmp2"
+    ,
+    "rrt-grad"
+    ,
+    "rrt-grad-splines"
 )
 
 foreach ($algo in $algorithms) {

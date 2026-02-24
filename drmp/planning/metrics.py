@@ -59,10 +59,11 @@ def compute_ISJ(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
 
 def compute_waypoints_stddev(
     trajectories: torch.Tensor, robot: RobotBase
-) -> torch.Tensor:
+) -> float:
     assert trajectories.ndim == 3
     if trajectories.shape[0] < 3:
-        return torch.tensor(0.0)
+        return 0.0
+    
     trajectories_pos = (
         robot.get_position(trajectories).permute(1, 0, 2)
         if robot is not None

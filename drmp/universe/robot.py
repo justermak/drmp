@@ -183,10 +183,10 @@ class RobotBase(ABC):
         return trajectories_interpolated_constrained
 
     def create_straight_line_trajectories(
-        self, start: torch.Tensor, goal: torch.Tensor, n_support_points: int
+        self, start_pos: torch.Tensor, goal_pos: torch.Tensor, n_support_points: int
     ) -> torch.Tensor:
         t = torch.linspace(0, 1, n_support_points, **self.tensor_args)
-        trajectories = start.unsqueeze(-2) * (1 - t).unsqueeze(-1) + goal.unsqueeze(
+        trajectories = start_pos.unsqueeze(-2) * (1 - t).unsqueeze(-1) + goal_pos.unsqueeze(
             -2
         ) * t.unsqueeze(-1)
 

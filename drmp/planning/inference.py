@@ -45,7 +45,7 @@ def run_inference_for_task(
         )
     time = timer_model_sampling.elapsed
 
-    if trajectories_final is None:
+    if trajectories_final is None or trajectories_final.shape[0] == 0:
         stats = {
             "success_rate": 0.0,
             "avg_free_trajectories": None,
@@ -240,12 +240,12 @@ def print_stats(results, n_tasks, n_trajectories_per_task, results_dir=None):
 
         if stats.get("avg_free_trajectories_center") is not None:
             row["avg_free_trajectories"] = (
-                f"{stats['avg_free_trajectories_center']:.2f} ± {stats['avg_free_trajectories_hw']:.2f}"
+                f"{stats['avg_free_trajectories_center'] * 100:.2f} ± {stats['avg_free_trajectories_hw']:.2f}"
             )
 
         if stats.get("avg_free_points_center") is not None:
             row["avg_free_points"] = (
-                f"{stats['avg_free_points_center']:.2f} ± {stats['avg_free_points_hw']:.2f}"
+                f"{stats['avg_free_points_center'] * 100:.2f} ± {stats['avg_free_points_hw']:.2f}"
             )
 
         if stats.get("path_length_best_center") is not None:

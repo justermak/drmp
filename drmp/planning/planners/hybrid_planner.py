@@ -64,7 +64,6 @@ class HybridPlanner(ClassicalPlanner):
         debug: bool = False,
     ) -> torch.Tensor:
         if self.sampling_based_planner is not None and n_sampling_steps is not None:
-            
             trajectories = self.sampling_based_planner.optimize(
                 start_pos=start_pos,
                 goal_pos=goal_pos,
@@ -73,7 +72,6 @@ class HybridPlanner(ClassicalPlanner):
                 debug=debug,
             )
 
-            
         else:
             trajectories = []
 
@@ -89,6 +87,7 @@ class HybridPlanner(ClassicalPlanner):
                 for trajectory in trajectories
                 if trajectory is not None
             ]
+            
         else:
             trajectories_smooth = [
                 torch.cat(
@@ -104,12 +103,14 @@ class HybridPlanner(ClassicalPlanner):
                 if trajectory is not None
             ]
 
-        initial_trajectories = torch.stack(trajectories_smooth)
+        initial_trajectories = torch.stack(trajectories_smooth) if len(trajectories_smooth) > 0 else torch.empty(
+            (0, self.n_support_points, self.robot.n_dim), **self.tensor_args
+        )
         if self.create_straight_line_trajectories:
             n_initial = initial_trajectories.shape[0]
             if n_initial < self.n_trajectories:
                 straight_line_trajectory = (
-                    self.robot.create_straight_line_trajectory(
+                    self.robot.create_straight_line_trajectories(
                         start_pos=start_pos,
                         goal_pos=goal_pos,
                         n_support_points=self.n_support_points,
