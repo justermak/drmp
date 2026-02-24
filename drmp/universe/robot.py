@@ -175,8 +175,10 @@ class RobotBase(ABC):
             mode="linear",
             align_corners=True,
         ).transpose(-2, -1)
-        
-        trajectories_interpolated_constrained = self.enforce_rigid_constraints(trajectories_interpolated)
+
+        trajectories_interpolated_constrained = self.enforce_rigid_constraints(
+            trajectories_interpolated
+        )
 
         return trajectories_interpolated_constrained
 
@@ -187,9 +189,9 @@ class RobotBase(ABC):
         trajectories = start.unsqueeze(-2) * (1 - t).unsqueeze(-1) + goal.unsqueeze(
             -2
         ) * t.unsqueeze(-1)
-        
+
         trajectories_constrained = self.enforce_rigid_constraints(trajectories)
-        
+
         return trajectories_constrained
 
     def get_position(
@@ -463,8 +465,7 @@ class RobotBase(ABC):
 
             start, goal = points[:n_samples], points[n_samples:]
             threshold_mask = (
-                torch.linalg.norm(start - goal, dim=-1)
-                > threshold_start_goal_pos
+                torch.linalg.norm(start - goal, dim=-1) > threshold_start_goal_pos
             )
 
             n = torch.sum(threshold_mask).item()
@@ -572,7 +573,7 @@ class RobotL2D(RobotBase):
         new_points = torch.cat(
             [base + new_right_side, base, base + new_top_side], dim=-1
         )
-        
+
         return new_points
 
     def get_collision_points(self, points: torch.Tensor) -> torch.Tensor:
@@ -583,7 +584,7 @@ class RobotL2D(RobotBase):
 
         l_right = torch.linspace(0, 1, n_right + 1, device=points.device)
         l_top = torch.linspace(0, 1, n_top + 1, device=points.device)
-        
+
         s_right = right.unsqueeze(-2) * l_right.unsqueeze(-1) + base.unsqueeze(-2) * (
             1 - l_right
         ).unsqueeze(-1)

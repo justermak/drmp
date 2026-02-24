@@ -23,7 +23,7 @@ class ClassicalPlanner(ABC):
         self.tensor_args = tensor_args
         self.start_pos: torch.Tensor = None
         self.goal_pos: torch.Tensor = None
-        
+
     @abstractmethod
     def optimize(self, **kwargs) -> torch.Tensor | List[torch.Tensor]:
         pass

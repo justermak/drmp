@@ -75,10 +75,12 @@ class RRTConnect(ClassicalPlanner):
         targets = points + direction * torch.minimum(
             dist, torch.tensor(self.max_radius, device=dist.device)
         ).unsqueeze(-1)
-        
+
         targets = self.robot.enforce_rigid_constraints(targets)
 
-        paths = self.robot.create_straight_line_trajectories(points, targets, n_support_points=self.n_points)
+        paths = self.robot.create_straight_line_trajectories(
+            points, targets, n_support_points=self.n_points
+        )
 
         in_collision = self.robot.get_collision_mask(
             env=self.env, points=paths, on_extra=self.use_extra_objects

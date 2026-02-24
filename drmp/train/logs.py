@@ -9,12 +9,12 @@ from torch.utils.tensorboard import SummaryWriter
 from drmp.dataset.dataset import TrajectoryDataset
 from drmp.model.generative_models import GenerativeModel
 from drmp.planning.metrics import (
-    compute_collision_intensity,
-    compute_free_fraction,
-    compute_path_length,
+    compute_free_points,
+    compute_free_trajectories,
     compute_ISJ,
-    compute_success,
-    compute_waypoints_variance,
+    compute_path_length,
+    compute_success_rate,
+    compute_waypoints_stddev,
 )
 from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.visualizer import Visualizer
@@ -62,33 +62,33 @@ def _log_trajectories_metrics(
     )
 
     tensorboard_writer.add_scalar(
-        f"{prefix}free_fraction{suffix}",
-        compute_free_fraction(trajectories_free, 20),
+        f"{prefix}success_rate{suffix}",
+        compute_success_rate(trajectories_free),
         step,
     )
     tensorboard_writer.add_scalar(
-        f"{prefix}collision_intensity{suffix}",
-        compute_collision_intensity(trajectories_collision_mask),
+        f"{prefix}free_trajectories{suffix}",
+        compute_free_trajectories(trajectories_free, 20),
         step,
     )
     tensorboard_writer.add_scalar(
-        f"{prefix}success{suffix}",
-        compute_success(trajectories_free),
+        f"{prefix}free_points{suffix}",
+        compute_free_points(trajectories_collision_mask),
         step,
     )
     tensorboard_writer.add_scalar(
         f"{prefix}avg_path_length{suffix}",
-        compute_path_length(trajectories_free, dataset.robot).mean(),
+        compute_path_length(trajectories_free, dataset.robot).mean().item(),
         step,
     )
     tensorboard_writer.add_scalar(
         f"{prefix}avg_ISJ{suffix}",
-        compute_ISJ(trajectories_free, dataset.robot).mean(),
+        compute_ISJ(trajectories_free, dataset.robot).mean().item(),
         step,
     )
     tensorboard_writer.add_scalar(
-        f"{prefix}waypoints_variance{suffix}",
-        compute_waypoints_variance(trajectories_free, dataset.robot),
+        f"{prefix}waypoints_stddev{suffix}",
+        compute_waypoints_stddev(trajectories_free, dataset.robot),
         step,
     )
 

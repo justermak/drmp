@@ -12,6 +12,7 @@ DEFAULT_TENSOR_ARGS = {
 }
 
 DEFAULT_TRAIN_ARGS = {
+    # Dirs
     "checkpoints_dir": os.path.join(dir_path, "models"),
     "checkpoint_name": "L_splines_1kk",
     # Dataset
@@ -83,22 +84,23 @@ DEFAULT_TRAIN_ARGS = {
 }
 
 DEFAULT_INFERENCE_ARGS = {
+    # Dirs and general settings
     "generations_dir": os.path.join(dir_path, "runs"),
     "experiment_name": None,
     "n_tasks": 10,
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "mpd",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "rrt",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSparse2D_2000_50_L",
+    "dataset_name": "EnvSimple2D_2000_50",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": False,
+    "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "L_splines",
-    "checkpoint_iter": None,
+    "checkpoint_name": "DiffusionShortcut__EnvSimple2D_2000_50__bs_1024__lr_0.0001__steps_2000000__diffusion-steps_32__20260218_032408",
+    "checkpoint_iter": "ema_model_epoch_1086_iter_100000_state_dict.pth",
     "n_inference_steps": 1,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
@@ -159,10 +161,9 @@ DEFAULT_INFERENCE_ARGS = {
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
-    "classical_n_sampling_steps": 10000,  # set to None for straight lines instead of samping based planner
-    "classical_n_optimization_steps": 500,  # set to None to skip optimization based planner
-    "classical_smoothen": True,
-    "classical_create_straight_line_trajectories": False,
+    "classical_n_sampling_steps": 10000,
+    "gpmp2_n_optimization_steps": 300,
+    "grad_n_optimization_steps": 500,
     # RRT-Connect parameters
     "rrt_connect_max_radius": 0.3,
     "rrt_connect_n_points": 64,
@@ -177,9 +178,6 @@ DEFAULT_INFERENCE_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Gradient optimization parameters
-    # "grad_lambda_obstacles": 5e-3,
-    # "grad_lambda_velocity": 3e-7,
-    # "grad_lambda_acceleration": 7e-7,
     "grad_lambda_obstacles": 5e-3,
     "grad_lambda_velocity": 1e-6,
     "grad_lambda_acceleration": 0,
@@ -191,7 +189,7 @@ DEFAULT_INFERENCE_ARGS = {
     "rrt_grad_splines_spline_degree": 3,
     # Other
     "device": "cuda",
-    "debug": True,
+    "debug": False,
     "seed": 42,
 }
 
@@ -206,11 +204,7 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "n_support_points": 64,
     "duration": 5.0,
     "spline_degree": 3,
-    "additional_robot_args": {
-        "width": 0.3, 
-        "height": 0.4, 
-        "n_spheres": 8
-    },
+    "additional_robot_args": {"width": 0.3, "height": 0.4, "n_spheres": 8},
     # Task generation
     "n_tasks": 2000,
     "n_trajectories_per_task": 200,

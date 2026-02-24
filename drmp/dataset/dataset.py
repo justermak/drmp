@@ -465,7 +465,7 @@ class TrajectoryDataset(Dataset):
                         save_path=os.path.join(
                             dataset_dir, f"trajectories_figure_{task_id}.png"
                         ),
-                        draw_indices=[0]
+                        draw_indices=[0],
                     )
                 except Exception as e:
                     print(f"Visualization failed for task {task_id}: {e}")
@@ -623,9 +623,7 @@ class TrajectoryDataset(Dataset):
         new_tasks = {}
         n_completed_tasks = 0
         n_failed_tasks = 0
-        with tqdm(
-            total=len(tasks_to_run), desc="Generating data"
-        ) as pbar:
+        with tqdm(total=len(tasks_to_run), desc="Generating data") as pbar:
             pbar.update(n_skipped_tasks)
 
             if n_processes > 1:
@@ -657,7 +655,7 @@ class TrajectoryDataset(Dataset):
                             }
                         )
                         pbar.update(1)
-                        
+
             else:
                 for args in tasks_to_run:
                     res = self._worker_process_task(args)
@@ -672,7 +670,7 @@ class TrajectoryDataset(Dataset):
                         raise RuntimeError(
                             f"Too many tasks with 0 free trajectories ({n_failed_tasks}/{pbar.n})"
                         )
-                        
+
                     pbar.set_postfix(
                         {
                             "status": status,

@@ -14,20 +14,28 @@ from drmp.universe.robot import RobotBase
 
 class Visualizer:
     COLORS = {
-        "collision": "black",
-        "free": "orange",
-        "robot_collision": "black",
-        "robot_free": "darkorange",
-        "robot_collision_moving": "red",
-        "robot_free_moving": "blue",
-        "traj_best": "green",
-        "start": "cyan",
+        "trajectory_collision": "pink",
+        "trajectory_free": "lightblue",
+        "robot_collision": "darkred",
+        "robot_free": "blue",
+        "robot_collision_moving": "maroon",
+        "robot_free_moving": "green",
+        "trajectory_best": "gold",
+        "robot_best": "purple",
+        "start": "yellow",
         "goal": "magenta",
-        "fixed_obstacle": "gray",
+        "fixed_obstacle": "grey",
         "extra_obstacle": "red",
     }
-
-    START_GOAL_RADIUS = 0.005
+    
+    ZORDERS = {
+        "environment": 0,
+        "trajectory": 1,
+        "robot": 2,
+        "trajectory_best": 3,
+        "robot_best": 4,
+        "start_goal": 5,
+    }
 
     def __init__(
         self, env: EnvBase, robot: RobotBase, use_extra_objects: bool = True
@@ -93,19 +101,19 @@ class Visualizer:
         self,
         collision_mask: torch.Tensor,
         best_traj_idx: int = None,
-        moving: bool = False,
+        type: str = "base",
     ) -> List[List[str]]:
         colors = [
             [
-                self.COLORS["traj_best"]
+                self.COLORS["robot_best"]
                 if i == best_traj_idx
                 else (
                     self.COLORS[
-                        "robot_collision_moving" if moving else "robot_collision"
+                        "robot_collision_moving" if type == "moving" else "robot_collision"
                     ]
                 )
                 if collision
-                else (self.COLORS["robot_free_moving" if moving else "robot_free"])
+                else (self.COLORS["robot_free_moving" if type == "moving" else "robot_free"])
                 for collision in row
             ]
             for i, row in enumerate(collision_mask)
@@ -116,11 +124,11 @@ class Visualizer:
         self, trajectories_collision_mask: torch.Tensor, best_traj_idx: int = None
     ) -> List[str]:
         colors = [
-            self.COLORS["traj_best"]
+            self.COLORS["trajectory_best"]
             if i == best_traj_idx
-            else self.COLORS["collision"]
+            else self.COLORS["trajectory_collision"]
             if coll
-            else self.COLORS["free"]
+            else self.COLORS["trajectory_free"]
             for i, coll in enumerate(trajectories_collision_mask)
         ]
         return colors
@@ -130,7 +138,7 @@ class Visualizer:
         ax: plt.Axes,
         trajectories: torch.Tensor,
         colors: List[List[str]],
-        moving: bool,
+        type: str,
         zorder: int,
     ) -> None:
         n_trajectories, n_support_points, n_dim = trajectories.shape
@@ -141,19 +149,25 @@ class Visualizer:
         collision_points_np = collision_points.cpu().numpy()
 
         patches_to_draw = []
+        patches_best_to_draw = []
         colors_to_draw = []
+        colors_best_to_draw = []
 
-        radius = self.robot.margin * (1.0 if moving else 0.5)
+        radius = self.robot.margin * (1.5 if type == "startgoal" else 1.0 if type == "moving" else 0.5)
 
         for n in range(n_trajectories):
-
             for m in range(0, n_support_points):
                 color = colors[n][m]
+    
 
                 for k in range(num_spheres):
                     p = collision_points_np[n, m, k]
-                    patches_to_draw.append(Circle(p, radius))
-                    colors_to_draw.append(color)
+                    if color == self.COLORS["robot_best"]:
+                        patches_best_to_draw.append(Circle(p, radius))
+                        colors_best_to_draw.append(color)
+                    else:
+                        patches_to_draw.append(Circle(p, radius))
+                        colors_to_draw.append(color)
 
                 if self.robot.name == "L2D":
                     point = trajectories_np[n, m]
@@ -176,7 +190,12 @@ class Visualizer:
 
         if patches_to_draw:
             p = PatchCollection(
-                patches_to_draw, facecolors=colors_to_draw, alpha=0.5, zorder=zorder
+                patches_to_draw, facecolors=colors_to_draw, zorder=zorder
+            )
+            ax.add_collection(p)
+        if patches_best_to_draw:
+            p = PatchCollection(
+                patches_best_to_draw, facecolors=colors_best_to_draw, zorder=self.ZORDERS["robot_best"]
             )
             ax.add_collection(p)
 
@@ -187,25 +206,69 @@ class Visualizer:
         goal_pos_t = goal_pos.reshape(1, 1, -1)
 
         self._render_robot_pos(
-            ax, start_pos_t, colors=[[self.COLORS["start"]]], moving=True, zorder=100
+            ax, start_pos_t, colors=[[self.COLORS["start"]]], type="startgoal", zorder=self.ZORDERS["start_goal"]
         )
 
         self._render_robot_pos(
-            ax, goal_pos_t, colors=[[self.COLORS["goal"]]], moving=True, zorder=100
+            ax, goal_pos_t, colors=[[self.COLORS["goal"]]], type="startgoal", zorder=self.ZORDERS["start_goal"]
         )
 
     def _render_trajectories(
-        self, 
-        ax: plt.Axes, 
-        trajectories: torch.Tensor, 
-        colors: List[str], 
+        self,
+        ax: plt.Axes,
+        trajectories: torch.Tensor,
+        colors: List[str],
     ) -> None:
-        trajectories_np = trajectories.reshape(trajectories.shape[:-1] + (-1, 2)).permute(2, 0, 1, 3).cpu().numpy()
-        colors_extended = [colors[i] for i in range(trajectories_np.shape[1]) for j in range(trajectories_np.shape[2])]
+        trajectories_np = (
+            trajectories.reshape(trajectories.shape[:-1] + (-1, 2))
+            .permute(2, 0, 1, 3)
+            .cpu()
+            .numpy()
+        )
+        colors_extended = [
+            colors[i]
+            for i in range(trajectories_np.shape[1])
+            for j in range(trajectories_np.shape[2])
+            if colors[i] != self.COLORS["trajectory_best"]
+        ]
+
+        segments = [
+            trajectories_np[i][j]
+            for i in range(trajectories_np.shape[0])
+            for j in range(trajectories_np.shape[1])
+            if colors[i] != self.COLORS["trajectory_best"]
+        ]
         
-        segments = [trajectories_np[i][j] for i in range(trajectories_np.shape[0]) for j in range(trajectories_np.shape[1])]
-        line_collection = LineCollection(segments, colors=colors_extended)
+        colors_best_extended = [
+            colors[i]
+            for i in range(trajectories_np.shape[1])
+            for j in range(trajectories_np.shape[2])
+            if colors[i] == self.COLORS["trajectory_best"]
+        ]
+        
+        segments_best = [
+            trajectories_np[i][j]
+            for i in range(trajectories_np.shape[0])
+            for j in range(trajectories_np.shape[1])
+            if colors[j] == self.COLORS["trajectory_best"]
+        ]
+        
+        line_collection = LineCollection(
+            segments,
+            colors=colors_extended,
+            linewidths=0.5,
+            zorder=self.ZORDERS["trajectory"],
+            alpha=0.7,
+        )
+        line_collection_best = LineCollection(
+            segments_best,
+            colors=colors_best_extended,
+            linewidths=1.0,
+            zorder=self.ZORDERS["trajectory_best"],
+            alpha=0.7,
+        )
         ax.add_collection(line_collection)
+        ax.add_collection(line_collection_best)
 
     def render_scene(
         self,
@@ -217,22 +280,26 @@ class Visualizer:
         goal_pos: Optional[torch.Tensor] = None,
         points_collision_mask: Optional[torch.Tensor] = None,
         draw_indices: Optional[List[int]] = None,
-        draw_spacing: int = 8,
+        draw_spacing: int = 1,
         save_path: Optional[str] = "trajectories_figure.png",
     ) -> Tuple[plt.Figure, plt.Axes]:
-        draw_indices = draw_indices if draw_indices is not None else list(range(trajectories.shape[0]))
+        draw_indices = (
+            draw_indices
+            if draw_indices is not None
+            else list(range(trajectories.shape[0]))
+        )
         if best_traj_idx is not None and best_traj_idx not in draw_indices:
             best_traj_idx = None
-            
+
         if best_traj_idx is not None:
             best_traj_idx = draw_indices.index(best_traj_idx)
-            
+
         trajectories = self.robot.get_position(trajectories[draw_indices])
         n_trajectories, n_support_points, n_dim = trajectories.shape
-        
+
         if fig is None or ax is None:
             fig, ax = plt.subplots()
-        
+
         if points_collision_mask is None:
             _, _, points_collision_mask = (
                 self.robot.get_trajectories_collision_and_free(
@@ -242,21 +309,21 @@ class Visualizer:
                 )
             )
             
-        points_collision_mask = points_collision_mask[:, ::11]
-        assert points_collision_mask.shape == (n_trajectories, n_support_points)
-
         trajectories_collision_mask = points_collision_mask.any(dim=-1)
-        
+
         traj_colors = self._compute_trajectory_colors(
             trajectories_collision_mask, best_traj_idx
         )
-            
+
+        points_collision_mask = points_collision_mask[:, ::11]
+        assert points_collision_mask.shape == (n_trajectories, n_support_points)
+
         self._render_trajectories(ax, trajectories, traj_colors)
 
-        draw_indices_col = torch.arange(n_support_points)[::draw_spacing]
+        draw_indices_col = torch.arange(n_support_points)[draw_spacing // 2::draw_spacing]
         trajectories = trajectories[:, draw_indices_col]
         points_collision_mask = points_collision_mask[:, draw_indices_col]
-        
+
         robot_pos_colors = self._compute_robot_colors(
             points_collision_mask, best_traj_idx
         )
@@ -266,15 +333,15 @@ class Visualizer:
             ax,
             trajectories,
             robot_pos_colors,
-            moving=False,
-            zorder=10,
+            type="base",
+            zorder=self.ZORDERS["robot"],
         )
 
         if start_pos is not None and goal_pos is not None:
             self._render_start_goal_pos(ax, start_pos, goal_pos)
 
         if save_path is not None:
-            fig.savefig(save_path, dpi=150, bbox_inches="tight")
+            fig.savefig(save_path, dpi=600, bbox_inches="tight")
             plt.close(fig)
 
         return fig, ax
@@ -303,7 +370,7 @@ class Visualizer:
         n_frames: int = 60,
         anim_time: int = 5,
         draw_indices: Optional[List[int]] = None,
-        draw_spacing: int = 8,
+        draw_spacing: int = 1,
         save_path: str = "robot_motion_animation.mp4",
     ) -> None:
         n_trajectories, n_support_points, n_dim = trajectories.shape
@@ -355,7 +422,6 @@ class Visualizer:
             transOffset=ax.transData,
             facecolors=[self.COLORS["robot_free_moving"]]
             * (n_draw * n_collision_points),
-            alpha=1.0,
             zorder=20,
         )
         ax.add_collection(spheres_collection)
@@ -365,7 +431,7 @@ class Visualizer:
             segments_collection = LineCollection(
                 [],
                 colors=[self.COLORS["robot_free_moving"]] * (n_draw * 2),
-                linewidths=1,
+                linewidths=0.5,
                 zorder=20,
             )
             ax.add_collection(segments_collection)
@@ -379,7 +445,7 @@ class Visualizer:
             mask = points_collision_mask[draw_indices, idx].unsqueeze(1)
 
             colors = self._compute_robot_colors(
-                mask, best_traj_idx=best_traj_idx, moving=True
+                mask, best_traj_idx=best_traj_idx, type="moving"
             )
 
             collision_points = self.robot.get_collision_points(current_states).reshape(
@@ -422,7 +488,7 @@ class Visualizer:
         n_frames: int = 60,
         anim_time: int = 5,
         draw_indices: Optional[List[int]] = None,
-        draw_spacing: int = 8,
+        draw_spacing: int = 1,
         save_path: str = "trajectories_optimization_animation.mp4",
     ) -> None:
         n_iterations, n_trajectories, n_support_points, n_dim = trajectories.shape

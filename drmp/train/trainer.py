@@ -329,7 +329,7 @@ def train(
 
     else:
         guide_extra = None
-        
+
     inference_args_no_guide = copy.deepcopy(inference_args)
     del inference_args_no_guide["lambda_obstacles"]
     del inference_args_no_guide["lambda_velocity"]

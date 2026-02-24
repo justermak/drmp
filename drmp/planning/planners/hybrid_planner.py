@@ -63,108 +63,98 @@ class HybridPlanner(ClassicalPlanner):
         print_freq: int = 200,
         debug: bool = False,
     ) -> torch.Tensor:
-        with TimerCUDA() as t_hybrid:
-            if self.sampling_based_planner is not None and n_sampling_steps is not None:
-                with TimerCUDA() as t_sampling_based:
-                    trajectories = self.sampling_based_planner.optimize(
-                        start_pos=start_pos,
-                        goal_pos=goal_pos,
-                        n_sampling_steps=n_sampling_steps,
-                        print_freq=print_freq,
-                        debug=debug,
-                    )
-                
-                if debug:
-                    print(
-                        f"Sample-based Planner -- Optimization time: {t_sampling_based.elapsed:.3f} sec"
-                    )
-            else:
-                trajectories = []
-                
-            if self.smoothen:
-                trajectories_smooth = [
-                    self.robot.get_trajectories_from_bsplines(
-                        torch.cat(
-                            [trajectory[:1, :], trajectory, trajectory[-1:, :]],
-                            dim=0,
-                        ),
-                        n_support_points=self.n_support_points,
-                    )
-                    for trajectory in trajectories
-                    if trajectory is not None
-                ]
-            else:
-                trajectories_smooth = [
-                    torch.cat(
-                        [
-                            trajectory,
-                            trajectory[-1:].repeat(
-                                self.n_support_points - len(trajectory), 1
-                            ),
-                        ],
-                        dim=0,
-                    )
-                    for trajectory in trajectories
-                    if trajectory is not None
-                ]
-
-            initial_trajectories = torch.stack(trajectories_smooth)
-            if self.create_straight_line_trajectories:
-                n_initial = initial_trajectories.shape[0]
-                if n_initial < self.n_trajectories:
-                    straight_line_trajectory = self.robot.create_straight_line_trajectory(
-                        start_pos=start_pos,
-                        goal_pos=goal_pos,
-                        n_support_points=self.n_support_points,
-                    )
-                    straight_line_trajectories = straight_line_trajectory.repeat(
-                        self.n_trajectories - n_initial, 1, 1
-                    )
-                    initial_trajectories = torch.cat(
-                        [initial_trajectories, straight_line_trajectories], dim=0
-                    )
-                    
-            if self.optimization_based_planner is not None and n_optimization_steps is not None:
-                if self.optimization_based_planner.name == "GPMP2":
-                    initial_trajectories = torch.cat(
-                        [
-                            initial_trajectories,
-                            self.robot.get_velocity(initial_trajectories, mode="avg"),
-                        ],
-                        dim=-1,
-                    )
-
-                if self.n_control_points is not None:
-                    initial_trajectories = self.robot.fit_bsplines_to_trajectories(
-                        trajectories=initial_trajectories,
-                        n_control_points=self.n_control_points,
-                    )
-
-                with TimerCUDA() as t_opt_based:
-                    trajectories = self.optimization_based_planner.optimize(
-                        trajectories=initial_trajectories,
-                        n_optimization_steps=n_optimization_steps,
-                        print_freq=print_freq // 2,
-                        debug=debug,
-                    )
-                    
-                if debug:
-                    print(
-                        f"Optimization-based Planner -- Optimization time: {t_opt_based.elapsed:.3f} sec"
-                    )
-                    
-                if self.n_control_points is not None:
-                    trajectories = self.robot.get_trajectories_from_bsplines(
-                        control_points=trajectories,
-                        n_support_points=self.n_support_points,
-                    )
-                    
-            else:
-                trajectories = initial_trajectories
+        if self.sampling_based_planner is not None and n_sampling_steps is not None:
             
-        if debug:
-            print(
-                f"Hybrid-based Planner -- Optimization time: {t_hybrid.elapsed:.3f} sec"
+            trajectories = self.sampling_based_planner.optimize(
+                start_pos=start_pos,
+                goal_pos=goal_pos,
+                n_sampling_steps=n_sampling_steps,
+                print_freq=print_freq,
+                debug=debug,
             )
+
+            
+        else:
+            trajectories = []
+
+        if self.smoothen:
+            trajectories_smooth = [
+                self.robot.get_trajectories_from_bsplines(
+                    torch.cat(
+                        [trajectory[:1, :], trajectory, trajectory[-1:, :]],
+                        dim=0,
+                    ),
+                    n_support_points=self.n_support_points,
+                )
+                for trajectory in trajectories
+                if trajectory is not None
+            ]
+        else:
+            trajectories_smooth = [
+                torch.cat(
+                    [
+                        trajectory,
+                        trajectory[-1:].repeat(
+                            self.n_support_points - len(trajectory), 1
+                        ),
+                    ],
+                    dim=0,
+                )
+                for trajectory in trajectories
+                if trajectory is not None
+            ]
+
+        initial_trajectories = torch.stack(trajectories_smooth)
+        if self.create_straight_line_trajectories:
+            n_initial = initial_trajectories.shape[0]
+            if n_initial < self.n_trajectories:
+                straight_line_trajectory = (
+                    self.robot.create_straight_line_trajectory(
+                        start_pos=start_pos,
+                        goal_pos=goal_pos,
+                        n_support_points=self.n_support_points,
+                    )
+                )
+                straight_line_trajectories = straight_line_trajectory.repeat(
+                    self.n_trajectories - n_initial, 1, 1
+                )
+                initial_trajectories = torch.cat(
+                    [initial_trajectories, straight_line_trajectories], dim=0
+                )
+
+        if (
+            self.optimization_based_planner is not None
+            and n_optimization_steps is not None
+        ):
+            if self.optimization_based_planner.name == "GPMP2":
+                initial_trajectories = torch.cat(
+                    [
+                        initial_trajectories,
+                        self.robot.get_velocity(initial_trajectories, mode="avg"),
+                    ],
+                    dim=-1,
+                )
+
+            if self.n_control_points is not None:
+                initial_trajectories = self.robot.fit_bsplines_to_trajectories(
+                    trajectories=initial_trajectories,
+                    n_control_points=self.n_control_points,
+                )
+
+            trajectories = self.optimization_based_planner.optimize(
+                trajectories=initial_trajectories,
+                n_optimization_steps=n_optimization_steps,
+                print_freq=print_freq // 2,
+                debug=debug,
+            )
+
+            if self.n_control_points is not None:
+                trajectories = self.robot.get_trajectories_from_bsplines(
+                    control_points=trajectories,
+                    n_support_points=self.n_support_points,
+                )
+
+        else:
+            trajectories = initial_trajectories
 
         return trajectories

@@ -106,7 +106,7 @@ class MPDModelWrapper(ModelWrapperBase):
         ddim: bool,
         use_extra_objects: bool,
     ):
-        super().__init__(name='MPD', use_extra_objects=use_extra_objects)
+        super().__init__(name="MPD", use_extra_objects=use_extra_objects)
         self.model = model
         self.guide = guide
         self.start_guide_steps_fraction = start_guide_steps_fraction
@@ -170,7 +170,7 @@ class MPDSplinesModelWrapper(ModelWrapperBase):
         scale_grad_prior: float,
         ddim_sampling_timesteps: int,
     ):
-        super().__init__(name='MPD-Splines', use_extra_objects=use_extra_objects)
+        super().__init__(name="MPD-Splines", use_extra_objects=use_extra_objects)
         self.model = model
         self.guide = guide
         self.start_guide_steps_fraction = start_guide_steps_fraction
@@ -240,7 +240,7 @@ class ClassicalPlannerWrapper(ModelWrapperBase):
         n_sampling_steps: int,
         n_optimization_steps: int,
     ):
-        super().__init__(name='Classical', use_extra_objects=use_extra_objects)
+        super().__init__(name="Classical", use_extra_objects=use_extra_objects)
         self.planner = planner
         self.n_sampling_steps = n_sampling_steps
         self.n_optimization_steps = n_optimization_steps
@@ -668,7 +668,11 @@ class ClassicalConfig(ModelConfigBase):
         tensor_args: Dict[str, Any],
         n_trajectories_per_task: int,
     ) -> ClassicalPlannerWrapper:
-        robot = dataset.generating_robot if self.optimization_based_planner_name == "GPMP2" else dataset.robot
+        robot = (
+            dataset.generating_robot
+            if self.optimization_based_planner_name == "GPMP2"
+            else dataset.robot
+        )
         sampling_based_planner = None
         if self.sampling_based_planner_name is not None:
             sampling_based_planner = RRTConnect(
@@ -781,7 +785,7 @@ class ClassicalConfig(ModelConfigBase):
             n_sampling_steps=self.n_sampling_steps,
             n_optimization_steps=self.n_optimization_steps,
         )
-        
+
         return wrapper
 
     def to_dict(self) -> Dict[str, Any]:

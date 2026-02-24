@@ -2,7 +2,7 @@ from typing import Set
 
 import torch
 
-from drmp.planning.metrics import compute_path_length, compute_ISJ
+from drmp.planning.metrics import compute_ISJ, compute_path_length
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
 

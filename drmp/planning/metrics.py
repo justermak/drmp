@@ -7,6 +7,31 @@ from scipy import stats
 from drmp.universe.robot import RobotBase
 
 
+def compute_success_rate(trajectories_free: torch.Tensor) -> float:
+    assert trajectories_free.ndim == 3
+
+    return float(trajectories_free.nelement() > 0)
+
+
+def compute_free_trajectories(
+    trajectories_free: torch.Tensor, n_trajectories_per_task: int
+) -> float:
+    assert trajectories_free.ndim == 3
+    cnt_free = trajectories_free.shape[0]
+    fraction = cnt_free / n_trajectories_per_task
+
+    return fraction
+
+
+def compute_free_points(trajectories_collision_mask: torch.Tensor) -> float:
+    assert trajectories_collision_mask.ndim == 2
+    fraction = (
+        ~trajectories_collision_mask
+    ).sum().item() / trajectories_collision_mask.numel()
+
+    return fraction
+
+
 def compute_path_length(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     assert trajectories.ndim == 3
     if trajectories.shape[0] == 0:
@@ -15,6 +40,7 @@ def compute_path_length(trajectories: torch.Tensor, robot: RobotBase) -> torch.T
     path_length = torch.linalg.norm(torch.diff(trajectories_pos, dim=-2), dim=-1).sum(
         -1
     )
+
     return path_length
 
 
@@ -27,10 +53,11 @@ def compute_ISJ(trajectories: torch.Tensor, robot: RobotBase) -> torch.Tensor:
     trajectories_acc = torch.diff(trajectories_vel, dim=-2) / robot.dt
     trajectories_jerk = torch.diff(trajectories_acc, dim=-2) / robot.dt
     integrated_squared_jerk = (trajectories_jerk**2).sum(-1).sum(-1) * robot.dt
+
     return integrated_squared_jerk
 
 
-def compute_waypoints_variance(
+def compute_waypoints_stddev(
     trajectories: torch.Tensor, robot: RobotBase
 ) -> torch.Tensor:
     assert trajectories.ndim == 3
@@ -46,30 +73,9 @@ def compute_waypoints_variance(
         (trajectories_pos.unsqueeze(-2) - mean.unsqueeze(-2))
         * (trajectories_pos.unsqueeze(-1) - mean.unsqueeze(-1))
     ).sum(dim=-3) / (trajectories_pos.shape[-2] - 1)
-    vol_sq = (cov[..., 0, 0] * cov[..., 1, 1] - cov[..., 0, 1] ** 2).mean()
-    vol = vol_sq.sqrt()
-    lin = vol.sqrt()
-    return lin
+    std = (cov[..., 0, 0] * cov[..., 1, 1] - cov[..., 0, 1] ** 2).mean() ** 0.5
 
-
-def compute_free_fraction(
-    trajectories_free: torch.Tensor, n_trajectories_per_task: int
-) -> float:
-    assert trajectories_free.ndim == 3
-    cnt_free = trajectories_free.shape[0]
-    fraction = cnt_free / n_trajectories_per_task
-    return fraction
-
-
-def compute_collision_intensity(trajectories_collision_mask: torch.Tensor) -> float:
-    assert trajectories_collision_mask.ndim == 2
-    intensity = trajectories_collision_mask.sum() / trajectories_collision_mask.numel()
-    return intensity
-
-
-def compute_success(trajectories_free: torch.Tensor) -> float:
-    assert trajectories_free.ndim == 3
-    return float(trajectories_free.nelement() > 0)
+    return std.item()
 
 
 def bootstrap_confidence_interval(
