@@ -91,16 +91,16 @@ DEFAULT_INFERENCE_ARGS = {
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "rrt-grad-splines",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "grad-splines" "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDenseNarrowPassage2D_2000_50",
+    "dataset_name": "EnvDense2D_2000_50",
     "threshold_start_goal_pos": 1.5,
-    "use_extra_objects": False,
+    "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": "DiffusionShortcut__EnvDenseNarrowPassage2D_2000_50__bs_1024__lr_0.0001__steps_200000__diffusion-steps_32__20260218_104612",
-    "checkpoint_iter": "ema_model_epoch_1123_iter_100000_state_dict.pth",
+    "checkpoint_name": None,
+    "checkpoint_iter": None,  # If None, use checkpoint_name as is. Otherwise, replace "current" in checkpoint_name with "iter_{checkpoint_iter}".
     "n_inference_steps": 1,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
@@ -116,11 +116,11 @@ DEFAULT_INFERENCE_ARGS = {
     # Diffusion prior guide
     "t_start_guide": 0,
     "n_guide_steps": 2,
-    "lambda_obstacles": 5e-3,
-    "lambda_velocity": 1e-6,
-    "lambda_acceleration": 0,
-    "lambda_jerk": 0,
-    "max_grad_norm": 1.0,
+    "lambda_obstacles": 1e-2,
+    "lambda_velocity": 5e-5,
+    "lambda_acceleration": 1e-5,
+    "lambda_jerk": 5e-7,
+    "max_grad_norm": 0.01,
     "n_interpolate": 10,
     # MPD
     "mpd_checkpoints_dir": os.path.join(
@@ -143,27 +143,29 @@ DEFAULT_INFERENCE_ARGS = {
         dir_path,
         "data_trained_models",
         "mpd-splines",
-        "EnvNarrowPassageDense2D-RobotPointMass",
+        "EnvSimple2D-RobotPointMass",
         "checkpoints",
     ),
     "mpd_splines_checkpoint_name": "ema_model_current.pth",
     "mpd_splines_n_control_points": 24,
     "mpd_splines_spline_degree": 3,
-    "mpd_splines_n_guide_steps": 4,
-    "mpd_splines_start_guide_steps_fraction": 0.3,
-    "mpd_splines_ddim_sampling_timesteps": 15,
+    "mpd_splines_n_guide_steps": 2,
+    "mpd_splines_start_guide_steps_fraction": 0.0,
+    "mpd_splines_ddim_sampling_timesteps": 10,
     "mpd_splines_guide_lr": 1.0,
-    "mpd_splines_scale_grad_prior": 0.25,
-    "mpd_splines_sigma_collision": 1e1,
-    "mpd_splines_sigma_gp": 2e3,
-    "mpd_splines_max_grad_norm": 1.0,
-    "mpd_splines_n_interpolate": 5,
+    "mpd_splines_scale_grad_prior": 1.0,
+    "mpd_splines_lambda_obstacles": 1e-2,
+    "mpd_splines_lambda_velocity": 5e-5,
+    "mpd_splines_lambda_acceleration": 1e-5,
+    "mpd_splines_lambda_jerk": 5e-7,
+    "mpd_splines_max_grad_norm": 0.01,
+    "mpd_splines_n_interpolate": 10,
     "mpd_splines_ddim": True,
     # Classical algorithm
     "classical_n_dof": N_DIM,
     "classical_n_sampling_steps": 10000,
     "gpmp2_n_optimization_steps": 300,
-    "grad_n_optimization_steps": 500,
+    "grad_n_optimization_steps": 300,
     # RRT-Connect parameters
     "rrt_connect_max_radius": 0.3,
     "rrt_connect_n_points": 64,
@@ -178,15 +180,15 @@ DEFAULT_INFERENCE_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Gradient optimization parameters
-    "grad_lambda_obstacles": 5e-3,
-    "grad_lambda_velocity": 1e-6,
-    "grad_lambda_acceleration": 0,
-    "grad_lambda_jerk": 0,
-    "grad_max_grad_norm": 1.0,
+    "grad_lambda_obstacles": 1e-2,
+    "grad_lambda_velocity": 5e-5,
+    "grad_lambda_acceleration": 1e-5,
+    "grad_lambda_jerk": 5e-7,
+    "grad_max_grad_norm": 0.01,
     "grad_n_interpolate": 10,
-    # RRT-Grad-Splines parameters
-    "rrt_grad_splines_n_control_points": 24,
-    "rrt_grad_splines_spline_degree": 3,
+    # *-Grad-Splines parameters
+    "grad_splines_n_control_points": 24,
+    "grad_splines_spline_degree": 3,
     # Other
     "device": "cuda",
     "debug": False,
@@ -196,29 +198,29 @@ DEFAULT_INFERENCE_ARGS = {
 DEFAULT_DATA_GENERATION_ARGS = {
     # Dataset initialization
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvSparse2D_2000_200_L",
+    "dataset_name": "EnvSparse2D_20_50_L",
     "env_name": "EnvSparse2D",
     "robot_name": "L2D",
     "robot_margin": 0.05,
     "generating_robot_margin": 0.06,
-    "n_support_points": 64,
+    "n_support_points": 128,
     "duration": 5.0,
     "spline_degree": 3,
-    "additional_robot_args": {"width": 0.3, "height": 0.4, "n_spheres": 8},
+    "additional_robot_args": {"width": 0.3, "height": 0.4, "n_spheres": 15},
     # Task generation
-    "n_tasks": 2000,
-    "n_trajectories_per_task": 200,
+    "n_tasks": 20,
+    "n_trajectories_per_task": 50,
     "threshold_start_goal_pos": 1.5,
     # Planning parameters
     "n_sampling_steps": 10000,
-    "n_optimization_steps": 500,
+    "n_optimization_steps": 300,
     "smoothen": True,
     "create_straight_line_trajectories": False,
     "use_gpmp2": False,
     "n_control_points": 24,
     # RRT-Connect parameters
     "rrt_connect_max_radius": 0.3,
-    "rrt_connect_n_points": 128,
+    "rrt_connect_n_points": 64,
     "rrt_connect_n_samples": 160000,
     # GPMP2 parameters
     "gpmp2_n_interpolate": 5,
@@ -230,16 +232,16 @@ DEFAULT_DATA_GENERATION_ARGS = {
     "gpmp2_delta": 1e-5,
     "gpmp2_method": "cholesky",
     # Gradient optimization parameters
-    "grad_lambda_obstacles": 5e-3,
-    "grad_lambda_velocity": 1e-6,
-    "grad_lambda_acceleration": 0,
-    "grad_lambda_jerk": 0,
-    "grad_max_grad_norm": 1.0,
+    "grad_lambda_obstacles": 1e-2,
+    "grad_lambda_velocity": 5e-5,
+    "grad_lambda_acceleration": 1e-5,
+    "grad_lambda_jerk": 5e-7,
+    "grad_max_grad_norm": 0.01,
     "grad_n_interpolate": 10,
     # Other
     "n_processes": 1,
     "val_portion": 0.05,
-    "device": "cuda:6",
+    "device": "cuda",
     "debug": False,
     "seed": 42,
 }

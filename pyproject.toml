@@ -17,6 +17,7 @@ dependencies = [
     "configargparse",
     "pyyaml",
     "matplotlib",
+    "tabulate",
     "tensorboard",
     "tqdm",
     "ipython",

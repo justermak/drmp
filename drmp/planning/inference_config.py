@@ -513,8 +513,10 @@ class MPDSplinesConfig(ModelConfigBase):
         ddim: bool,
         guide_lr: float,
         scale_grad_prior: float,
-        sigma_collision: float,
-        sigma_gp: float,
+        lambda_obstacles: float,
+        lambda_velocity: float,
+        lambda_acceleration: float,
+        lambda_jerk: float,
         max_grad_norm: float,
         n_interpolate: int,
         ddim_sampling_timesteps: int,
@@ -527,8 +529,10 @@ class MPDSplinesConfig(ModelConfigBase):
         self.ddim = ddim
         self.guide_lr = guide_lr
         self.scale_grad_prior = scale_grad_prior
-        self.sigma_collision = sigma_collision
-        self.sigma_gp = sigma_gp
+        self.lambda_obstacles = lambda_obstacles
+        self.lambda_velocity = lambda_velocity
+        self.lambda_acceleration = lambda_acceleration
+        self.lambda_jerk = lambda_jerk
         self.max_grad_norm = max_grad_norm
         self.n_interpolate = n_interpolate
         self.ddim_sampling_timesteps = ddim_sampling_timesteps
@@ -539,44 +543,67 @@ class MPDSplinesConfig(ModelConfigBase):
         tensor_args: Dict[str, Any],
         n_trajectories_per_task: int,
     ) -> MPDSplinesModelWrapper:
-        guide = None
-        if self.n_guide_steps > 0:
-            collision_costs = [
-                CostCollision(
-                    robot=dataset.robot,
-                    env=dataset.env,
-                    n_support_points=dataset.n_support_points,
-                    sigma_collision=self.sigma_collision,
-                    use_extra_objects=self.use_extra_objects,
-                    tensor_args=tensor_args,
-                )
-            ]
+        collision_cost = None
+        if self.lambda_obstacles is not None:
+            collision_cost = CostObstacles(
+                robot=dataset.robot,
+                env=dataset.env,
+                n_support_points=dataset.n_support_points,
+                lambda_obstacles=self.lambda_obstacles,
+                use_extra_objects=self.use_extra_objects,
+                tensor_args=tensor_args,
+            )
 
-            sharpness_costs = [
-                CostGPTrajectory(
-                    robot=dataset.robot,
-                    n_support_points=dataset.n_support_points,
-                    sigma_gp=self.sigma_gp,
-                    tensor_args=tensor_args,
-                )
-            ]
-
-            costs = collision_costs + sharpness_costs
-
-            cost = CostComposite(
+        velocity_cost = None
+        if self.lambda_velocity is not None:
+            velocity_cost = CostJointVelocity(
                 robot=dataset.robot,
                 n_support_points=dataset.n_support_points,
-                costs=costs,
+                lambda_velocity=self.lambda_velocity,
                 tensor_args=tensor_args,
             )
 
-            guide = GradientOptimization(
-                dataset=dataset,
-                costs=[cost],
-                max_grad_norm=self.max_grad_norm,
-                n_interpolate=self.n_interpolate,
+        acceleration_cost = None
+        if self.lambda_acceleration is not None:
+            acceleration_cost = CostJointAcceleration(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                lambda_acceleration=self.lambda_acceleration,
                 tensor_args=tensor_args,
             )
+
+        jerk_cost = None
+        if self.lambda_jerk is not None:
+            jerk_cost = CostJointJerk(
+                robot=dataset.robot,
+                n_support_points=dataset.n_support_points,
+                lambda_jerk=self.lambda_jerk,
+                tensor_args=tensor_args,
+            )
+
+        costs = [
+            cost
+            for cost in [
+                collision_cost,
+                velocity_cost,
+                acceleration_cost,
+                jerk_cost,
+            ]
+            if cost is not None
+        ]
+
+        guide = GradientOptimization(
+            env=dataset.env,
+            robot=dataset.generating_robot,
+            normalizer=dataset.normalizer,
+            n_support_points=dataset.n_support_points,
+            n_control_points=dataset.n_control_points,
+            costs=costs,
+            max_grad_norm=self.max_grad_norm,
+            n_interpolate=self.n_interpolate,
+            tensor_args=tensor_args,
+            use_extra_objects=self.use_extra_objects,
+        )
 
         return MPDSplinesModelWrapper(
             model=self.model,
@@ -597,8 +624,10 @@ class MPDSplinesConfig(ModelConfigBase):
             "ddim": self.ddim,
             "guide_lr": self.guide_lr,
             "scale_grad_prior": self.scale_grad_prior,
-            "sigma_collision": self.sigma_collision,
-            "sigma_gp": self.sigma_gp,
+            "lambda_obstacles": self.lambda_obstacles,
+            "lambda_velocity": self.lambda_velocity,
+            "lambda_acceleration": self.lambda_acceleration,
+            "lambda_jerk": self.lambda_jerk,
             "max_grad_norm": self.max_grad_norm,
             "n_interpolate": self.n_interpolate,
             "ddim_sampling_timesteps": self.ddim_sampling_timesteps,
@@ -668,16 +697,11 @@ class ClassicalConfig(ModelConfigBase):
         tensor_args: Dict[str, Any],
         n_trajectories_per_task: int,
     ) -> ClassicalPlannerWrapper:
-        robot = (
-            dataset.generating_robot
-            if self.optimization_based_planner_name == "GPMP2"
-            else dataset.robot
-        )
         sampling_based_planner = None
         if self.sampling_based_planner_name is not None:
             sampling_based_planner = RRTConnect(
                 env=dataset.env,
-                robot=robot,
+                robot=dataset.generating_robot,
                 n_trajectories=n_trajectories_per_task,
                 max_radius=self.rrt_connect_max_radius,
                 n_points=self.rrt_connect_n_points,
@@ -690,10 +714,10 @@ class ClassicalConfig(ModelConfigBase):
         if self.optimization_based_planner_name == "GPMP2":
             optimization_based_planner = GPMP2(
                 env=dataset.env,
-                robot=robot,
-                n_dim=robot.n_dim,
+                robot=dataset.generating_robot,
+                n_dim=dataset.generating_robot.n_dim,
                 n_support_points=dataset.n_support_points,
-                dt=robot.dt,
+                dt=dataset.generating_robot.dt,
                 n_interpolate=self.gpmp2_n_interpolate,
                 sigma_start=self.gpmp2_sigma_start,
                 sigma_gp=self.gpmp2_sigma_gp,
@@ -709,7 +733,7 @@ class ClassicalConfig(ModelConfigBase):
             collision_cost = None
             if self.grad_lambda_obstacles is not None:
                 collision_cost = CostObstacles(
-                    robot=robot,
+                    robot=dataset.generating_robot,
                     env=dataset.env,
                     n_support_points=dataset.n_support_points,
                     lambda_obstacles=self.grad_lambda_obstacles,
@@ -720,7 +744,7 @@ class ClassicalConfig(ModelConfigBase):
             velocity_cost = None
             if self.grad_lambda_velocity is not None:
                 velocity_cost = CostJointVelocity(
-                    robot=robot,
+                    robot=dataset.generating_robot,
                     n_support_points=dataset.n_support_points,
                     lambda_velocity=self.grad_lambda_velocity,
                     tensor_args=tensor_args,
@@ -729,7 +753,7 @@ class ClassicalConfig(ModelConfigBase):
             acceleration_cost = None
             if self.grad_lambda_acceleration is not None:
                 acceleration_cost = CostJointAcceleration(
-                    robot=robot,
+                    robot=dataset.generating_robot,
                     n_support_points=dataset.n_support_points,
                     lambda_acceleration=self.grad_lambda_acceleration,
                     tensor_args=tensor_args,
@@ -738,7 +762,7 @@ class ClassicalConfig(ModelConfigBase):
             jerk_cost = None
             if self.grad_lambda_jerk is not None:
                 jerk_cost = CostJointJerk(
-                    robot=robot,
+                    robot=dataset.generating_robot,
                     n_support_points=dataset.n_support_points,
                     lambda_jerk=self.grad_lambda_jerk,
                     tensor_args=tensor_args,
@@ -756,7 +780,7 @@ class ClassicalConfig(ModelConfigBase):
             ]
             optimization_based_planner = GradientOptimization(
                 env=dataset.env,
-                robot=robot,
+                robot=dataset.generating_robot,
                 normalizer=dataset.normalizer,
                 n_support_points=dataset.n_support_points,
                 n_control_points=dataset.n_control_points,
@@ -774,7 +798,6 @@ class ClassicalConfig(ModelConfigBase):
             create_straight_line_trajectories=self.create_straight_line_trajectories,
             n_trajectories=n_trajectories_per_task,
             n_support_points=dataset.n_support_points,
-            dt=robot.dt,
             n_control_points=dataset.n_control_points,
             tensor_args=tensor_args,
         )

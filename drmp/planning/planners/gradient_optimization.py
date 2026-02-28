@@ -1,3 +1,5 @@
+import os
+import time
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -8,6 +10,7 @@ from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.torch_timer import TimerCUDA
 from drmp.universe.environments import EnvBase
 from drmp.universe.robot import RobotBase
+from drmp.visualizer import Visualizer
 
 
 class GradientOptimization(ClassicalPlanner):
@@ -60,18 +63,20 @@ class GradientOptimization(ClassicalPlanner):
                 trajectories_pos = self.robot.get_position(
                     trajectories=trajectories_unnormalized,
                 )
-            cost = sum(
+            costs = [
                 cost(
                     trajectories=trajectories_pos,
                     n_interpolate=self.n_interpolate,
                 ).sum()
                 for cost in self.costs
-            )
+            ]
+            
+            cost = sum(costs)
 
             grad = torch.autograd.grad(cost, trajectories_normalized)[0]
             if self.max_grad_norm is not None:
-                grad_norm = torch.linalg.norm(grad + 1e-8, dim=-1, keepdims=True)
-                scale_ratio = torch.clip(grad_norm, 0.0, self.max_grad_norm) / grad_norm
+                grad_norm = torch.linalg.norm(grad, dim=-1, keepdims=True)
+                scale_ratio = torch.clip(grad_norm, 1e-8, self.max_grad_norm + 1e-8) / (grad_norm + 1e-8)
                 grad = scale_ratio * grad
 
             n_fixed = 2 if self.n_control_points is not None else 1
@@ -79,7 +84,7 @@ class GradientOptimization(ClassicalPlanner):
             grad[..., -n_fixed:, :] = 0.0
 
         if return_cost:
-            return grad, cost
+            return grad, costs
         return grad
 
     def __call__(self, trajectories: torch.Tensor) -> torch.Tensor:
@@ -104,19 +109,29 @@ class GradientOptimization(ClassicalPlanner):
         else:
             x = self.normalizer.normalize(x)
         cost = None
+        if debug:
+            self.print_info(0, 0.0, self.compute_gradient(x=x, return_cost=True)[1], x)
         with TimerCUDA() as t_opt:
             for i in range(1, n_optimization_steps + 1):
                 if debug and print_freq and i % print_freq == 0:
-                    self.print_info(i, t_opt.elapsed, cost)
+                    self.print_info(i, t_opt.elapsed, cost, x)
 
                 grad, cost = self.compute_gradient(x=x, return_cost=True)
-
                 x = self.robot.gradient_step(x, -grad)
 
         return x
 
     def print_info(
-        self, step: int, elapsed_time: float, cost: torch.Tensor = None
+        self, step: int, elapsed_time: float, costs: List[torch.Tensor], x: torch.Tensor
     ) -> None:
-        cost_val = cost.item() if cost is not None else float("nan")
-        print(f"Step {step} | Time: {elapsed_time:.3f} sec | Cost: {cost_val:.3e}")
+        costs_val = [cost.item() if cost is not None else float("nan") for cost in costs]
+        print(f"Step {step} | Time: {elapsed_time:.3f} sec | Costs: {costs_val}")
+        visualizer = Visualizer(self.env, self.robot, self.use_extra_objects)
+        start_pos = x[0, 0, :]
+        goal_pos = x[0, -1, :]
+        ts = time.time()
+        trajectories = x if self.n_control_points is None else self.robot.get_trajectories_from_bsplines(
+            control_points=x, n_support_points=self.n_support_points
+        )
+        os.makedirs("imgs", exist_ok=True)
+        visualizer.render_scene(trajectories=trajectories, start_pos=start_pos, goal_pos=goal_pos, save_path=f"imgs/{ts}_debug_step_{step}.png")

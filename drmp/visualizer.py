@@ -22,7 +22,7 @@ class Visualizer:
         "robot_free_moving": "green",
         "trajectory_best": "gold",
         "robot_best": "purple",
-        "start": "yellow",
+        "start": "orange",
         "goal": "magenta",
         "fixed_obstacle": "grey",
         "extra_obstacle": "red",

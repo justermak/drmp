@@ -397,7 +397,7 @@ class TrajectoryDataset(Dataset):
                     robot=generating_robot,
                     normalizer=normalizer,
                     n_support_points=n_support_points,
-                    n_control_points=None,
+                    n_control_points=n_control_points,
                     costs=costs,
                     max_grad_norm=grad_max_grad_norm,
                     n_interpolate=grad_n_interpolate,
@@ -412,7 +412,6 @@ class TrajectoryDataset(Dataset):
                 create_straight_line_trajectories=create_straight_line_trajectories,
                 n_trajectories=n_trajectories_per_task,
                 n_support_points=n_support_points,
-                dt=generating_robot.dt,
                 n_control_points=n_control_points,
                 tensor_args=tensor_args,
             )

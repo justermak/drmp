@@ -1,4 +1,6 @@
 from typing import Any, Dict
+import time
+import os 
 
 import torch
 
@@ -6,7 +8,7 @@ from drmp.planning.planners.classical_planner import ClassicalPlanner
 from drmp.planning.planners.gpmp2 import GPMP2
 from drmp.planning.planners.gradient_optimization import GradientOptimization
 from drmp.planning.planners.rrt_connect import RRTConnect
-from drmp.torch_timer import TimerCUDA
+from drmp.visualizer import Visualizer
 
 
 class HybridPlanner(ClassicalPlanner):
@@ -18,7 +20,6 @@ class HybridPlanner(ClassicalPlanner):
         create_straight_line_trajectories: bool,
         n_trajectories: int,
         n_support_points: int,
-        dt: float,
         n_control_points: int,
         tensor_args: Dict[str, Any],
     ):
@@ -47,12 +48,13 @@ class HybridPlanner(ClassicalPlanner):
         self.optimization_based_planner = optimization_based_planner
         self.smoothen = smoothen
         self.n_support_points = n_support_points
-        self.dt = dt
-        self.n_trajectories = n_trajectories
         self.n_control_points = n_control_points
+        self.n_trajectories = n_trajectories
         self.create_straight_line_trajectories = create_straight_line_trajectories
         if self.sampling_based_planner is not None:
             self.sampling_based_planner.n_trajectories = n_trajectories
+        if self.optimization_based_planner is not None:
+            self.optimization_based_planner.n_control_points = n_control_points
 
     def optimize(
         self,
@@ -89,12 +91,13 @@ class HybridPlanner(ClassicalPlanner):
             ]
             
         else:
+            max_len = max([trajectory.shape[0] for trajectory in trajectories if trajectory is not None]) if len(trajectories) > 0 else self.n_support_points
             trajectories_smooth = [
                 torch.cat(
                     [
                         trajectory,
                         trajectory[-1:].repeat(
-                            self.n_support_points - len(trajectory), 1
+                            max_len - trajectory.shape[0], 1
                         ),
                     ],
                     dim=0,
@@ -106,6 +109,7 @@ class HybridPlanner(ClassicalPlanner):
         initial_trajectories = torch.stack(trajectories_smooth) if len(trajectories_smooth) > 0 else torch.empty(
             (0, self.n_support_points, self.robot.n_dim), **self.tensor_args
         )
+        
         if self.create_straight_line_trajectories:
             n_initial = initial_trajectories.shape[0]
             if n_initial < self.n_trajectories:
@@ -126,6 +130,7 @@ class HybridPlanner(ClassicalPlanner):
         if (
             self.optimization_based_planner is not None
             and n_optimization_steps is not None
+            and initial_trajectories.shape[0] > 0
         ):
             if self.optimization_based_planner.name == "GPMP2":
                 initial_trajectories = torch.cat(
@@ -136,10 +141,10 @@ class HybridPlanner(ClassicalPlanner):
                     dim=-1,
                 )
 
-            if self.n_control_points is not None:
+            if self.optimization_based_planner.n_control_points is not None:
                 initial_trajectories = self.robot.fit_bsplines_to_trajectories(
                     trajectories=initial_trajectories,
-                    n_control_points=self.n_control_points,
+                    n_control_points=self.optimization_based_planner.n_control_points,
                 )
 
             trajectories = self.optimization_based_planner.optimize(
@@ -149,7 +154,7 @@ class HybridPlanner(ClassicalPlanner):
                 debug=debug,
             )
 
-            if self.n_control_points is not None:
+            if self.optimization_based_planner.n_control_points is not None:
                 trajectories = self.robot.get_trajectories_from_bsplines(
                     control_points=trajectories,
                     n_support_points=self.n_support_points,

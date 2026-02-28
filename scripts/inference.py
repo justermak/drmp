@@ -39,6 +39,7 @@ def run(args):
             experiment_name = f"{args.dataset_name}__{args.use_extra_objects}__{args.checkpoint_name if args.checkpoint_name else args.algorithm}__{timestamp}"
         else:
             experiment_name = f"{args.dataset_name}__{args.use_extra_objects}__{args.algorithm}__{timestamp}"
+            # experiment_name = f"test__{timestamp}"
     else:
         experiment_name = args.experiment_name
 
@@ -47,25 +48,23 @@ def run(args):
     dataset_init_config = load_config_from_yaml(dataset_init_config_path)
 
     dataset = TrajectoryDataset(**dataset_init_config, tensor_args=tensor_args)
-    dataset_usage_config = {
+    dataset_usage_config = load_config_from_yaml(
+        os.path.join(
+            args.checkpoints_dir, args.checkpoint_name, "dataset_usage_config.yaml"
+        )
+    ) if args.algorithm == "generative-model" else {
         "apply_augmentations": False,
         "normalizer_name": "TrivialNormalizer",
         "n_control_points": args.mpd_splines_n_control_points
         if args.algorithm == "mpd-splines"
         else (
-            args.rrt_grad_splines_n_control_points
-            if args.algorithm == "rrt-grad-splines"
+            args.grad_splines_n_control_points
+            if re.search(r"grad-splines", args.algorithm)
             else None
         ),
         "filtering_config": {},
     }
-    if args.algorithm == "generative-model":
-        dataset_usage_config = load_config_from_yaml(
-            os.path.join(
-                args.checkpoints_dir, args.checkpoint_name, "dataset_usage_config.yaml"
-            )
-        )
-
+    
     train_subset, _, val_subset, _ = dataset.load_data(
         dataset_dir=dataset_dir, debug=args.debug, **dataset_usage_config
     )
@@ -124,7 +123,7 @@ def run(args):
             lambda_velocity=args.lambda_velocity,
             lambda_acceleration=args.lambda_acceleration,
             lambda_jerk=args.lambda_jerk,
-            max_grad_norm=args.max_grad_norm,
+            max_grad=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
             additional_args=additional_args,
         )
@@ -195,6 +194,7 @@ def run(args):
         "rrt-smooth",
         "gpmp2",
         "grad",
+        "grad-splines",
         "rrt-gpmp2",
         "rrt-grad",
         "rrt-grad-splines",
@@ -215,7 +215,7 @@ def run(args):
             n_sampling_steps=args.classical_n_sampling_steps if re.search(r"rrt", args.algorithm) else None,
             n_optimization_steps=args.gpmp2_n_optimization_steps if re.search(r"gpmp2", args.algorithm) else args.grad_n_optimization_steps if re.search(r"grad", args.algorithm) else None,
             smoothen=True if args.algorithm in ["rrt-smooth", "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"] else False,
-            create_straight_line_trajectories=True if args.algorithm in ["gpmp2", "grad"] else False,
+            create_straight_line_trajectories=True if args.algorithm in ["gpmp2", "grad", "grad-splines"] else False,
             n_dim=args.classical_n_dof,
             rrt_connect_max_radius=args.rrt_connect_max_radius,
             rrt_connect_n_points=args.rrt_connect_n_points,

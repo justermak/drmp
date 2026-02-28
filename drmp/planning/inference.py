@@ -147,10 +147,6 @@ def run_inference_on_dataset(
 
             if model_wrapper.name != "Classical":
                 break
-            if model_wrapper.planner.optimization_based_planner is None:
-                break
-            if model_wrapper.planner.optimization_based_planner.name != "GPMP2":
-                break
 
             start_pos = data["start_pos"]
             goal_pos = data["goal_pos"]
