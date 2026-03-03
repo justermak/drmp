@@ -1,5 +1,5 @@
 # DRMP (Diffusion robot motion planning)
-Project on exproling applications of generative models (especially diffusion) to robot motion planning
+Optimizing diffusion models for motion planning
 
 ---
 ## Experiments
@@ -39,6 +39,8 @@ connecting start and finish, represented as BSpline control points.
 
 ### EnvSimple2D
 
+<img src="imgs/EnvSimple2D.png" width="300">
+
 #### Base
 
 | algorithm               | success_rate   | time          | avg_free_trajectories   | avg_free_points   | path_length_best   | avg_path_length   | avg_ISJ                  | waypoints_stddev   |
@@ -75,6 +77,8 @@ connecting start and finish, represented as BSpline control points.
 
 ### EnvDense2D
 
+<img src="imgs/EnvDense2D.png" width="300">
+
 #### Base
 
 | algorithm               | success_rate   | time          | avg_free_trajectories   | avg_free_points   | path_length_best   | avg_path_length   | avg_ISJ                  | waypoints_stddev   |
@@ -110,6 +114,8 @@ connecting start and finish, represented as BSpline control points.
 | drmp (ours)             | 98.50 ± 1.17   | 0.018 ± 0.001  | 15.95 ± 0.01            | 92.78 ± 0.00      | 2.0841 ± 0.0314    | 2.2859 ± 0.0313   | 321.9948 ± 12.2196       | 0.0206 ± 0.0016    |
 
 ### EnvDenseNarrowPassage2D
+
+<img src="imgs/EnvDenseNarrowPassage2D.png" width="300">
 
 #### Base
 
@@ -148,6 +154,8 @@ connecting start and finish, represented as BSpline control points.
 ## RobotL2D
 
 ### EnvSparse2D
+
+<img src="imgs/EnvSparse2D.png" width="300">
 
 #### Base
 
