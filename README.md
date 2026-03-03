@@ -4,6 +4,8 @@ Optimizing diffusion models for motion planning
 ---
 ## Experiments
 
+Each algorithm was ran **300** times with different start and goal positions for each environment. For each run, algorithm generated **100** trajectories. Each statistic is reported as a center and radius of the bootstrap confidence intervals for averages over all the runs.
+
 Setup: All classical algorithms are just ran on both versions of the environment. Learning base algorithms are trained only on the base environment and tested on both versions. Since they don't take the map as an input, runing them on the environments with extra obstacles tests their ability to generate diverse tragectories that can be easily optimized 
 
 Algorithms naming:
