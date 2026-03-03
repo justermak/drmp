@@ -274,6 +274,4 @@ class RRTConnect(ClassicalPlanner):
                 if cnt >= self.n_trajectories:
                     break
 
-        trajectories = trajectories + [None] * (self.n_trajectories - len(trajectories))
-
         return trajectories

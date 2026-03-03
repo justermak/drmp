@@ -87,11 +87,10 @@ class HybridPlanner(ClassicalPlanner):
                     n_support_points=self.n_support_points,
                 )
                 for trajectory in trajectories
-                if trajectory is not None
             ]
             
         else:
-            max_len = max([trajectory.shape[0] for trajectory in trajectories if trajectory is not None]) if len(trajectories) > 0 else self.n_support_points
+            max_len = max([trajectory.shape[0] for trajectory in trajectories], default=0)
             trajectories_smooth = [
                 torch.cat(
                     [
@@ -103,7 +102,6 @@ class HybridPlanner(ClassicalPlanner):
                     dim=0,
                 )
                 for trajectory in trajectories
-                if trajectory is not None
             ]
 
         initial_trajectories = torch.stack(trajectories_smooth) if len(trajectories_smooth) > 0 else torch.empty(

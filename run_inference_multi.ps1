@@ -7,13 +7,13 @@ $algorithms = @(
     #,
     # "rrt"
     # ,
-    # "rrt-smooth"
-    # ,
+    "rrt-smooth"
+    ,
     # "gpmp2"
     # ,
-    "grad"
-    ,
-    "grad-splines"
+    # "grad"
+    # ,
+    # "grad-splines"
     ,
     # "rrt-gpmp2"
     # ,

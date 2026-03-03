@@ -123,7 +123,7 @@ def run(args):
             lambda_velocity=args.lambda_velocity,
             lambda_acceleration=args.lambda_acceleration,
             lambda_jerk=args.lambda_jerk,
-            max_grad=args.max_grad_norm,
+            max_grad_norm=args.max_grad_norm,
             n_interpolate=args.n_interpolate,
             additional_args=additional_args,
         )

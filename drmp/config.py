@@ -91,36 +91,27 @@ DEFAULT_INFERENCE_ARGS = {
     "n_trajectories_per_task": 100,
     "splits": '("test",)',  # '("train", "val", "test")',
     # Algorithm selection
-    "algorithm": "rrt-grad-splines",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "grad-splines" "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
+    "algorithm": "generative-model",  # Options: "generative-model", "mpd", "mpd-splines", "rrt", "rrt-smooth", "gpmp2", "grad", "grad-splines" "rrt-gpmp2", "rrt-grad", "rrt-grad-splines"
     # Dataset
     "datasets_dir": os.path.join(dir_path, "datasets"),
-    "dataset_name": "EnvDense2D_2000_50",
+    "dataset_name": "EnvSparse2D_20_50_L",
     "threshold_start_goal_pos": 1.5,
     "use_extra_objects": True,
     # Generative model
     "checkpoints_dir": os.path.join(dir_path, "models", "checkpoints"),
-    "checkpoint_name": None,
-    "checkpoint_iter": None,  # If None, use checkpoint_name as is. Otherwise, replace "current" in checkpoint_name with "iter_{checkpoint_iter}".
-    "n_inference_steps": 1,  # None for DDPM, otherwise DDIM or shortcut
+    "checkpoint_name": "Diffusion__EnvSparse2D_2000_50_L__bs_1024__lr_0.0001__steps_200000__diffusion-steps_32__20260301_044217",
+    "checkpoint_iter": None,
+    "n_inference_steps": None,  # None for DDPM, otherwise DDIM or shortcut
     # DDIM
     "eta": 0.0,
-    # MPD guide
-    # "t_start_guide": 6,
-    # "n_guide_steps": 5,
-    # "lambda_obstacles": 1e-2,
-    # "lambda_gp": 2.5e-7,
-    # "lambda_position": None, # 3e-6,
-    # "lambda_velocity": None, # 3e-7,
-    # "max_grad_norm": 1.0,
-    # "n_interpolate": 5,
     # Diffusion prior guide
     "t_start_guide": 0,
     "n_guide_steps": 2,
-    "lambda_obstacles": 1e-2,
+    "lambda_obstacles": 5e-3,
     "lambda_velocity": 5e-5,
-    "lambda_acceleration": 1e-5,
-    "lambda_jerk": 5e-7,
-    "max_grad_norm": 0.01,
+    "lambda_acceleration": 0,
+    "lambda_jerk": 0,
+    "max_grad_norm": 1.0,
     "n_interpolate": 10,
     # MPD
     "mpd_checkpoints_dir": os.path.join(
@@ -187,7 +178,7 @@ DEFAULT_INFERENCE_ARGS = {
     "grad_max_grad_norm": 0.01,
     "grad_n_interpolate": 10,
     # *-Grad-Splines parameters
-    "grad_splines_n_control_points": 24,
+    "grad_splines_n_control_points": 48,
     "grad_splines_spline_degree": 3,
     # Other
     "device": "cuda",
